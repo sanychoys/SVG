@@ -1,12 +1,61 @@
+// Telegram WebApp diagnostics and user binding
+(function initTelegramDebug(){
+  console.log("[SVGTracker] start");
 
-// Telegram WebApp user binding
-const telegramApp = window.Telegram?.WebApp;
-if (telegramApp) {
+  const telegramApp = window.Telegram?.WebApp;
+  console.log("[SVGTracker] Telegram SDK:", telegramApp);
+
+  if (!telegramApp) {
+    console.warn("[SVGTracker] Opened outside Telegram");
+    window.SVG_TELEGRAM_USER = null;
+    return;
+  }
+
   telegramApp.ready();
   telegramApp.expand();
-  const tgUser = telegramApp.initDataUnsafe?.user;
-  window.SVG_TELEGRAM_USER = tgUser || null;
-}
+
+  console.log("[SVGTracker] initData:", telegramApp.initData);
+  console.log("[SVGTracker] initDataUnsafe:", telegramApp.initDataUnsafe);
+
+  const tgUser = telegramApp.initDataUnsafe?.user || null;
+  window.SVG_TELEGRAM_USER = tgUser;
+
+  console.log("[SVGTracker] User:", tgUser);
+
+  if (!tgUser) {
+    console.warn("[SVGTracker] Telegram user missing");
+    return;
+  }
+
+  const name = document.getElementById("name");
+  if (name && tgUser.first_name) {
+    name.textContent = tgUser.first_name;
+  }
+
+  const avatar = document.getElementById("avatar");
+  const fallback = document.getElementById("avatar-fallback");
+
+  console.log("[SVGTracker] avatar element:", avatar);
+  console.log("[SVGTracker] photo_url:", tgUser.photo_url);
+
+  if (avatar && tgUser.photo_url) {
+    avatar.onload = () => {
+      console.log("[SVGTracker] Avatar loaded");
+      avatar.style.display = "block";
+      if (fallback) fallback.style.display = "none";
+    };
+
+    avatar.onerror = (e) => {
+      console.error("[SVGTracker] Avatar load error", e);
+    };
+
+    avatar.src = tgUser.photo_url;
+  } else {
+    console.warn("[SVGTracker] No photo_url");
+  }
+})();
+
+const tg = window.Telegram?.WebApp;
 
 const tg = window.Telegram?.WebApp;
 
