@@ -3337,3 +3337,43 @@ body.training-open {
 .attendance-weekdays span {
   display:block;
 }
+
+/* v7 calendar independence: compact tracker not tied to weekly plan */
+.attendance-widget {
+  width: 100%;
+  max-width: 220px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.attendance-grid {
+  width: 100%;
+  grid-template-columns: repeat(7, 20px);
+  justify-content: space-between;
+  column-gap: 0;
+  row-gap: 10px;
+  padding: 6px 0 0;
+}
+
+.attendance-grid .calendar-day {
+  width: 20px;
+  height: 20px;
+  max-width: none;
+  border-radius: 50%;
+}
+
+.weekday-mini,
+.calendar-days {
+  max-width: 220px;
+  grid-template-columns: repeat(7, 20px);
+  justify-content: space-between;
+  column-gap: 0;
+}
+
+.weekday-mini span,
+.calendar-days span {
+  font-size: 10px;
+  color: rgba(255,255,255,.45);
+}
