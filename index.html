@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>SVGTracker</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="ambient-layer">
+  <div class="beam-core"></div>
+  <div class="beam-reflection"></div>
+  <div class="beam-diffusion"></div>
+</div>
+
+<main class="app-shell">
+  <header class="profile-header">
+    <div class="profile-copy">
+      <p class="eyebrow">С возвращением</p>
+      <h1 id="name">Александр</h1>
+      <span class="subtle-status">Сегодня хороший темп</span>
+    </div>
+    <div class="avatar-wrap">
+      <div class="avatar">
+        <span>А</span>
+      </div>
+      <div class="avatar-ring"></div>
+    </div>
+  </header>
+
+  <section class="glass-card activity-card">
+    <div class="activity-head">
+      <div>
+        <span class="section-label">Активность</span>
+        <h2>Твой день</h2>
+      </div>
+      <div class="activity-progress">
+        <b>82%</b>
+        <small>выполнено</small>
+      </div>
+    </div>
+
+    <div class="stats-row">
+      <article class="mini-stat">
+        <strong>7</strong>
+        <small>Задачи</small>
+      </article>
+      <article class="mini-stat">
+        <strong>3</strong>
+        <small>Тренировки</small>
+      </article>
+      <article class="mini-stat">
+        <strong>6ч</strong>
+        <small>Фокус</small>
+      </article>
+    </div>
+
+    <div class="chart-block">
+      <svg class="activity-chart" viewBox="0 0 336 156" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="График активности за неделю">
+        <defs>
+          <linearGradient id="activityFill" x1="168" y1="18" x2="168" y2="142" gradientUnits="userSpaceOnUse">
+            <stop stop-color="white" stop-opacity="0.32"/>
+            <stop offset="1" stop-color="white" stop-opacity="0"/>
+          </linearGradient>
+          <linearGradient id="activityStroke" x1="0" y1="42" x2="336" y2="102" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#FFFFFF"/>
+            <stop offset="1" stop-color="#D9E8FF"/>
+          </linearGradient>
+          <filter id="lineGlow" x="-40%" y="-80%" width="180%" height="260%">
+            <feGaussianBlur stdDeviation="4" result="blur"/>
+            <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 1 0 0 0  0 0 0 0.86 0" result="glow"/>
+            <feMerge>
+              <feMergeNode in="glow"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+
+        <g class="chart-grid">
+          <line x1="0" y1="32" x2="336" y2="32"/>
+          <line x1="0" y1="64" x2="336" y2="64"/>
+          <line x1="0" y1="96" x2="336" y2="96"/>
+          <line x1="0" y1="128" x2="336" y2="128"/>
+        </g>
+
+        <path class="chart-area" d="M0 108C18 100 37 90 56 88C74 86 93 101 112 99C130 96 149 50 168 46C186 42 205 98 224 90C242 82 261 56 280 55C298 54 317 68 336 63V142H0Z" fill="url(#activityFill)"/>
+        <path class="chart-line-glow" d="M0 108C18 100 37 90 56 88C74 86 93 101 112 99C130 96 149 50 168 46C186 42 205 98 224 90C242 82 261 56 280 55C298 54 317 68 336 63" stroke="url(#activityStroke)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" filter="url(#lineGlow)"/>
+
+        <g class="chart-points">
+          <circle cx="0" cy="108" r="3.2"/>
+          <circle cx="56" cy="88" r="3.2"/>
+          <circle cx="112" cy="99" r="3.2"/>
+          <circle cx="168" cy="46" r="3.7"/>
+          <circle cx="224" cy="90" r="3.2"/>
+          <circle cx="280" cy="55" r="3.2"/>
+          <circle cx="336" cy="63" r="3.2"/>
+        </g>
+      </svg>
+
+      <div class="days-row">
+        <span>Пн</span>
+        <span>Вт</span>
+        <span>Ср</span>
+        <span>Чт</span>
+        <span>Пт</span>
+        <span>Сб</span>
+        <span>Вс</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="feature-grid">
+    <article class="glass-card feature-card workouts" onclick="openTraining()">
+      <div class="feature-top">
+        <div class="icon-shell">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 9V15M18 9V15M8 12H16M4 7V17M20 7V17M2 9V15M22 9V15"/>
+          </svg>
+        </div>
+      </div>
+      <div class="feature-body">
+        <h3 class="card-title">Тренировки</h3>
+        <strong class="card-primary">Силовой блок</strong>
+        <p>3 из 4 выполнено</p>
+      </div>
+    </article>
+
+    <article class="glass-card feature-card schedule">
+      <div class="feature-top">
+        <div class="icon-shell">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 3V6M16 3V6M4 9H20M6 5H18C19.1046 5 20 5.89543 20 7V19C20 20.1046 19.1046 21 18 21H6C4.89543 21 4 20.1046 4 19V7C4 5.89543 4.89543 5 6 5Z"/>
+            <path d="M8 13H12M8 17H10"/>
+          </svg>
+        </div>
+      </div>
+      <div class="feature-body">
+        <h3 class="card-title">Расписание</h3>
+        <strong class="card-primary">2 события сегодня</strong>
+        <p>Созвон в 16:00</p>
+      </div>
+    </article>
+
+    <article class="glass-card feature-card finance" onclick="openFinance()">
+      <div class="feature-top">
+        <div class="icon-shell">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7.5C4 6.11929 5.11929 5 6.5 5H17.5C18.8807 5 20 6.11929 20 7.5V16.5C20 17.8807 18.8807 19 17.5 19H6.5C5.11929 19 4 17.8807 4 16.5V7.5Z"/>
+            <path d="M15 12C15 13.1046 15.8954 14 17 14H20V10H17C15.8954 10 15 10.8954 15 12Z"/>
+            <path d="M7 9H12"/>
+          </svg>
+        </div>
+      </div>
+      <div class="feature-body">
+        <h3 class="card-title">Финансы</h3>
+        <strong class="card-primary">−2 450 ₽ сегодня</strong>
+        <p>Лимит недели 68%</p>
+      </div>
+    </article>
+
+    <article class="glass-card feature-card notes">
+      <div class="feature-top">
+        <div class="icon-shell">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7 4H17C18.1046 4 19 4.89543 19 6V18L15.5 15.5L12 18L8.5 15.5L5 18V6C5 4.89543 5.89543 4 7 4Z"/>
+            <path d="M9 9H15M9 12H15"/>
+          </svg>
+        </div>
+      </div>
+      <div class="feature-body">
+        <h3 class="card-title">Заметки</h3>
+        <strong class="card-primary">Быстрые идеи</strong>
+        <p>5 активных записей</p>
+      </div>
+    </article>
+  </section>
+
+
+
+
+
+
+
+
+
+
+<section id="finance-screen" class="single-training-screen" hidden>
+<div class="training-overlay-shell finance-shell">
+<header class="premium-header"><button class="apple-action-button workouts-back" onclick="closeFinance()">‹</button><div class="header-copy"><h1>Финансы</h1><p>Умный контроль месячного бюджета</p></div></header>
+<section class="apple-widget finance-balance"><span class="section-label">Ваш бюджет</span><h2 id="finance-budget-left">Настрой бюджет</h2><div class="finance-stats"><div><small>Сегодня можно</small><strong id="finance-day-limit">—</strong></div><div><small id="finance-percent">—</small></div></div><div class="finance-chart"><svg viewBox="0 0 320 80"><path d="M0 60 C60 50 100 65 150 35 C220 15 260 45 320 20"/></svg></div></section>
+<section class="apple-widget"><h2>Обязательные расходы</h2><div id="finance-mandatory"></div><button onclick="openFinanceSheet('mandatory')">Добавить расход</button></section>
+<section class="apple-widget"><h2>Куда уходят деньги</h2><div id="finance-cats"></div></section>
+<section class="apple-widget"><h2>Долги</h2><div id="finance-debts"></div><button onclick="openFinanceSheet('debt')">Добавить долг</button></section>
+<button class="finance-add" onclick="openFinanceSheet('expense')">+</button>
+</div></section>
+
+<section id="training-screen" class="single-training-screen" hidden>
+  <div class="training-overlay-shell">
+    <header class="premium-header">
+      <button type="button" class="apple-action-button workouts-back" onclick="closeTraining()" aria-label="Назад">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M14.5 5.5L8 12l6.5 6.5"/>
+        </svg>
+      </button>
+      <div class="header-copy">
+        <h1>Тренировки</h1>
+        <p>План, прогресс и цели</p>
+      </div>
+    </header>
+
+    <div class="top-training-row">
+      <section class="apple-widget attendance-widget">
+        <div class="widget-header widget-header--tight">
+          <h2>Октябрь</h2>
+        </div>
+        <div class="attendance-grid" aria-label="Календарь посещения за октябрь">
+          <span></span><span class="done"></span><span></span><span></span><span class="done"></span><span class="today"></span><span></span>
+          <span class="missed"></span><span class="done"></span><span></span><span></span><span></span><span class="done"></span><span></span>
+          <span></span><span></span><span></span><span class="done"></span><span></span><span></span><span></span>
+          <span class="done"></span><span></span><span class="missed"></span><span></span><span></span><span class="done"></span><span></span>
+          <span></span><span></span><span></span>
+        </div>
+      </section>
+
+      <section class="apple-widget week-widget">
+        <div class="widget-header widget-header--tight">
+          <h2>План недели</h2>
+          <button type="button" class="apple-action-button widget-action" onclick="editPlan()" aria-label="Редактировать план недели">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M10.07 4.82a1 1 0 0 1 1-.82h1.86a1 1 0 0 1 1 .82l.23 1.1a7.08 7.08 0 0 1 1.53.63l.96-.57a1 1 0 0 1 1.27.15l1.32 1.32a1 1 0 0 1 .15 1.27l-.57.96c.25.49.46 1 .63 1.53l1.1.23a1 1 0 0 1 .82 1v1.86a1 1 0 0 1-.82 1l-1.1.23c-.17.53-.38 1.04-.63 1.53l.57.96a1 1 0 0 1-.15 1.27l-1.32 1.32a1 1 0 0 1-1.27.15l-.96-.57c-.49.25-1 .46-1.53.63l-.23 1.1a1 1 0 0 1-1 .82h-1.86a1 1 0 0 1-1-.82l-.23-1.1a7.08 7.08 0 0 1-1.53-.63l-.96.57a1 1 0 0 1-1.27-.15L4.9 18.91a1 1 0 0 1-.15-1.27l.57-.96a7.08 7.08 0 0 1-.63-1.53l-1.1-.23a1 1 0 0 1-.82-1V12.06a1 1 0 0 1 .82-1l1.1-.23c.17-.53.38-1.04.63-1.53l-.57-.96a1 1 0 0 1 .15-1.27L6.22 5.75a1 1 0 0 1 1.27-.15l.96.57c.49-.25 1-.46 1.53-.63l.09-.72z"/>
+              <circle cx="12" cy="13" r="2.7"/>
+            </svg>
+          </button>
+        </div>
+        <div class="plan-placeholder"></div>
+      </section>
+    </div>
+
+    <section class="apple-widget chart-widget">
+      <div class="widget-header widget-header--tight"><h2>Активность</h2></div>
+      <div class="chart-frame">
+        <svg viewBox="0 0 320 116" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="График активности за неделю">
+          <defs>
+            <linearGradient id="trainingActivityFill" x1="160" y1="14" x2="160" y2="104" gradientUnits="userSpaceOnUse">
+              <stop stop-color="white" stop-opacity="0.26"/>
+              <stop offset="1" stop-color="white" stop-opacity="0"/>
+            </linearGradient>
+            <linearGradient id="trainingActivityStroke" x1="0" y1="58" x2="320" y2="40" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#FFFFFF"/>
+              <stop offset="1" stop-color="#D7E4FF"/>
+            </linearGradient>
+            <filter id="trainingActivityGlow" x="-40%" y="-80%" width="180%" height="260%">
+              <feGaussianBlur stdDeviation="4" result="blur"/>
+              <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 1 0 0 0  0 0 0 0.85 0" result="glow"/>
+              <feMerge>
+                <feMergeNode in="glow"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+          </defs>
+          <g class="chart-guides">
+            <line x1="0" y1="24" x2="320" y2="24"/>
+            <line x1="0" y1="52" x2="320" y2="52"/>
+            <line x1="0" y1="80" x2="320" y2="80"/>
+            <line x1="0" y1="108" x2="320" y2="108"/>
+          </g>
+          <path class="chart-area-path" d="M0 84C18 80 35 74 53 68C71 62 89 56 107 58C124 60 142 72 160 64C178 56 196 32 213 30C231 28 249 52 267 46C285 40 302 26 320 20V116H0Z" fill="url(#trainingActivityFill)"/>
+          <path class="chart-line-path" d="M0 84C18 80 35 74 53 68C71 62 89 56 107 58C124 60 142 72 160 64C178 56 196 32 213 30C231 28 249 52 267 46C285 40 302 26 320 20" stroke="url(#trainingActivityStroke)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" filter="url(#trainingActivityGlow)"/>
+          <g class="chart-point-group">
+            <circle cx="0" cy="84" r="3.2"/>
+            <circle cx="53" cy="68" r="3.2"/>
+            <circle cx="107" cy="58" r="3.2"/>
+            <circle cx="160" cy="64" r="3.2"/>
+            <circle cx="213" cy="30" r="3.7"/>
+            <circle cx="267" cy="46" r="3.2"/>
+            <circle cx="320" cy="20" r="3.2"/>
+          </g>
+        </svg>
+      </div>
+      <div class="chart-days"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div>
+    </section>
+
+    <section class="apple-widget today-widget">
+      <span class="module-eyebrow">Сегодня</span>
+      <h2>Нет запланированной тренировки</h2>
+      <button type="button" class="start-button" onclick="openPlan()">Настроить план</button>
+    </section>
+
+    <section class="apple-widget goals-widget">
+      <div class="widget-header widget-header--tight">
+        <h2>Цели</h2>
+        <button type="button" class="apple-action-button widget-action" onclick="addGoal()" aria-label="Добавить цель">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+        </button>
+      </div>
+      <h3>Набрать 5 кг</h3>
+      <div class="goal-values">75 кг → 80 кг</div>
+      <div class="goal-chart">
+        <svg viewBox="0 0 320 90" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Прогресс достижения цели">
+          <g class="goal-guides">
+            <line x1="0" y1="72" x2="320" y2="72"/>
+            <line x1="64" y1="10" x2="64" y2="80"/>
+            <line x1="128" y1="10" x2="128" y2="80"/>
+            <line x1="192" y1="10" x2="192" y2="80"/>
+            <line x1="256" y1="10" x2="256" y2="80"/>
+          </g>
+          <path class="goal-line-path" d="M0 66C22 64 44 63 64 60C86 56 108 50 128 49C150 48 171 53 192 45C214 37 236 30 256 26C278 22 299 22 320 18"/>
+          <g class="goal-point-group">
+            <circle cx="0" cy="66" r="3.2"/>
+            <circle cx="64" cy="60" r="3.2"/>
+            <circle cx="128" cy="49" r="3.2"/>
+            <circle cx="192" cy="45" r="3.2"/>
+            <circle cx="256" cy="26" r="3.2"/>
+            <circle cx="320" cy="18" r="3.2"/>
+          </g>
+        </svg>
+      </div>
+    </section>
+  </div>
+</section>
+
+
+<div id="goal-sheet" class="ios-sheet" hidden>
+ <div class="sheet-panel">
+  <div class="sheet-handle"></div><h2>Новая цель</h2>
+  <select id="goal-type"><option>Вес</option><option>Сила</option><option>Количество тренировок</option><option>Другая</option></select>
+  <input id="goal-name" placeholder="Название цели">
+  <input id="goal-current" placeholder="Текущее значение">
+  <input id="goal-target" placeholder="Желаемое значение">
+  <input id="goal-date" placeholder="Срок (необязательно)">
+  <button onclick="saveGoal()">Сохранить</button>
+  <button class="secondary" onclick="deleteGoal()">Удалить цель</button>
+ </div>
+</div>
+<div id="plan-sheet" class="ios-sheet" hidden>
+ <div class="sheet-panel">
+  <div class="sheet-handle"></div><h2>План недели</h2>
+  <p class="sheet-subtitle">Запиши тренировки по дням. Пустой день автоматически считается отдыхом.</p>
+  <div class="week-picker">
+   <div data-day="Пн" class="day-picker">Пн <input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Вт" class="day-picker">Вт <input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Ср" class="day-picker">Ср <input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Чт" class="day-picker">Чт <input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Пт" class="day-picker">Пт <input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Сб" class="day-picker">Сб <input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Вс" class="day-picker">Вс <input class="day-input" placeholder="Тренировка"></div>
+  </div>
+  <button onclick="savePlan()">Сохранить план</button>
+ </div>
+</div>
+
+<div id="workout-picker" class="ios-sheet" hidden>
+ <div class="sheet-panel small-sheet">
+  <div class="sheet-handle"></div><h2>Тренировка</h2>
+
+  <button onclick="setWorkout('Своя тренировка')">Своя тренировка</button>
+  <button onclick="setWorkout('')">Не тренируюсь</button>
+ </div>
+</div>
+
+<div id="finance-sheet" class="ios-sheet" hidden>
+<div class="sheet-panel"><div class="sheet-handle"></div><h2>Добавить данные</h2>
+<select id="finance-entry-type"><option value="expense">Расход</option><option value="income">Доход</option><option value="mandatory">Обязательный расход</option><option value="debt">Долг</option></select>
+<input id="finance-edit-id" type="hidden"><input id="finance-entry-title" placeholder="Название / человек">
+<input id="finance-entry-amount" placeholder="Сумма">
+<select id="finance-entry-category"><option>Еда</option><option>Дом</option><option>Транспорт</option><option>Развлечения</option><option>Здоровье</option><option>Другое</option></select>
+<select id="finance-debt-kind"><option>Мне должны</option><option>Я должен</option></select>
+<button onclick="saveFinanceEntry()">Сохранить</button></div></div>
+
+</main>
+
+<script src="script.js"></script>
+</body>
+</html>
