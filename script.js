@@ -304,26 +304,46 @@ function renderToday() {
   }
 }
 
+function getDayKey(date = new Date()) {
+  const days = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+  return days[date.getDay()];
+}
+
+function updateAttendanceByDate() {
+  const now = new Date();
+  const today = getDayKey(now);
+  const plan = state.plan || {};
+
+  Object.keys(plan).forEach(day => {
+    if (day === today) return;
+    if (!plan[day] || plan[day] === 'Отдых') return;
+    if (state.attendance[day] === 'done') return;
+
+    const order = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+    const todayIndex = order.indexOf(today);
+    const dayIndex = order.indexOf(day);
+
+    if (dayIndex >= 0 && todayIndex > dayIndex) {
+      state.attendance[day] = 'missed';
+    }
+  });
+  persist();
+}
+
 function renderCalendar() {
   const grid = document.querySelector('.attendance-grid');
   if (!grid) return;
 
+  updateAttendanceByDate();
+
   const days = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  const today = getDayKey();
+
   grid.innerHTML = days.map(day => {
     const status = state.attendance[day] || '';
-    return `<button class="calendar-day ${status}" onclick="toggleAttendance('${day}')">${day}</button>`;
+    const current = day === today ? ' current-day' : '';
+    return `<div class="calendar-day ${status}${current}"><span>${day}</span></div>`;
   }).join('');
-}
-
-function toggleAttendance(day) {
-  const order = ['', 'done', 'missed', 'rest'];
-  const current = state.attendance[day] || '';
-  const next = order[(order.indexOf(current)+1)%order.length];
-  if (next) state.attendance[day] = next;
-  else delete state.attendance[day];
-  persist();
-  renderCalendar();
-  renderActivityChart();
 }
 
 function renderActivityChart(){
@@ -406,8 +426,20 @@ function savePlan(){
 }
 
 function startWorkout() {
-  state.history.push(new Date().toISOString());
+  const now = new Date();
+  const day = getDayKey(now);
+  const workout = state.plan[day];
+
+  state.attendance[day] = 'done';
+  state.history.push({
+    date: now.toISOString(),
+    day,
+    workout: workout || 'Тренировка',
+    status: 'completed'
+  });
+
   persist();
+  renderFitness();
   showToast('Тренировка начата');
 }
 
