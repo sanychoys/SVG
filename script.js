@@ -92,6 +92,27 @@ function persist() {
 function closeSheets() {
   document.querySelectorAll('.ios-sheet').forEach(sheet => {
     sheet.hidden = true;
+    const panel = sheet.querySelector('.sheet-panel');
+    if (panel) panel.style.transform = '';
+  });
+}
+
+function closeSheetByBackdrop(event) {
+  if (event.target.classList.contains('ios-sheet')) {
+    closeSheets();
+  }
+}
+
+function setupSheetGestures() {
+  document.querySelectorAll('.sheet-panel').forEach(panel => {
+    let startY = 0;
+    panel.addEventListener('touchstart', e => {
+      startY = e.touches[0].clientY;
+    }, {passive:true});
+    panel.addEventListener('touchend', e => {
+      const delta = e.changedTouches[0].clientY - startY;
+      if (delta > 100) closeSheets();
+    }, {passive:true});
   });
 }
 
@@ -290,6 +311,10 @@ function renderCalendar() {
 }
 
 function addGoal() {
+  const goal = state.goals[0];
+  document.getElementById('goal-name').value = goal?.name || '';
+  document.getElementById('goal-current').value = goal?.current || '';
+  document.getElementById('goal-target').value = goal?.target || '';
   document.getElementById('goal-sheet').hidden = false;
 }
 
@@ -304,10 +329,8 @@ function openGoal() {
 function saveGoal() {
   state.goals = [{
     name: document.getElementById('goal-name').value || 'Новая цель',
-    type: document.getElementById('goal-type').value,
     current: document.getElementById('goal-current').value || 0,
-    target: document.getElementById('goal-target').value || 0,
-    date: document.getElementById('goal-date').value
+    target: document.getElementById('goal-target').value || 0
   }];
 
   persist();
@@ -368,5 +391,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   closeSheets();
+  setupSheetGestures();
   renderFitness();
 });

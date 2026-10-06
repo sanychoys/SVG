@@ -323,30 +323,27 @@
 </section>
 
 
-<div id="goal-sheet" class="ios-sheet" hidden>
- <div class="sheet-panel">
-  <div class="sheet-handle"></div><h2>Новая цель</h2>
-  <select id="goal-type"><option>Вес</option><option>Сила</option><option>Количество тренировок</option><option>Другая</option></select>
+<div id="goal-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+ <div class="sheet-panel" data-sheet-panel>
+  <div class="sheet-handle"></div><h2>Цель</h2>
   <input id="goal-name" placeholder="Название цели">
   <input id="goal-current" placeholder="Текущее значение">
   <input id="goal-target" placeholder="Желаемое значение">
-  <input id="goal-date" placeholder="Срок (необязательно)">
   <button onclick="saveGoal()">Сохранить</button>
-  <button class="secondary" onclick="deleteGoal()">Удалить цель</button>
  </div>
 </div>
-<div id="plan-sheet" class="ios-sheet" hidden>
- <div class="sheet-panel">
+<div id="plan-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+ <div class="sheet-panel" data-sheet-panel>
   <div class="sheet-handle"></div><h2>План недели</h2>
-  <p class="sheet-subtitle">Запиши тренировки по дням. Пустой день автоматически считается отдыхом.</p>
+  <p class="sheet-subtitle">Запиши тренировки по дням.</p>
   <div class="week-picker">
-   <div data-day="Пн" class="day-picker">Пн <input class="day-input" placeholder="Тренировка"></div>
-   <div data-day="Вт" class="day-picker">Вт <input class="day-input" placeholder="Тренировка"></div>
-   <div data-day="Ср" class="day-picker">Ср <input class="day-input" placeholder="Тренировка"></div>
-   <div data-day="Чт" class="day-picker">Чт <input class="day-input" placeholder="Тренировка"></div>
-   <div data-day="Пт" class="day-picker">Пт <input class="day-input" placeholder="Тренировка"></div>
-   <div data-day="Сб" class="day-picker">Сб <input class="day-input" placeholder="Тренировка"></div>
-   <div data-day="Вс" class="day-picker">Вс <input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Пн" class="day-picker"><strong>Понедельник</strong><input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Вт" class="day-picker"><strong>Вторник</strong><input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Ср" class="day-picker"><strong>Среда</strong><input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Чт" class="day-picker"><strong>Четверг</strong><input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Пт" class="day-picker"><strong>Пятница</strong><input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Сб" class="day-picker"><strong>Суббота</strong><input class="day-input" placeholder="Тренировка"></div>
+   <div data-day="Вс" class="day-picker"><strong>Воскресенье</strong><input class="day-input" placeholder="Тренировка"></div>
   </div>
   <button onclick="savePlan()">Сохранить план</button>
  </div>

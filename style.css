@@ -3204,7 +3204,7 @@ body.training-open {
 .sheet-panel input,.sheet-panel select{width:100%;height:46px;margin:6px 0;background:#1d2025;border:1px solid rgba(255,255,255,.1);border-radius:14px;color:white;padding:0 14px}
 .sheet-panel button,.empty-state button{height:46px;width:100%;border:0;border-radius:15px;background:white;color:#050505;font-weight:700;margin-top:10px}
 .sheet-panel button.secondary{background:#25282d;color:white}
-.week-picker{display:flex;align-items:center;gap:10px;color:#aaa}.week-picker input{margin:4px 0}
+.week-picker{display:flex;flex-direction:column;gap:12px;color:#aaa;max-height:52vh;overflow-y:auto}.day-picker{display:flex;flex-direction:column;gap:8px;padding:12px;background:rgba(255,255,255,.04);border-radius:18px}.day-picker strong{color:white;font-size:15px;font-weight:600}.week-picker input{margin:0}
 .empty-state{text-align:center;color:#999;padding:20px 0}.empty-state button{width:180px}
 .calendar-days{display:grid;grid-template-columns:repeat(7,1fr);font-size:10px;color:rgba(255,255,255,.42);text-align:center;margin-top:8px}
 @keyframes sheet{from{transform:translateY(100%)}to{transform:none}}
@@ -3226,3 +3226,15 @@ body.training-open {
 .finance-chart svg{width:100%;height:90px}.finance-chart path{fill:none;stroke:white;stroke-width:3;filter:drop-shadow(0 0 8px rgba(255,255,255,.5))}
 .finance-row{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.08)}
 .finance-row small{display:block;color:#888;margin-top:3px}
+
+.sheet-panel {
+  touch-action: pan-y;
+  transition: transform .3s cubic-bezier(.2,.8,.2,1);
+}
+.ios-sheet {
+  animation: backdropIn .25s ease;
+}
+@keyframes backdropIn {
+  from { background:rgba(0,0,0,0); }
+  to { background:rgba(0,0,0,.55); }
+}
