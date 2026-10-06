@@ -3279,51 +3279,61 @@ body.training-open {
 .calendar-day.today{outline:2px solid #0a84ff;outline-offset:3px}
 .calendar-day span{display:none}
 
-/* Restored compact workout tracker calendar */
+/* Compact habit tracker calendar - final */
 .attendance-widget {
-  padding-bottom: 12px;
+  padding-bottom: 14px;
 }
 
 .attendance-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 6px;
-  padding: 2px 4px 0;
+  display:grid;
+  grid-template-columns:repeat(7, 1fr);
+  gap:9px;
+  padding:8px 6px 0;
 }
 
 .attendance-grid .calendar-day {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  max-width: 22px;
-  max-height: 22px;
-  margin: auto;
-  border-radius: 6px;
-  background: rgba(255,255,255,.07);
-  box-shadow: none;
-  outline: none;
-  transition: .2s ease;
+  width:100%;
+  max-width:26px;
+  aspect-ratio:1;
+  margin:auto;
+  border-radius:50%;
+  background:#d9d9dc;
+  box-shadow:none;
+  outline:none;
+}
+
+.attendance-grid .calendar-day.empty {
+  visibility:hidden;
 }
 
 .attendance-grid .calendar-day.done {
-  background: rgba(155,108,255,.55);
-  box-shadow: 0 0 12px rgba(155,108,255,.35);
+  background:#8b00ff;
+  box-shadow:0 0 12px rgba(139,0,255,.55);
 }
 
 .attendance-grid .calendar-day.missed {
-  background: rgba(255,69,58,.42);
-  box-shadow: 0 0 10px rgba(255,69,58,.25);
+  background:#ff1717;
+  box-shadow:0 0 12px rgba(255,23,23,.35);
 }
 
 .attendance-grid .calendar-day.rest {
-  background: rgba(255,255,255,.12);
+  background:#ffffff;
 }
 
 .attendance-grid .calendar-day.today {
-  outline: 1px solid rgba(255,255,255,.9);
-  outline-offset: 2px;
+  outline:2px solid #ffffff;
+  outline-offset:3px;
 }
 
-.attendance-widget .widget-header h2 {
-  font-size: 14px;
-  font-weight: 600;
+.attendance-weekdays {
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  padding:8px 6px 0;
+  color:rgba(255,255,255,.55);
+  font-size:11px;
+  text-align:center;
+}
+
+.attendance-weekdays span {
+  display:block;
 }
