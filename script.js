@@ -82,7 +82,8 @@ const state = {
   goals: JSON.parse(localStorage.getItem(STORAGE.goals) || '[]'),
   plan: JSON.parse(localStorage.getItem(STORAGE.plan) || '{}'),
   history: JSON.parse(localStorage.getItem(STORAGE.history) || '[]'),
-  attendance: JSON.parse(localStorage.getItem(STORAGE.attendance) || '{}')
+  attendance: JSON.parse(localStorage.getItem(STORAGE.attendance) || '{}'),
+  activeWorkout: JSON.parse(localStorage.getItem('active_workout') || 'null')
 };
 
 function persist() {
@@ -90,6 +91,7 @@ function persist() {
   localStorage.setItem(STORAGE.plan, JSON.stringify(state.plan));
   localStorage.setItem(STORAGE.history, JSON.stringify(state.history));
   localStorage.setItem(STORAGE.attendance, JSON.stringify(state.attendance));
+  localStorage.setItem('active_workout', JSON.stringify(state.activeWorkout));
 }
 
 function closeSheets() {
@@ -296,8 +298,16 @@ function renderToday() {
   if (!button) return;
 
   if (workout && workout !== 'Отдых') {
-    button.textContent = 'Начать тренировку';
-    button.onclick = startWorkout;
+    if (state.activeWorkout) {
+      button.textContent = 'Идёт тренировка';
+      button.onclick = () => {
+        if(confirm('Завершить тренировку?')) finishWorkout();
+      };
+      updateWorkoutTimer();
+    } else {
+      button.textContent = 'Начать тренировку';
+      button.onclick = startWorkout;
+    }
   } else {
     button.textContent = 'Настроить план';
     button.onclick = openPlan;
@@ -464,17 +474,52 @@ function startWorkout() {
     return;
   }
 
-  state.history = state.history.filter(h => new Date(h.date).toDateString() !== now.toDateString());
-  state.history.push({
-    date: now.toISOString(),
-    day,
-    workout,
-    status: 'completed'
-  });
+  state.activeWorkout={started:now.toISOString(), workout, day};
 
   persist();
   renderFitness();
   showToast('Тренировка начата');
+}
+
+
+function finishWorkout(){
+  if(!state.activeWorkout) return;
+
+  const elapsed = Math.floor((Date.now()-new Date(state.activeWorkout.started).getTime())/1000);
+  const started = state.activeWorkout.started;
+  const finished = new Date().toISOString();
+
+  state.history = state.history.filter(h => new Date(h.date).toDateString() !== new Date().toDateString());
+  state.history.push({
+    date: finished,
+    started,
+    ended: finished,
+    day: state.activeWorkout.day,
+    workout: state.activeWorkout.workout,
+    duration: elapsed,
+    status:'completed'
+  });
+
+  state.attendance[state.activeWorkout.day] = 'done';
+  state.activeWorkout=null;
+  persist();
+  renderFitness();
+  showToast('Тренировка завершена');
+}
+
+function formatWorkoutTime(seconds){
+  const h=Math.floor(seconds/3600);
+  const m=Math.floor((seconds%3600)/60);
+  const s=seconds%60;
+  return h ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+function updateWorkoutTimer(){
+  const el=document.querySelector('.workout-timer');
+  if(!el || !state.activeWorkout) return;
+  const sec=Math.floor((Date.now()-new Date(state.activeWorkout.started).getTime())/1000);
+  el.textContent=formatWorkoutTime(sec);
+  setTimeout(updateWorkoutTimer,1000);
 }
 
 document.addEventListener('DOMContentLoaded', () => {

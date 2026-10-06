@@ -3377,3 +3377,26 @@ body.training-open {
   font-size: 10px;
   color: rgba(255,255,255,.45);
 }
+
+/* Compact independent activity calendar */
+.attendance-grid {
+  display:grid;
+  grid-template-columns:repeat(7, 18px);
+  justify-content:start;
+  gap:8px 12px;
+  width:max-content;
+  margin-top:10px;
+}
+.attendance-grid .calendar-day {
+  width:18px;
+  height:18px;
+  min-width:18px;
+  border-radius:6px;
+  background:rgba(255,255,255,.06);
+  border:1px solid transparent;
+  box-sizing:border-box;
+}
+.attendance-grid .done {background:rgba(151,105,255,.7);box-shadow:0 0 10px rgba(151,105,255,.45);}
+.attendance-grid .missed {background:rgba(255,70,90,.65);box-shadow:0 0 10px rgba(255,70,90,.35);}
+.attendance-grid .today {border-color:white;}
+.workout-timer {font-size:34px;font-weight:700;margin:12px 0;color:white;min-height:40px;}
