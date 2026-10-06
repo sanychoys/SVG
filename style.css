@@ -3278,3 +3278,52 @@ body.training-open {
 .calendar-day.rest{background:#fff}
 .calendar-day.today{outline:2px solid #0a84ff;outline-offset:3px}
 .calendar-day span{display:none}
+
+/* Restored compact workout tracker calendar */
+.attendance-widget {
+  padding-bottom: 12px;
+}
+
+.attendance-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  padding: 2px 4px 0;
+}
+
+.attendance-grid .calendar-day {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-width: 22px;
+  max-height: 22px;
+  margin: auto;
+  border-radius: 6px;
+  background: rgba(255,255,255,.07);
+  box-shadow: none;
+  outline: none;
+  transition: .2s ease;
+}
+
+.attendance-grid .calendar-day.done {
+  background: rgba(155,108,255,.55);
+  box-shadow: 0 0 12px rgba(155,108,255,.35);
+}
+
+.attendance-grid .calendar-day.missed {
+  background: rgba(255,69,58,.42);
+  box-shadow: 0 0 10px rgba(255,69,58,.25);
+}
+
+.attendance-grid .calendar-day.rest {
+  background: rgba(255,255,255,.12);
+}
+
+.attendance-grid .calendar-day.today {
+  outline: 1px solid rgba(255,255,255,.9);
+  outline-offset: 2px;
+}
+
+.attendance-widget .widget-header h2 {
+  font-size: 14px;
+  font-weight: 600;
+}
