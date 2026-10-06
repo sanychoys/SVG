@@ -1,5 +1,5 @@
 // Telegram WebApp diagnostics and user binding
-(function initTelegramDebug(){
+document.addEventListener('DOMContentLoaded', function initTelegramDebug(){
   console.log("[SVGTracker] start");
 
   const telegramApp = window.Telegram?.WebApp;
@@ -53,9 +53,7 @@
   } else {
     console.warn("[SVGTracker] No photo_url");
   }
-})();
-
-const tg = window.Telegram?.WebApp;
+});
 
 const tg = window.Telegram?.WebApp;
 
