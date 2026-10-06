@@ -1,3 +1,13 @@
+
+// Telegram WebApp user binding
+const telegramApp = window.Telegram?.WebApp;
+if (telegramApp) {
+  telegramApp.ready();
+  telegramApp.expand();
+  const tgUser = telegramApp.initDataUnsafe?.user;
+  window.SVG_TELEGRAM_USER = tgUser || null;
+}
+
 const tg = window.Telegram?.WebApp;
 
 const STORAGE = {

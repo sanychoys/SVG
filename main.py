@@ -9,7 +9,7 @@ import uvicorn
 
 from config import BOT_TOKEN
 from key import main_keyboard
-from finance_db import init_db
+from finance_db import init_db, get_or_create_user
 
 
 bot = Bot(
@@ -26,10 +26,13 @@ app = FastAPI(title="SVGTracker API")
 
 @app.get("/api/test")
 def api_test():
-    return {
-        "status": "ok",
-        "service": "SVGTracker API"
-    }
+    return {"status":"ok","service":"SVGTracker API"}
+
+
+@app.post("/api/user")
+def api_user(user: dict):
+    user_id = get_or_create_user(user)
+    return {"status":"ok","user_id":user_id}
 
 
 @dp.message(Command("start"))
