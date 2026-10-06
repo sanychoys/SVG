@@ -61,6 +61,7 @@ const STORAGE = {
   goals: 'fitness_goals',
   plan: 'fitness_plan',
   history: 'fitness_history',
+  attendance: 'fitness_attendance',
   finance: 'finance_budget_v2'
 };
 
@@ -80,13 +81,15 @@ let financeData = JSON.parse(localStorage.getItem(STORAGE.finance) || 'null') ||
 const state = {
   goals: JSON.parse(localStorage.getItem(STORAGE.goals) || '[]'),
   plan: JSON.parse(localStorage.getItem(STORAGE.plan) || '{}'),
-  history: JSON.parse(localStorage.getItem(STORAGE.history) || '[]')
+  history: JSON.parse(localStorage.getItem(STORAGE.history) || '[]'),
+  attendance: JSON.parse(localStorage.getItem(STORAGE.attendance) || '{}')
 };
 
 function persist() {
   localStorage.setItem(STORAGE.goals, JSON.stringify(state.goals));
   localStorage.setItem(STORAGE.plan, JSON.stringify(state.plan));
   localStorage.setItem(STORAGE.history, JSON.stringify(state.history));
+  localStorage.setItem(STORAGE.attendance, JSON.stringify(state.attendance));
 }
 
 function closeSheets() {
@@ -218,6 +221,7 @@ function renderFitness() {
   renderPlan();
   renderToday();
   renderCalendar();
+  renderActivityChart();
 }
 
 function renderGoals() {
@@ -302,13 +306,41 @@ function renderToday() {
 
 function renderCalendar() {
   const grid = document.querySelector('.attendance-grid');
-  if (!grid || grid.nextElementSibling?.classList.contains('calendar-days')) return;
+  if (!grid) return;
 
-  grid.insertAdjacentHTML('afterend', `
-    <div class="calendar-days">
-      <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
-    </div>`);
+  const days = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  grid.innerHTML = days.map(day => {
+    const status = state.attendance[day] || '';
+    return `<button class="calendar-day ${status}" onclick="toggleAttendance('${day}')">${day}</button>`;
+  }).join('');
 }
+
+function toggleAttendance(day) {
+  const order = ['', 'done', 'missed', 'rest'];
+  const current = state.attendance[day] || '';
+  const next = order[(order.indexOf(current)+1)%order.length];
+  if (next) state.attendance[day] = next;
+  else delete state.attendance[day];
+  persist();
+  renderCalendar();
+  renderActivityChart();
+}
+
+function renderActivityChart(){
+  const line = document.querySelector('.chart-line-path');
+  const area = document.querySelector('.chart-area-path');
+  const points = document.querySelector('.chart-point-group');
+  if(!line || !points) return;
+
+  const days=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  const values = days.map(d => state.attendance[d]==='done' ? 90 : state.attendance[d]==='missed' ? 25 : state.attendance[d]==='rest' ? 10 : 45);
+  const coords = values.map((v,i)=>`${i*53.3} ${108-(v/100*85)}`);
+  const d = 'M'+coords.join(' C');
+  line.setAttribute('d', d);
+  area.setAttribute('d', d+' V116H0Z');
+  points.innerHTML = coords.map(c=>{const [x,y]=c.split(' '); return `<circle cx="${x}" cy="${y}" r="3.2"/>`;}).join('');
+}
+
 
 function addGoal() {
   const goal = state.goals[0];

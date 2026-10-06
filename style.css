@@ -3238,3 +3238,21 @@ body.training-open {
   from { background:rgba(0,0,0,0); }
   to { background:rgba(0,0,0,.55); }
 }
+
+/* Settings sheets improvements */
+.sheet-panel > button {
+  font-size: 17px;
+  font-weight: 700;
+  min-height: 52px;
+  letter-spacing: .1px;
+}
+.calendar-day {
+  border:0;
+  background:rgba(255,255,255,.08);
+  color:#fff;
+  min-height:34px;
+  border-radius:12px;
+}
+.calendar-day.done { background:rgba(52,199,89,.35); }
+.calendar-day.missed { background:rgba(255,69,58,.35); }
+.calendar-day.rest { background:rgba(255,255,255,.18); }
