@@ -3256,3 +3256,25 @@ body.training-open {
 .calendar-day.done { background:rgba(52,199,89,.35); }
 .calendar-day.missed { background:rgba(255,69,58,.35); }
 .calendar-day.rest { background:rgba(255,255,255,.18); }
+
+/* Final attendance calendar: Apple Fitness style dots */
+.attendance-grid{
+  display:grid;
+  grid-template-columns:repeat(7, 1fr);
+  gap:10px;
+  padding:4px 2px;
+}
+.calendar-day{
+  width:18px;
+  height:18px;
+  margin:auto;
+  border-radius:50%;
+  background:rgba(255,255,255,.18);
+  position:relative;
+}
+.calendar-day.empty{visibility:hidden}
+.calendar-day.done{background:#9b6cff;box-shadow:0 0 10px rgba(155,108,255,.55)}
+.calendar-day.missed{background:#ff453a;box-shadow:0 0 10px rgba(255,69,58,.4)}
+.calendar-day.rest{background:#fff}
+.calendar-day.today{outline:2px solid #0a84ff;outline-offset:3px}
+.calendar-day span{display:none}

@@ -336,14 +336,43 @@ function renderCalendar() {
 
   updateAttendanceByDate();
 
-  const days = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
-  const today = getDayKey();
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDay = (new Date(year, month, 1).getDay() + 6) % 7;
 
-  grid.innerHTML = days.map(day => {
-    const status = state.attendance[day] || '';
-    const current = day === today ? ' current-day' : '';
-    return `<div class="calendar-day ${status}${current}"><span>${day}</span></div>`;
-  }).join('');
+  let html = '';
+  for (let i = 0; i < firstDay; i++) html += '<span class="calendar-day empty"></span>';
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(year, month, d);
+    const key = getDayKey(date);
+    const today = date.toDateString() === now.toDateString();
+    const status = getCalendarStatus(date);
+    html += `<span class="calendar-day ${status}${today ? ' today' : ''}"></span>`;
+  }
+
+  grid.innerHTML = html;
+}
+
+function getCalendarStatus(date) {
+  const today = new Date();
+  if (date > today) return '';
+
+  const day = getDayKey(date);
+  const plan = state.plan[day];
+
+  if (!plan) return 'rest';
+
+  const item = state.history.find(h => {
+    const hd = new Date(h.date);
+    return hd.toDateString() === date.toDateString();
+  });
+
+  if (item && item.status === 'completed') return 'done';
+  if (date < new Date(today.getFullYear(), today.getMonth(), today.getDate())) return 'missed';
+  return '';
 }
 
 function renderActivityChart(){
@@ -430,11 +459,16 @@ function startWorkout() {
   const day = getDayKey(now);
   const workout = state.plan[day];
 
-  state.attendance[day] = 'done';
+  if (!workout) {
+    showToast('Сегодня тренировка не запланирована');
+    return;
+  }
+
+  state.history = state.history.filter(h => new Date(h.date).toDateString() !== now.toDateString());
   state.history.push({
     date: now.toISOString(),
     day,
-    workout: workout || 'Тренировка',
+    workout,
     status: 'completed'
   });
 
