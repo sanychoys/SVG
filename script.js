@@ -476,10 +476,11 @@ function startWorkout() {
 
   state.activeWorkout={started:now.toISOString(), workout, day};
 
-  // Сразу отмечаем день как активный после нажатия "Начать тренировку"
+  // Сразу отмечаем сегодняшний день как активную тренировку
   state.attendance[day] = 'done';
 
   persist();
+  renderCalendar();
   renderFitness();
   showToast('Тренировка начата');
 }

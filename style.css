@@ -3402,64 +3402,68 @@ body.training-open {
 .workout-timer {font-size:34px;font-weight:700;margin:12px 0;color:white;min-height:40px;}
 
 
-/* ===== SVGTracker training calendar final refinement ===== */
-
-/* Компактный трекер: календарь не зависит от размера плана */
-.attendance-widget {
-  padding-bottom: 8px;
+/* FINAL TRAINING CALENDAR FIX */
+.single-training-screen .top-training-row{
+    grid-template-columns: 180px 1fr;
+    align-items:start;
 }
 
-.attendance-grid {
-  display: grid !important;
-  grid-template-columns: repeat(7, 18px) !important;
-  gap: 9px 12px !important;
-  width: max-content !important;
-  padding: 8px 0 0 !important;
-  justify-content: start !important;
+.single-training-screen .attendance-widget{
+    min-height:220px;
+    height:220px;
+    padding:14px;
+    overflow:hidden;
 }
 
-.attendance-grid .calendar-day {
-  width: 18px !important;
-  height: 18px !important;
-  min-height: 18px !important;
-  padding: 0 !important;
-  border-radius: 50% !important;
-  background: rgba(255,255,255,.18) !important;
-  border: 0 !important;
-  outline: none !important;
-  box-shadow: none !important;
+.single-training-screen .attendance-grid{
+    display:grid;
+    grid-template-columns:repeat(7, 1fr);
+    gap:7px;
 }
 
-.attendance-grid .calendar-day.done {
-  background: #8b00ff !important;
-  box-shadow: 0 0 10px rgba(139,0,255,.45) !important;
+.single-training-screen .calendar-day{
+    width:16px;
+    height:16px;
+    min-width:16px;
+    min-height:16px;
+    justify-self:center;
+    border-radius:50%;
+    border:none!important;
+    outline:none!important;
+    background:rgba(255,255,255,.12);
+    color:transparent;
 }
 
-.attendance-grid .calendar-day.missed {
-  background: #ff453a !important;
-  box-shadow: none !important;
+.single-training-screen .calendar-day.done{
+    background:#8b5cf6;
 }
 
-.attendance-grid .calendar-day.rest {
-  background: #ffffff !important;
+.single-training-screen .calendar-day.missed{
+    background:#ef4444;
 }
 
-.attendance-grid .calendar-day.today {
-  outline: none !important;
-  border: 0 !important;
+.single-training-screen .calendar-day.rest,
+.single-training-screen .calendar-day.today{
+    background:rgba(255,255,255,.12);
+    border:none!important;
+    box-shadow:none!important;
 }
 
-/* Убираем лишнее пустое место блока "Сегодня" */
-.today-widget {
-  min-height: 0 !important;
-  padding-bottom: 10px !important;
+.single-training-screen .attendance-weekdays{
+    margin-top:8px;
+    font-size:10px;
 }
 
-.today-widget h2 {
-  margin-bottom: 10px !important;
+.single-training-screen .chart-widget{
+    margin-top:12px;
 }
 
-/* График активности строится как компактный блок */
-.chart-block {
-  margin-top: 10px !important;
+.single-training-screen .today-workout-widget{
+    min-height:120px!important;
+    height:auto!important;
+}
+
+.single-training-screen .today-workout-widget::before,
+.single-training-screen .today-workout-widget::after{
+    display:none;
 }
