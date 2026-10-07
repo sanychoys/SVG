@@ -327,6 +327,7 @@
           </g>
         </svg>
       </div>
+      <button type="button" class="start-button goal-record-button" onclick="openGoalResult()" hidden>Записать результат</button>
     </section>
   </div>
 </section>
@@ -335,7 +336,7 @@
 <div id="goal-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
  <div class="sheet-panel" data-sheet-panel>
   <div class="sheet-handle"></div><h2>Цель</h2>
-  <p class="sheet-subtitle">Выбери формат цели — числовой прогресс или текстовый результат.</p>
+  <p class="sheet-subtitle">Настрой цель. Фактический прогресс записывается отдельно.</p>
   <input id="goal-name" placeholder="Название цели" maxlength="80">
   <div class="goal-type-toggle" role="group" aria-label="Тип цели">
     <button type="button" data-goal-type="numeric" onclick="setGoalType('numeric')">Числовая</button>
@@ -343,20 +344,33 @@
   </div>
   <div id="goal-numeric-fields" class="goal-fields">
     <div class="goal-value-row">
-      <input id="goal-current" inputmode="decimal" placeholder="Сейчас">
+      <input id="goal-current" inputmode="decimal" placeholder="Стартовое значение">
       <input id="goal-target" inputmode="decimal" placeholder="Цель">
     </div>
     <input id="goal-unit" placeholder="Единица измерения, например кг" maxlength="20">
   </div>
   <div id="goal-text-fields" class="goal-fields" hidden>
     <textarea id="goal-text" rows="3" placeholder="Опиши результат, которого хочешь достичь" maxlength="240"></textarea>
-    <select id="goal-status" aria-label="Статус цели">
+  </div>
+  <button type="button" onclick="saveGoal()">Сохранить цель</button>
+  <button type="button" class="sheet-danger-button" onclick="deleteGoal()">Удалить цель</button>
+ </div>
+</div>
+<div id="goal-result-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+ <div class="sheet-panel" data-sheet-panel>
+  <div class="sheet-handle"></div><h2 id="goal-result-title">Записать результат</h2>
+  <p id="goal-result-subtitle" class="sheet-subtitle">Добавь текущее значение — дата и время сохранятся автоматически.</p>
+  <div id="goal-result-numeric" class="goal-fields">
+    <input id="goal-result-value" inputmode="decimal" placeholder="Текущее значение">
+  </div>
+  <div id="goal-result-text" class="goal-fields" hidden>
+    <textarea id="goal-result-note" rows="3" placeholder="Что изменилось с прошлого раза?" maxlength="240"></textarea>
+    <select id="goal-result-status" aria-label="Статус цели">
       <option value="active">В процессе</option>
       <option value="completed">Выполнено</option>
     </select>
   </div>
-  <button type="button" onclick="saveGoal()">Сохранить цель</button>
-  <button type="button" class="sheet-danger-button" onclick="deleteGoal()">Удалить цель</button>
+  <button type="button" onclick="saveGoalResult()">Записать</button>
  </div>
 </div>
 <div id="plan-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">

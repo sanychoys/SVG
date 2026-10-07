@@ -150,31 +150,25 @@ function normalizeNumericGoalHistory(goal, safeCurrent) {
   return sortGoalHistory(history);
 }
 
-function normalizeTextGoalHistory(goal, fallbackText, fallbackStatus) {
+function normalizeTextGoalHistory(goal, targetText, fallbackStatus) {
   const rawHistory = Array.isArray(goal.history) ? goal.history : [];
   const history = [];
 
   rawHistory.forEach(item => {
-    const text = String(item?.text ?? '').trim();
+    const rawText = String(item?.note ?? item?.text ?? '').trim();
+    const isLegacyDefinition = !item?.kind && rawText && rawText === targetText;
+    const note = isLegacyDefinition ? '' : rawText;
     const status = item?.status === 'completed' ? 'completed' : 'active';
-    if (!text && !item?.status) return;
+    if (!note && !item?.status) return;
     const date = normalizeGoalDate(item?.date || item?.recordedAt || goal.updatedAt);
     history.push({
       date,
-      text: text || fallbackText,
+      note,
       status,
+      kind: item?.kind === 'result' || note ? 'result' : 'status',
       recordedAt: item?.recordedAt || (typeof item?.date === 'string' && item.date.includes('T') ? item.date : goal.updatedAt || new Date().toISOString())
     });
   });
-
-  if (!history.length && (fallbackText || fallbackStatus)) {
-    history.push({
-      date: normalizeGoalDate(goal.updatedAt),
-      text: fallbackText,
-      status: fallbackStatus,
-      recordedAt: goal.updatedAt || new Date().toISOString()
-    });
-  }
 
   return sortGoalHistory(history);
 }
@@ -190,18 +184,19 @@ function normalizeGoal(goal) {
   const updatedAt = goal.updatedAt || fallbackTimestamp;
 
   if (type === 'text') {
-    const fallbackText = String(goal.text || [goal.current, goal.target]
+    const targetText = String(goal.targetText || goal.text || [goal.current, goal.target]
       .filter(value => value !== undefined && value !== null && String(value).trim())
       .map(String)
       .join(' → ') || '').trim();
     const fallbackStatus = goal.status === 'completed' ? 'completed' : 'active';
-    const history = normalizeTextGoalHistory(goal, fallbackText, fallbackStatus);
-    const latest = history[history.length - 1] || { text: fallbackText, status: fallbackStatus };
+    const history = normalizeTextGoalHistory(goal, targetText, fallbackStatus);
+    const latest = history[history.length - 1];
     return {
       type: 'text',
       name,
-      text: String(latest.text || fallbackText || '').trim(),
-      status: latest.status === 'completed' ? 'completed' : 'active',
+      text: targetText,
+      status: latest?.status === 'completed' ? 'completed' : fallbackStatus,
+      lastResult: String(latest?.note || '').trim(),
       history,
       createdAt: goal.createdAt || history[0]?.recordedAt || fallbackTimestamp,
       updatedAt
@@ -595,13 +590,23 @@ function renderGoals() {
     renderGoalChart(goal);
   } else {
     title.textContent = goal.name;
-    values.textContent = goal.text || (goal.status === 'completed' ? 'Цель выполнена' : 'В процессе');
+    const targetText = goal.text || (goal.status === 'completed' ? 'Цель выполнена' : 'В процессе');
+    values.textContent = goal.lastResult ? `${targetText} · Сейчас: ${goal.lastResult}` : targetText;
     values.dataset.status = goal.status === 'completed' ? 'Выполнено' : 'В процессе';
     renderGoalChart(goal);
   }
 
   const button = box.querySelector('.widget-action');
-  if (button) button.onclick = addGoal;
+  if (button) {
+    button.onclick = addGoal;
+    button.setAttribute('aria-label', goal ? 'Редактировать цель' : 'Добавить цель');
+  }
+
+  const recordButton = box.querySelector('.goal-record-button');
+  if (recordButton) {
+    recordButton.hidden = !goal;
+    recordButton.textContent = goal?.type === 'text' ? 'Записать прогресс' : 'Записать результат';
+  }
 }
 
 function renderPlan() {
@@ -1069,14 +1074,54 @@ function setGoalType(type) {
 
 function addGoal() {
   const goal = normalizeGoal(state.goals[0]);
+  const currentInput = document.getElementById('goal-current');
   document.getElementById('goal-name').value = goal?.name || '';
-  document.getElementById('goal-current').value = goal?.type === 'numeric' ? goal.current : '';
+  if (currentInput) {
+    currentInput.value = goal?.type === 'numeric' ? goal.start : '';
+    currentInput.readOnly = Boolean(goal?.type === 'numeric');
+    currentInput.placeholder = goal?.type === 'numeric' ? 'Стартовое значение' : 'Стартовое значение';
+  }
   document.getElementById('goal-target').value = goal?.type === 'numeric' ? goal.target : '';
   document.getElementById('goal-unit').value = goal?.type === 'numeric' ? goal.unit || '' : '';
   document.getElementById('goal-text').value = goal?.type === 'text' ? goal.text || '' : '';
-  document.getElementById('goal-status').value = goal?.type === 'text' ? goal.status || 'active' : 'active';
   setGoalType(goal?.type || 'numeric');
   document.getElementById('goal-sheet').hidden = false;
+}
+
+function openGoalResult() {
+  const goal = normalizeGoal(state.goals[0]);
+  if (!goal) {
+    addGoal();
+    return;
+  }
+
+  const numeric = document.getElementById('goal-result-numeric');
+  const text = document.getElementById('goal-result-text');
+  const title = document.getElementById('goal-result-title');
+  const subtitle = document.getElementById('goal-result-subtitle');
+
+  if (goal.type === 'numeric') {
+    if (numeric) numeric.hidden = false;
+    if (text) text.hidden = true;
+    const input = document.getElementById('goal-result-value');
+    if (input) {
+      input.value = '';
+      input.placeholder = goal.unit ? `Текущее значение, ${goal.unit}` : 'Текущее значение';
+    }
+    if (title) title.textContent = 'Записать результат';
+    if (subtitle) subtitle.textContent = `Сейчас: ${formatGoalValue(goal.current)}${goal.unit ? ` ${goal.unit}` : ''}. Дата и время сохранятся автоматически.`;
+  } else {
+    if (numeric) numeric.hidden = true;
+    if (text) text.hidden = false;
+    const note = document.getElementById('goal-result-note');
+    const status = document.getElementById('goal-result-status');
+    if (note) note.value = '';
+    if (status) status.value = goal.status === 'completed' ? 'completed' : 'active';
+    if (title) title.textContent = 'Записать прогресс';
+    if (subtitle) subtitle.textContent = 'Запиши текущий этап или изменение. Дата и время сохранятся автоматически.';
+  }
+
+  document.getElementById('goal-result-sheet').hidden = false;
 }
 
 function editPlan() {
@@ -1096,7 +1141,6 @@ function saveGoal() {
 
   const previous = normalizeGoal(state.goals[0]);
   const now = new Date().toISOString();
-  const today = getDateKey(new Date());
 
   if (selectedGoalType === 'text') {
     const text = document.getElementById('goal-text').value.trim();
@@ -1105,56 +1149,39 @@ function saveGoal() {
       return;
     }
 
-    const status = document.getElementById('goal-status').value === 'completed' ? 'completed' : 'active';
     const previousText = previous?.type === 'text' ? previous : null;
-    let history = previousText?.history ? [...previousText.history] : [];
-    const latest = history[history.length - 1];
-    const changed = !latest || latest.text !== text || latest.status !== status;
-
-    if (changed) {
-      history = appendGoalHistoryEntry(history, {
-        date: today,
-        text,
-        status,
-        recordedAt: now
-      });
-    }
-
     state.goals = [{
       type: 'text',
       name,
       text,
-      status,
-      history,
+      status: previousText?.status || 'active',
+      history: previousText?.history ? [...previousText.history] : [],
       createdAt: previousText?.createdAt || now,
       updatedAt: now
     }];
   } else {
-    const current = parseGoalNumber(document.getElementById('goal-current').value);
+    const startValue = parseGoalNumber(document.getElementById('goal-current').value);
     const target = parseGoalNumber(document.getElementById('goal-target').value);
-    if (current === null || target === null) {
-      showToast('Укажи текущее и целевое значение');
+    const previousNumeric = previous?.type === 'numeric' ? previous : null;
+
+    if ((!previousNumeric && startValue === null) || target === null) {
+      showToast('Укажи стартовое и целевое значение');
       return;
     }
 
-    const previousNumeric = previous?.type === 'numeric' ? previous : null;
-    let history = previousNumeric?.history ? [...previousNumeric.history] : [];
-    const latest = history[history.length - 1];
-
-    if (!latest || Number(latest.value) !== current) {
-      history = appendGoalHistoryEntry(history, {
-        date: today,
-        value: current,
-        recordedAt: now
-      });
-    }
+    const initialValue = previousNumeric ? Number(previousNumeric.start) : startValue;
+    const history = previousNumeric?.history ? [...previousNumeric.history] : [{
+      date: getDateKey(new Date()),
+      value: initialValue,
+      recordedAt: now
+    }];
 
     state.goals = [{
       type: 'numeric',
       name,
-      current,
+      current: previousNumeric ? Number(previousNumeric.current) : initialValue,
       target,
-      start: previousNumeric ? Number(previousNumeric.start) : current,
+      start: initialValue,
       unit: document.getElementById('goal-unit').value.trim(),
       history,
       createdAt: previousNumeric?.createdAt || now,
@@ -1166,8 +1193,89 @@ function saveGoal() {
   persist();
   closeSheets();
   renderFitness();
-  showToast('Цель сохранена');
+  showToast(previous ? 'Цель обновлена' : 'Цель создана');
 }
+
+function saveGoalResult() {
+  const goal = normalizeGoal(state.goals[0]);
+  if (!goal) {
+    closeSheets();
+    addGoal();
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const today = getDateKey(new Date());
+
+  if (goal.type === 'numeric') {
+    const value = parseGoalNumber(document.getElementById('goal-result-value').value);
+    if (value === null) {
+      showToast('Укажи текущий результат');
+      return;
+    }
+
+    const history = [...(goal.history || [])];
+    const latest = history[history.length - 1];
+    const latestDate = latest ? normalizeGoalDate(latest.date || latest.recordedAt) : null;
+    const latestValue = latest ? parseGoalNumber(latest.value) : null;
+
+    if (latestDate === today && latestValue === value) {
+      closeSheets();
+      showToast('Этот результат уже записан сегодня');
+      return;
+    }
+
+    const nextHistory = appendGoalHistoryEntry(history, {
+      date: today,
+      value,
+      recordedAt: now
+    });
+
+    state.goals = [normalizeGoal({
+      ...goal,
+      current: value,
+      history: nextHistory,
+      updatedAt: now
+    })];
+  } else {
+    const note = document.getElementById('goal-result-note').value.trim();
+    const status = document.getElementById('goal-result-status').value === 'completed' ? 'completed' : 'active';
+    const latest = goal.history?.[goal.history.length - 1];
+
+    if (!note && status === goal.status) {
+      showToast('Запиши изменение или поменяй статус');
+      return;
+    }
+
+    if (latest && normalizeGoalDate(latest.date || latest.recordedAt) === today &&
+        String(latest.note || '').trim() === note && latest.status === status) {
+      closeSheets();
+      showToast('Этот прогресс уже записан сегодня');
+      return;
+    }
+
+    const nextHistory = appendGoalHistoryEntry(goal.history || [], {
+      date: today,
+      note,
+      status,
+      kind: 'result',
+      recordedAt: now
+    });
+
+    state.goals = [normalizeGoal({
+      ...goal,
+      status,
+      history: nextHistory,
+      updatedAt: now
+    })];
+  }
+
+  persist();
+  closeSheets();
+  renderFitness();
+  showToast('Результат записан');
+}
+
 function deleteGoal() {
   if (!state.goals.length) {
     closeSheets();

@@ -3728,3 +3728,11 @@ textarea,
     white-space: normal;
   }
 }
+
+/* Goals v8 — separate goal configuration from progress recording. */
+.single-training-screen .goals-widget .goal-record-button {
+  margin-top: 12px;
+}
+.single-training-screen .goals-widget .goal-record-button[hidden] {
+  display: none !important;
+}
