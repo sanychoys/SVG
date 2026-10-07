@@ -3467,3 +3467,73 @@ body.training-open {
 .single-training-screen .today-workout-widget::after{
     display:none;
 }
+
+
+/* Activity calendar: compact Apple Fitness style */
+.attendance-widget {
+  max-width: 230px;
+  padding: 14px 14px 12px;
+}
+
+.attendance-widget .widget-header--tight {
+  margin-bottom: 8px;
+}
+
+.attendance-month {
+  text-transform: capitalize;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.attendance-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 18px);
+  gap: 8px;
+  padding: 0;
+  margin-bottom: 8px;
+  width: max-content;
+}
+
+.attendance-weekdays span {
+  width: 18px;
+  text-align: center;
+  font-size: 9px;
+  color: rgba(255,255,255,.42);
+}
+
+.attendance-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 18px);
+  gap: 8px;
+  width: max-content;
+  margin-top: 0;
+}
+
+.attendance-grid .calendar-day {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: rgba(255,255,255,.07);
+  border: 1px solid transparent;
+  box-sizing: border-box;
+}
+
+.attendance-grid .calendar-day.empty {
+  background: transparent;
+}
+
+.attendance-grid .calendar-day.done {
+  background: rgba(139,92,246,.8);
+  box-shadow: 0 0 12px rgba(139,92,246,.4);
+}
+
+.attendance-grid .calendar-day.missed {
+  background: rgba(239,68,68,.72);
+  box-shadow: 0 0 10px rgba(239,68,68,.25);
+}
+
+.attendance-grid .calendar-day.today {
+  border-color: rgba(255,255,255,.9);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.25);
+}

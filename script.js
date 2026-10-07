@@ -349,18 +349,31 @@ function renderCalendar() {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
+  const monthTitle = document.querySelector('.attendance-month');
+
+  if (monthTitle) {
+    monthTitle.textContent = new Intl.DateTimeFormat('ru-RU', {
+      month: 'long',
+      year: 'numeric'
+    }).format(now).replace(' г.', '');
+  }
+
   const daysInMonth = new Date(year, month + 1, 0).getDate();
+  // Monday based calendar: 0 = Monday ... 6 = Sunday
   const firstDay = (new Date(year, month, 1).getDay() + 6) % 7;
 
   let html = '';
-  for (let i = 0; i < firstDay; i++) html += '<span class="calendar-day empty"></span>';
+
+  for (let i = 0; i < firstDay; i++) {
+    html += '<span class="calendar-day empty" aria-hidden="true"></span>';
+  }
 
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(year, month, d);
-    const key = getDayKey(date);
-    const today = date.toDateString() === now.toDateString();
     const status = getCalendarStatus(date);
-    html += `<span class="calendar-day ${status}${today ? ' today' : ''}"></span>`;
+    const today = date.toDateString() === now.toDateString();
+
+    html += `<span class="calendar-day ${status}${today ? ' today' : ''}" aria-label="${d} число"></span>`;
   }
 
   grid.innerHTML = html;
