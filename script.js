@@ -380,22 +380,29 @@ function renderCalendar() {
 }
 
 function getCalendarStatus(date) {
-  const today = new Date();
-  if (date > today) return '';
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const current = new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
   const day = getDayKey(date);
-  const plan = state.plan[day];
+  const workoutPlan = state.plan?.[day];
 
-  if (!plan) return 'rest';
+  // День без тренировки в плане — спокойный нейтральный день
+  if (!workoutPlan || workoutPlan === 'Отдых') return 'rest';
 
-  const item = state.history.find(h => {
+  const item = (state.history || []).find(h => {
     const hd = new Date(h.date);
-    return hd.toDateString() === date.toDateString();
+    return hd.toDateString() === current.toDateString() && h.status === 'completed';
   });
 
-  if (item && item.status === 'completed') return 'done';
-  if (date < new Date(today.getFullYear(), today.getMonth(), today.getDate())) return 'missed';
-  return '';
+  // Завершенная тренировка имеет максимальный приоритет
+  if (item) return 'done';
+
+  // Будущая запланированная тренировка не считается пропуском
+  if (current > today) return '';
+
+  // Сегодня или прошедший день с планом без выполнения
+  return 'missed';
 }
 
 function renderActivityChart(){

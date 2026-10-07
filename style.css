@@ -3537,3 +3537,44 @@ body.training-open {
   border-color: rgba(255,255,255,.9);
   box-shadow: 0 0 0 1px rgba(255,255,255,.25);
 }
+
+
+/* Final calendar cleanup */
+.attendance-widget .attendance-weekdays{
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  align-items:center;
+  text-align:center;
+  margin:0 0 8px;
+  color:rgba(255,255,255,.45);
+  font-size:11px;
+  font-weight:500;
+}
+.attendance-grid{
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  gap:8px;
+}
+.attendance-grid .calendar-day{
+  width:100%;
+  aspect-ratio:1;
+  border-radius:50%;
+  background:rgba(255,255,255,.08);
+  border:none;
+  box-shadow:none;
+}
+.attendance-grid .calendar-day.done{
+  background:#9b6cff;
+  box-shadow:0 0 12px rgba(155,108,255,.35);
+}
+.attendance-grid .calendar-day.missed{
+  background:#ff453a;
+  box-shadow:0 0 12px rgba(255,69,58,.25);
+}
+.attendance-grid .calendar-day.rest{
+  background:rgba(255,255,255,.14);
+}
+.attendance-grid .calendar-day.today:not(.done):not(.missed){
+  outline:2px solid rgba(255,255,255,.85);
+  outline-offset:2px;
+}
