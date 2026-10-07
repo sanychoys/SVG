@@ -25,7 +25,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-MAX_TRAINING_STATE_BYTES = 256_000
+MAX_TRAINING_STATE_BYTES = 1_000_000
 INIT_DATA_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
 

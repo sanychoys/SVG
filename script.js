@@ -87,6 +87,98 @@ function parseGoalNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function normalizeGoalDate(value, fallback = new Date()) {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  if (value) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return getDateKey(parsed);
+  }
+  return getDateKey(fallback);
+}
+
+function goalDateToTime(dateKey) {
+  if (typeof dateKey !== 'string') return Number.NaN;
+  const parsed = new Date(`${dateKey}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? Number.NaN : parsed.getTime();
+}
+
+function sortGoalHistory(history) {
+  return [...history].sort((a, b) => {
+    const dateDiff = goalDateToTime(a.date) - goalDateToTime(b.date);
+    if (Number.isFinite(dateDiff) && dateDiff !== 0) return dateDiff;
+    return String(a.recordedAt || '').localeCompare(String(b.recordedAt || ''));
+  });
+}
+
+function appendGoalHistoryEntry(history, entry) {
+  const day = normalizeGoalDate(entry.date);
+  return sortGoalHistory([...(Array.isArray(history) ? history : []), { ...entry, date: day }]);
+}
+
+function getGoalDailyHistory(history) {
+  const byDate = new Map();
+  sortGoalHistory(Array.isArray(history) ? history : []).forEach(item => {
+    const date = normalizeGoalDate(item?.date || item?.recordedAt);
+    byDate.set(date, { ...item, date });
+  });
+  return [...byDate.values()];
+}
+
+function normalizeNumericGoalHistory(goal, safeCurrent) {
+  const rawHistory = Array.isArray(goal.history) ? goal.history : [];
+  const history = [];
+
+  rawHistory.forEach(item => {
+    const value = parseGoalNumber(item?.value);
+    if (value === null) return;
+    const date = normalizeGoalDate(item?.date || item?.recordedAt || goal.updatedAt);
+    history.push({
+      date,
+      value,
+      recordedAt: item?.recordedAt || (typeof item?.date === 'string' && item.date.includes('T') ? item.date : goal.updatedAt || new Date().toISOString())
+    });
+  });
+
+  if (!history.length) {
+    history.push({
+      date: normalizeGoalDate(goal.updatedAt),
+      value: safeCurrent,
+      recordedAt: goal.updatedAt || new Date().toISOString()
+    });
+  }
+
+  return sortGoalHistory(history);
+}
+
+function normalizeTextGoalHistory(goal, fallbackText, fallbackStatus) {
+  const rawHistory = Array.isArray(goal.history) ? goal.history : [];
+  const history = [];
+
+  rawHistory.forEach(item => {
+    const text = String(item?.text ?? '').trim();
+    const status = item?.status === 'completed' ? 'completed' : 'active';
+    if (!text && !item?.status) return;
+    const date = normalizeGoalDate(item?.date || item?.recordedAt || goal.updatedAt);
+    history.push({
+      date,
+      text: text || fallbackText,
+      status,
+      recordedAt: item?.recordedAt || (typeof item?.date === 'string' && item.date.includes('T') ? item.date : goal.updatedAt || new Date().toISOString())
+    });
+  });
+
+  if (!history.length && (fallbackText || fallbackStatus)) {
+    history.push({
+      date: normalizeGoalDate(goal.updatedAt),
+      text: fallbackText,
+      status: fallbackStatus,
+      recordedAt: goal.updatedAt || new Date().toISOString()
+    });
+  }
+
+  return sortGoalHistory(history);
+}
+
 function normalizeGoal(goal) {
   if (!goal || typeof goal !== 'object') return null;
   const name = String(goal.name || '').trim() || 'Моя цель';
@@ -94,42 +186,45 @@ function normalizeGoal(goal) {
   const current = parseGoalNumber(goal.current);
   const target = parseGoalNumber(goal.target);
   const type = declaredType || (current !== null && target !== null ? 'numeric' : 'text');
+  const fallbackTimestamp = goal.updatedAt || new Date().toISOString();
+  const updatedAt = goal.updatedAt || fallbackTimestamp;
 
   if (type === 'text') {
-    const fallbackText = [goal.current, goal.target]
+    const fallbackText = String(goal.text || [goal.current, goal.target]
       .filter(value => value !== undefined && value !== null && String(value).trim())
       .map(String)
-      .join(' → ');
+      .join(' → ') || '').trim();
+    const fallbackStatus = goal.status === 'completed' ? 'completed' : 'active';
+    const history = normalizeTextGoalHistory(goal, fallbackText, fallbackStatus);
+    const latest = history[history.length - 1] || { text: fallbackText, status: fallbackStatus };
     return {
       type: 'text',
       name,
-      text: String(goal.text || fallbackText || '').trim(),
-      status: goal.status === 'completed' ? 'completed' : 'active',
-      updatedAt: goal.updatedAt || new Date().toISOString()
+      text: String(latest.text || fallbackText || '').trim(),
+      status: latest.status === 'completed' ? 'completed' : 'active',
+      history,
+      createdAt: goal.createdAt || history[0]?.recordedAt || fallbackTimestamp,
+      updatedAt
     };
   }
 
   const safeCurrent = current ?? 0;
   const safeTarget = target ?? safeCurrent;
-  const history = Array.isArray(goal.history)
-    ? goal.history
-        .map(item => ({ date: item?.date, value: parseGoalNumber(item?.value) }))
-        .filter(item => item.date && item.value !== null)
-    : [];
-
-  if (!history.length) history.push({ date: new Date().toISOString(), value: safeCurrent });
+  const history = normalizeNumericGoalHistory(goal, safeCurrent);
+  const latest = history[history.length - 1];
+  const first = history[0];
   return {
     type: 'numeric',
     name,
-    current: safeCurrent,
+    current: latest?.value ?? safeCurrent,
     target: safeTarget,
-    start: parseGoalNumber(goal.start) ?? history[0].value ?? safeCurrent,
+    start: parseGoalNumber(goal.start) ?? first?.value ?? safeCurrent,
     unit: String(goal.unit || '').trim(),
     history,
-    updatedAt: goal.updatedAt || new Date().toISOString()
+    createdAt: goal.createdAt || history[0]?.recordedAt || fallbackTimestamp,
+    updatedAt
   };
 }
-
 function normalizeTrainingState(raw = {}) {
   const goals = Array.isArray(raw.goals) ? raw.goals.map(normalizeGoal).filter(Boolean).slice(0, 1) : [];
   return {
@@ -409,6 +504,12 @@ function buildSmoothPath(coords) {
   return path;
 }
 
+function formatGoalHistoryDate(dateKey) {
+  const time = goalDateToTime(dateKey);
+  if (!Number.isFinite(time)) return String(dateKey || '');
+  return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short' }).format(new Date(time));
+}
+
 function renderGoalChart(goal) {
   const chartWrap = document.querySelector('.goals-widget .goal-chart');
   const line = document.querySelector('.goals-widget .goal-line-path');
@@ -420,25 +521,57 @@ function renderGoalChart(goal) {
     return;
   }
 
-  chartWrap.hidden = false;
-  const history = (goal.history || []).slice(-8);
-  const values = history.map(item => Number(item.value)).filter(Number.isFinite);
-  if (!values.length) values.push(Number(goal.current) || 0);
-  if (values.length === 1) values.unshift(values[0]);
+  const history = getGoalDailyHistory(goal.history || [])
+    .map(item => ({
+      date: normalizeGoalDate(item?.date),
+      value: parseGoalNumber(item?.value)
+    }))
+    .filter(item => item.value !== null && Number.isFinite(goalDateToTime(item.date)));
 
+  if (!history.length) {
+    chartWrap.hidden = true;
+    return;
+  }
+
+  chartWrap.hidden = false;
   const target = Number(goal.target);
-  const min = Math.min(...values, Number.isFinite(target) ? target : values[0]);
-  const max = Math.max(...values, Number.isFinite(target) ? target : values[0]);
-  const span = Math.max(1, max - min);
-  const coords = values.map((value, index) => ({
-    x: Number((index * (320 / Math.max(1, values.length - 1))).toFixed(1)),
-    y: Number((72 - ((value - min) / span) * 50).toFixed(1))
-  }));
+  const values = history.map(item => item.value);
+  const scaleValues = Number.isFinite(target) ? [...values, target] : values;
+  let min = Math.min(...scaleValues);
+  let max = Math.max(...scaleValues);
+  if (min === max) {
+    const padding = Math.max(Math.abs(min) * 0.05, 1);
+    min -= padding;
+    max += padding;
+  } else {
+    const padding = (max - min) * 0.08;
+    min -= padding;
+    max += padding;
+  }
+  const span = max - min;
+
+  const firstTime = goalDateToTime(history[0].date);
+  const lastHistoryTime = goalDateToTime(history[history.length - 1].date);
+  const minimumWindowMs = 6 * 24 * 60 * 60 * 1000;
+  const lastTime = Math.max(lastHistoryTime, firstTime + minimumWindowMs);
+  const timeSpan = Math.max(1, lastTime - firstTime);
+
+  const coords = history.map(item => {
+    const itemTime = goalDateToTime(item.date);
+    return {
+      x: Number((((itemTime - firstTime) / timeSpan) * 320).toFixed(1)),
+      y: Number((72 - ((item.value - min) / span) * 50).toFixed(1)),
+      date: item.date,
+      value: item.value
+    };
+  });
 
   line.setAttribute('d', buildSmoothPath(coords));
-  points.innerHTML = coords.map(point => `<circle cx="${point.x}" cy="${point.y}" r="3.2"/>`).join('');
+  points.innerHTML = coords.map(point => {
+    const unit = goal.unit ? ` ${goal.unit}` : '';
+    return `<circle cx="${point.x}" cy="${point.y}" r="3.2"><title>${formatGoalHistoryDate(point.date)} · ${formatGoalValue(point.value)}${unit}</title></circle>`;
+  }).join('');
 }
-
 function renderGoals() {
   const box = document.querySelector('.goals-widget');
   if (!box) return;
@@ -522,13 +655,28 @@ function getCompletedWorkoutForDate(date = new Date()) {
     }) || null;
 }
 
+function normalizeWorkoutSeconds(value) {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+}
+
+function getWorkoutElapsedSeconds(workout = state.activeWorkout, nowMs = Date.now()) {
+  if (!workout?.started) return 0;
+  const startedMs = new Date(workout.started).getTime();
+  if (!Number.isFinite(startedMs)) return 0;
+  return Math.max(0, Math.floor((nowMs - startedMs) / 1000));
+}
+
 function formatWorkoutDuration(seconds) {
-  const totalMinutes = Math.max(0, Math.round(Number(seconds || 0) / 60));
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours && minutes) return `${hours} ч ${minutes} мин`;
-  if (hours) return `${hours} ч`;
-  return `${Math.max(1, minutes)} мин`;
+  const total = normalizeWorkoutSeconds(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
 function formatClock(value) {
@@ -808,7 +956,7 @@ function renderCalendar() {
   grid.replaceChildren(fragment);
 }
 
-function renderActivityChart(){
+function renderActivityChart(nowMs = Date.now()){
   const line = document.querySelector('.chart-line-path');
   const area = document.querySelector('.chart-area-path');
   const points = document.querySelector('.chart-point-group');
@@ -816,7 +964,7 @@ function renderActivityChart(){
   const metaEl = document.querySelector('.activity-meta');
   if(!line || !area || !points) return;
 
-  const today = startOfDay(new Date());
+  const today = startOfDay(new Date(nowMs));
   const monday = new Date(today);
   monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
 
@@ -825,52 +973,86 @@ function renderActivityChart(){
     date.setDate(monday.getDate() + index);
     return date;
   });
+  const weekKeys = new Set(days.map(getDateKey));
+
+  const completedSessions = (state.history || []).filter(item => {
+    if (item.status !== 'completed') return false;
+    const itemDate = item.dateKey || getDateKey(new Date(item.date));
+    return weekKeys.has(itemDate);
+  });
+
+  const completedSeconds = completedSessions.reduce(
+    (sum, item) => sum + normalizeWorkoutSeconds(item.duration),
+    0
+  );
+  const activeSeconds = state.activeWorkout?.started
+    ? getWorkoutElapsedSeconds(state.activeWorkout, nowMs)
+    : 0;
 
   const secondsByDay = days.map(date => {
     const key = getDateKey(date);
-    let seconds = (state.history || [])
-      .filter(item => item.status === 'completed' && (item.dateKey || getDateKey(new Date(item.date))) === key)
-      .reduce((sum, item) => sum + Math.max(0, Number(item.duration) || 0), 0);
+    let seconds = completedSessions
+      .filter(item => (item.dateKey || getDateKey(new Date(item.date))) === key)
+      .reduce((sum, item) => sum + normalizeWorkoutSeconds(item.duration), 0);
 
     if (state.activeWorkout?.started) {
       const started = new Date(state.activeWorkout.started);
       if (!Number.isNaN(started.getTime()) && getDateKey(started) === key) {
-        seconds += Math.max(0, Math.floor((Date.now() - started.getTime()) / 1000));
+        seconds += activeSeconds;
       }
     }
     return seconds;
   });
 
-  const values = secondsByDay.map(seconds => seconds / 60);
-  const completedThisWeek = (state.history || []).filter(item => {
-    if (item.status !== 'completed') return false;
-    const key = item.dateKey || getDateKey(new Date(item.date));
-    return days.some(day => getDateKey(day) === key);
-  }).length;
-  const totalSeconds = secondsByDay.reduce((sum, value) => sum + value, 0);
+  const completedThisWeek = completedSessions.length;
+  const totalSeconds = completedSeconds + activeSeconds;
 
-  if (totalEl) totalEl.textContent = totalSeconds > 0 ? formatWorkoutDuration(totalSeconds) : '0 мин';
+  if (totalEl) totalEl.textContent = formatWorkoutDuration(totalSeconds);
   if (metaEl) {
-    if (!completedThisWeek && !state.activeWorkout) metaEl.textContent = 'пока нет активности за эту неделю';
-    else {
-      const average = completedThisWeek ? Math.round((totalSeconds / 60) / completedThisWeek) : 0;
-      metaEl.textContent = `${completedThisWeek} ${completedThisWeek === 1 ? 'тренировка' : completedThisWeek < 5 ? 'тренировки' : 'тренировок'}${average ? ` · в среднем ${average} мин` : ''}`;
+    if (!completedThisWeek && !state.activeWorkout) {
+      metaEl.textContent = 'пока нет активности за эту неделю';
+    } else if (!completedThisWeek && state.activeWorkout) {
+      metaEl.textContent = 'тренировка идёт сейчас';
+    } else {
+      const averageSeconds = Math.floor(completedSeconds / completedThisWeek);
+      const label = completedThisWeek === 1
+        ? 'тренировка'
+        : completedThisWeek < 5 ? 'тренировки' : 'тренировок';
+      metaEl.textContent = `${completedThisWeek} ${label} · в среднем ${formatWorkoutDuration(averageSeconds)}`;
     }
   }
 
-  const maxValue = Math.max(30, ...values);
-  const coords = values.map((value, index) => ({
-    x: Number((index * (320 / 6)).toFixed(1)),
-    y: Number((104 - (value / maxValue) * 80).toFixed(1))
-  }));
+  // Keep a stable absolute vertical scale for normal workouts.
+  // Previously the weekly maximum became the chart maximum, so a 60-minute
+  // and a 180-minute session could both be drawn at exactly the same height.
+  // Up to 3 hours the reference range stays fixed at 4 hours:
+  // 1h = 25%, 1.5h = 37.5%, 2h = 50%, 3h = 75%.
+  // Above 3 hours the scale grows continuously with one hour of headroom,
+  // so very long sessions are never clipped and the live graph does not jump.
+  const chartBaseScaleSeconds = 4 * 60 * 60;
+  const chartHeadroomSeconds = 60 * 60;
+  const peakSeconds = Math.max(0, ...secondsByDay);
+  const chartScaleSeconds = Math.max(
+    chartBaseScaleSeconds,
+    peakSeconds + chartHeadroomSeconds
+  );
+  const chartBottomY = 104;
+  const chartHeight = 80;
+
+  const coords = secondsByDay.map((seconds, index) => {
+    const ratio = Math.max(0, Math.min(1, seconds / chartScaleSeconds));
+    return {
+      x: Number((index * (320 / 6)).toFixed(1)),
+      y: Number((chartBottomY - ratio * chartHeight).toFixed(1))
+    };
+  });
 
   const path = buildSmoothPath(coords);
   line.setAttribute('d', path);
   area.setAttribute('d', `${path} L320 112 L0 112 Z`);
-  points.innerHTML = coords.map((point, index) => {
-    const minutes = Math.round(values[index]);
-    return `<circle cx="${point.x}" cy="${point.y}" r="3.2"><title>${minutes} мин</title></circle>`;
-  }).join('');
+  points.innerHTML = coords.map((point, index) => (
+    `<circle cx="${point.x}" cy="${point.y}" r="3.2"><title>${formatWorkoutDuration(secondsByDay[index])}</title></circle>`
+  )).join('');
 }
 
 
@@ -914,6 +1096,7 @@ function saveGoal() {
 
   const previous = normalizeGoal(state.goals[0]);
   const now = new Date().toISOString();
+  const today = getDateKey(new Date());
 
   if (selectedGoalType === 'text') {
     const text = document.getElementById('goal-text').value.trim();
@@ -921,11 +1104,29 @@ function saveGoal() {
       showToast('Опиши желаемый результат');
       return;
     }
+
+    const status = document.getElementById('goal-status').value === 'completed' ? 'completed' : 'active';
+    const previousText = previous?.type === 'text' ? previous : null;
+    let history = previousText?.history ? [...previousText.history] : [];
+    const latest = history[history.length - 1];
+    const changed = !latest || latest.text !== text || latest.status !== status;
+
+    if (changed) {
+      history = appendGoalHistoryEntry(history, {
+        date: today,
+        text,
+        status,
+        recordedAt: now
+      });
+    }
+
     state.goals = [{
       type: 'text',
       name,
       text,
-      status: document.getElementById('goal-status').value === 'completed' ? 'completed' : 'active',
+      status,
+      history,
+      createdAt: previousText?.createdAt || now,
       updatedAt: now
     }];
   } else {
@@ -937,9 +1138,15 @@ function saveGoal() {
     }
 
     const previousNumeric = previous?.type === 'numeric' ? previous : null;
-    const history = previousNumeric?.history ? [...previousNumeric.history] : [];
-    if (!history.length || Number(history[history.length - 1]?.value) !== current) {
-      history.push({ date: now, value: current });
+    let history = previousNumeric?.history ? [...previousNumeric.history] : [];
+    const latest = history[history.length - 1];
+
+    if (!latest || Number(latest.value) !== current) {
+      history = appendGoalHistoryEntry(history, {
+        date: today,
+        value: current,
+        recordedAt: now
+      });
     }
 
     state.goals = [{
@@ -949,17 +1156,18 @@ function saveGoal() {
       target,
       start: previousNumeric ? Number(previousNumeric.start) : current,
       unit: document.getElementById('goal-unit').value.trim(),
-      history: history.slice(-30),
+      history,
+      createdAt: previousNumeric?.createdAt || now,
       updatedAt: now
     }];
   }
 
+  state.goals = state.goals.map(normalizeGoal).filter(Boolean).slice(0, 1);
   persist();
   closeSheets();
   renderFitness();
   showToast('Цель сохранена');
 }
-
 function deleteGoal() {
   if (!state.goals.length) {
     closeSheets();
@@ -1057,7 +1265,7 @@ function finishWorkout() {
   }
 
   const finishedDate = new Date();
-  const elapsed = Math.max(1, Math.floor((finishedDate.getTime() - startedDate.getTime()) / 1000));
+  const elapsed = getWorkoutElapsedSeconds(state.activeWorkout, finishedDate.getTime());
   const workoutDateKey = state.activeWorkout.dateKey || getDateKey(startedDate);
 
   // Keep one canonical completed session for a calendar date.
@@ -1086,15 +1294,6 @@ function finishWorkout() {
   showToast('Тренировка завершена');
 }
 
-function formatWorkoutTime(seconds) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  return h
-    ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
-    : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-}
-
 function updateWorkoutTimer() {
   clearWorkoutTimer();
 
@@ -1109,10 +1308,18 @@ function updateWorkoutTimer() {
       clearWorkoutTimer();
       return;
     }
-    const sec = Math.max(0, Math.floor((Date.now() - started.getTime()) / 1000));
-    el.textContent = formatWorkoutTime(sec);
-    if (sec % 30 === 0) renderActivityChart();
-    workoutTimerHandle = setTimeout(tick, 1000);
+
+    const nowMs = Date.now();
+    const sec = getWorkoutElapsedSeconds(state.activeWorkout, nowMs);
+    el.textContent = formatWorkoutDuration(sec);
+
+    // The timer, weekly total and graph use the same timestamp snapshot,
+    // so the same workout can never show two different elapsed values.
+    renderActivityChart(nowMs);
+
+    const elapsedMilliseconds = Math.max(0, nowMs - started.getTime());
+    const millisecondsUntilNextSecond = 1000 - (elapsedMilliseconds % 1000);
+    workoutTimerHandle = setTimeout(tick, Math.max(50, millisecondsUntilNextSecond));
   };
 
   tick();
