@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 config.py
 secrets.py
+
+# Production database
+svgtracker.db
