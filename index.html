@@ -242,6 +242,10 @@
 
     <section class="apple-widget chart-widget">
       <div class="widget-header widget-header--tight"><h2>Активность</h2></div>
+      <div class="activity-summary" aria-live="polite">
+        <strong class="activity-total">0 мин</strong>
+        <span class="activity-meta">за эту неделю</span>
+      </div>
       <div class="chart-frame">
         <svg viewBox="0 0 320 116" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="График активности за неделю">
           <defs>
@@ -331,10 +335,28 @@
 <div id="goal-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
  <div class="sheet-panel" data-sheet-panel>
   <div class="sheet-handle"></div><h2>Цель</h2>
-  <input id="goal-name" placeholder="Название цели">
-  <input id="goal-current" placeholder="Текущее значение">
-  <input id="goal-target" placeholder="Желаемое значение">
-  <button onclick="saveGoal()">Сохранить</button>
+  <p class="sheet-subtitle">Выбери формат цели — числовой прогресс или текстовый результат.</p>
+  <input id="goal-name" placeholder="Название цели" maxlength="80">
+  <div class="goal-type-toggle" role="group" aria-label="Тип цели">
+    <button type="button" data-goal-type="numeric" onclick="setGoalType('numeric')">Числовая</button>
+    <button type="button" data-goal-type="text" onclick="setGoalType('text')">Текстовая</button>
+  </div>
+  <div id="goal-numeric-fields" class="goal-fields">
+    <div class="goal-value-row">
+      <input id="goal-current" inputmode="decimal" placeholder="Сейчас">
+      <input id="goal-target" inputmode="decimal" placeholder="Цель">
+    </div>
+    <input id="goal-unit" placeholder="Единица измерения, например кг" maxlength="20">
+  </div>
+  <div id="goal-text-fields" class="goal-fields" hidden>
+    <textarea id="goal-text" rows="3" placeholder="Опиши результат, которого хочешь достичь" maxlength="240"></textarea>
+    <select id="goal-status" aria-label="Статус цели">
+      <option value="active">В процессе</option>
+      <option value="completed">Выполнено</option>
+    </select>
+  </div>
+  <button type="button" onclick="saveGoal()">Сохранить цель</button>
+  <button type="button" class="sheet-danger-button" onclick="deleteGoal()">Удалить цель</button>
  </div>
 </div>
 <div id="plan-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">

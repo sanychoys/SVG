@@ -3588,3 +3588,143 @@ textarea,
     padding-right: 11px;
   }
 }
+
+/* Training UX v4 — real activity metrics, flexible goals and server-backed state. */
+.single-training-screen .attendance-grid .calendar-day.started {
+  background: #8f72ff;
+}
+
+.single-training-screen .activity-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: -2px 0 10px;
+  min-width: 0;
+}
+
+.single-training-screen .activity-summary strong {
+  flex: 0 0 auto;
+  color: rgba(255,255,255,.98);
+  font-size: 21px;
+  line-height: 1;
+  font-weight: 720;
+  letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.single-training-screen .activity-summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fitness-muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.single-training-screen .goals-widget.is-text-goal .goal-values {
+  margin: 2px 0 2px;
+  color: rgba(235,237,242,.76);
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.single-training-screen .goals-widget.is-text-goal .goal-values::after {
+  content: attr(data-status);
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  margin-top: 10px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.075);
+  color: rgba(255,255,255,.64);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 22px;
+}
+
+.single-training-screen .goals-widget.is-goal-completed .goal-values::after {
+  background: rgba(143,114,255,.18);
+  color: #c9bcff;
+}
+
+.goal-chart[hidden],
+.goal-fields[hidden] {
+  display: none !important;
+}
+
+.sheet-panel textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  margin: 6px 0;
+  padding: 13px 14px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 14px;
+  background: #1d2025;
+  color: #fff;
+  font-family: inherit;
+  line-height: 1.35;
+}
+
+.goal-type-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 8px 0 6px;
+  padding: 4px;
+  border-radius: 14px;
+  background: rgba(255,255,255,.055);
+}
+
+.sheet-panel .goal-type-toggle button {
+  width: auto;
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(255,255,255,.54);
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.sheet-panel .goal-type-toggle button.is-selected {
+  background: rgba(255,255,255,.12);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+}
+
+.goal-fields {
+  margin-top: 2px;
+}
+
+.goal-value-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.sheet-panel .sheet-danger-button {
+  background: transparent;
+  color: #ff6b78;
+  border: 1px solid rgba(255,107,120,.18);
+  box-shadow: none;
+}
+
+@media (max-width: 360px) {
+  .single-training-screen .activity-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .single-training-screen .activity-summary span {
+    white-space: normal;
+  }
+}

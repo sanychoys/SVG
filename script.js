@@ -1,12 +1,7 @@
-// Telegram WebApp diagnostics and user binding
-document.addEventListener('DOMContentLoaded', function initTelegramDebug(){
-  console.log("[SVGTracker] start");
-
+// Telegram WebApp bootstrap and user binding
+document.addEventListener('DOMContentLoaded', function initTelegram(){
   const telegramApp = window.Telegram?.WebApp;
-  console.log("[SVGTracker] Telegram SDK:", telegramApp);
-
   if (!telegramApp) {
-    console.warn("[SVGTracker] Opened outside Telegram");
     window.SVG_TELEGRAM_USER = null;
     return;
   }
@@ -14,44 +9,25 @@ document.addEventListener('DOMContentLoaded', function initTelegramDebug(){
   telegramApp.ready();
   telegramApp.expand();
 
-  console.log("[SVGTracker] initData:", telegramApp.initData);
-  console.log("[SVGTracker] initDataUnsafe:", telegramApp.initDataUnsafe);
-
   const tgUser = telegramApp.initDataUnsafe?.user || null;
   window.SVG_TELEGRAM_USER = tgUser;
+  if (!tgUser) return;
 
-  console.log("[SVGTracker] User:", tgUser);
+  const name = document.getElementById('name');
+  if (name && tgUser.first_name) name.textContent = tgUser.first_name;
 
-  if (!tgUser) {
-    console.warn("[SVGTracker] Telegram user missing");
-    return;
-  }
-
-  const name = document.getElementById("name");
-  if (name && tgUser.first_name) {
-    name.textContent = tgUser.first_name;
-  }
-
-  const avatar = document.getElementById("avatar");
-  const fallback = document.getElementById("avatar-fallback");
-
-  console.log("[SVGTracker] avatar element:", avatar);
-  console.log("[SVGTracker] photo_url:", tgUser.photo_url);
-
+  const avatar = document.getElementById('avatar');
+  const fallback = document.getElementById('avatar-fallback');
   if (avatar && tgUser.photo_url) {
     avatar.onload = () => {
-      console.log("[SVGTracker] Avatar loaded");
-      avatar.style.display = "block";
-      if (fallback) fallback.style.display = "none";
+      avatar.style.display = 'block';
+      if (fallback) fallback.style.display = 'none';
     };
-
-    avatar.onerror = (e) => {
-      console.error("[SVGTracker] Avatar load error", e);
+    avatar.onerror = () => {
+      avatar.style.display = 'none';
+      if (fallback) fallback.style.display = '';
     };
-
     avatar.src = tgUser.photo_url;
-  } else {
-    console.warn("[SVGTracker] No photo_url");
   }
 });
 
@@ -63,13 +39,28 @@ const STORAGE = {
   history: 'fitness_history',
   attendance: 'fitness_attendance',
   planMeta: 'fitness_plan_meta_v2',
+  activeWorkout: 'active_workout',
+  trainingDirty: 'fitness_server_dirty_v1',
   finance: 'finance_budget_v2'
 };
 
 let calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let workoutTimerHandle = null;
+let trainingSaveTimer = null;
+let trainingServerReady = false;
+let trainingSyncInFlight = false;
+let selectedGoalType = 'numeric';
 
-let financeData = JSON.parse(localStorage.getItem(STORAGE.finance) || 'null') || {
+function readJSON(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch (_) {
+    return fallback;
+  }
+}
+
+let financeData = readJSON(STORAGE.finance, null) || {
   monthlyIncome:0,
   mandatoryExpenses:[],
   expenses:[],
@@ -78,30 +69,172 @@ let financeData = JSON.parse(localStorage.getItem(STORAGE.finance) || 'null') ||
   budgetHistory:[]
 };
 
-
-
 const state = {
-  goals: JSON.parse(localStorage.getItem(STORAGE.goals) || '[]'),
-  plan: JSON.parse(localStorage.getItem(STORAGE.plan) || '{}'),
-  history: JSON.parse(localStorage.getItem(STORAGE.history) || '[]'),
-  attendance: JSON.parse(localStorage.getItem(STORAGE.attendance) || '{}'),
-  planMeta: JSON.parse(localStorage.getItem(STORAGE.planMeta) || 'null') || { effectiveFrom: null },
-  activeWorkout: JSON.parse(localStorage.getItem('active_workout') || 'null')
+  goals: readJSON(STORAGE.goals, []),
+  plan: readJSON(STORAGE.plan, {}),
+  history: readJSON(STORAGE.history, []),
+  attendance: readJSON(STORAGE.attendance, {}),
+  planMeta: readJSON(STORAGE.planMeta, null) || { effectiveFrom: null },
+  activeWorkout: readJSON(STORAGE.activeWorkout, null)
 };
 
+function parseGoalNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().replace(',', '.').replace(/\s+/g, '');
+  if (!normalized) return null;
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeGoal(goal) {
+  if (!goal || typeof goal !== 'object') return null;
+  const name = String(goal.name || '').trim() || 'Моя цель';
+  const declaredType = goal.type === 'text' ? 'text' : goal.type === 'numeric' ? 'numeric' : null;
+  const current = parseGoalNumber(goal.current);
+  const target = parseGoalNumber(goal.target);
+  const type = declaredType || (current !== null && target !== null ? 'numeric' : 'text');
+
+  if (type === 'text') {
+    const fallbackText = [goal.current, goal.target]
+      .filter(value => value !== undefined && value !== null && String(value).trim())
+      .map(String)
+      .join(' → ');
+    return {
+      type: 'text',
+      name,
+      text: String(goal.text || fallbackText || '').trim(),
+      status: goal.status === 'completed' ? 'completed' : 'active',
+      updatedAt: goal.updatedAt || new Date().toISOString()
+    };
+  }
+
+  const safeCurrent = current ?? 0;
+  const safeTarget = target ?? safeCurrent;
+  const history = Array.isArray(goal.history)
+    ? goal.history
+        .map(item => ({ date: item?.date, value: parseGoalNumber(item?.value) }))
+        .filter(item => item.date && item.value !== null)
+    : [];
+
+  if (!history.length) history.push({ date: new Date().toISOString(), value: safeCurrent });
+  return {
+    type: 'numeric',
+    name,
+    current: safeCurrent,
+    target: safeTarget,
+    start: parseGoalNumber(goal.start) ?? history[0].value ?? safeCurrent,
+    unit: String(goal.unit || '').trim(),
+    history,
+    updatedAt: goal.updatedAt || new Date().toISOString()
+  };
+}
+
+function normalizeTrainingState(raw = {}) {
+  const goals = Array.isArray(raw.goals) ? raw.goals.map(normalizeGoal).filter(Boolean).slice(0, 1) : [];
+  return {
+    goals,
+    plan: raw.plan && typeof raw.plan === 'object' && !Array.isArray(raw.plan) ? raw.plan : {},
+    history: Array.isArray(raw.history) ? raw.history : [],
+    attendance: raw.attendance && typeof raw.attendance === 'object' && !Array.isArray(raw.attendance) ? raw.attendance : {},
+    planMeta: raw.planMeta && typeof raw.planMeta === 'object' ? raw.planMeta : { effectiveFrom: null },
+    activeWorkout: raw.activeWorkout && typeof raw.activeWorkout === 'object' ? raw.activeWorkout : null
+  };
+}
+
+Object.assign(state, normalizeTrainingState(state));
+
 if (!state.planMeta.effectiveFrom && Object.keys(state.plan).length) {
-  // Older builds stored attendance only by weekday, so their exact historical dates
-  // cannot be reconstructed safely. Start date-based tracking from this build onward.
   state.planMeta.effectiveFrom = getDateKey(new Date());
 }
 
-function persist() {
+function getTrainingPayload() {
+  return {
+    goals: state.goals,
+    plan: state.plan,
+    history: state.history,
+    attendance: state.attendance,
+    planMeta: state.planMeta,
+    activeWorkout: state.activeWorkout
+  };
+}
+
+function persistLocal() {
   localStorage.setItem(STORAGE.goals, JSON.stringify(state.goals));
   localStorage.setItem(STORAGE.plan, JSON.stringify(state.plan));
   localStorage.setItem(STORAGE.history, JSON.stringify(state.history));
   localStorage.setItem(STORAGE.attendance, JSON.stringify(state.attendance));
   localStorage.setItem(STORAGE.planMeta, JSON.stringify(state.planMeta));
-  localStorage.setItem('active_workout', JSON.stringify(state.activeWorkout));
+  localStorage.setItem(STORAGE.activeWorkout, JSON.stringify(state.activeWorkout));
+}
+
+async function saveTrainingToServer() {
+  if (!trainingServerReady || !tg?.initData) return false;
+  try {
+    const response = await fetch('/api/training/state', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Telegram-Init-Data': tg.initData
+      },
+      body: JSON.stringify(getTrainingPayload())
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    localStorage.removeItem(STORAGE.trainingDirty);
+    return true;
+  } catch (_) {
+    localStorage.setItem(STORAGE.trainingDirty, '1');
+    return false;
+  }
+}
+
+function scheduleTrainingSave() {
+  if (!trainingServerReady || !tg?.initData) return;
+  clearTimeout(trainingSaveTimer);
+  trainingSaveTimer = setTimeout(() => saveTrainingToServer(), 250);
+}
+
+function persist(options = {}) {
+  persistLocal();
+  if (options.remote !== false) {
+    localStorage.setItem(STORAGE.trainingDirty, '1');
+    scheduleTrainingSave();
+  }
+}
+
+async function syncTrainingWithServer() {
+  if (!tg?.initData || trainingSyncInFlight) return false;
+  trainingSyncInFlight = true;
+  try {
+    const response = await fetch('/api/training/state', {
+      headers: { 'X-Telegram-Init-Data': tg.initData }
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const localDirty = localStorage.getItem(STORAGE.trainingDirty) === '1';
+    let staleWorkoutChanged = false;
+
+    if (payload.exists && payload.state && !localDirty) {
+      Object.assign(state, normalizeTrainingState(payload.state));
+      staleWorkoutChanged = reconcileStaleActiveWorkout(false);
+      persistLocal();
+      localStorage.removeItem(STORAGE.trainingDirty);
+    }
+
+    trainingServerReady = true;
+
+    if (!payload.exists || localDirty || staleWorkoutChanged) {
+      await saveTrainingToServer();
+    }
+
+    renderFitness();
+    return true;
+  } catch (_) {
+    trainingServerReady = false;
+    return false;
+  } finally {
+    trainingSyncInFlight = false;
+  }
 }
 
 function closeSheets() {
@@ -151,6 +284,7 @@ function openTraining() {
   document.body.classList.add('training-open');
   calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   renderFitness();
+  syncTrainingWithServer();
 }
 
 function closeTraining() {
@@ -230,6 +364,7 @@ function renderFinance(){
 }
 
 function renderFitness() {
+  if (reconcileStaleActiveWorkout(false)) persist();
   renderGoals();
   renderPlan();
   renderToday();
@@ -237,23 +372,99 @@ function renderFitness() {
   renderActivityChart();
 }
 
+function formatGoalValue(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return String(value ?? '');
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(number);
+}
+
+function getGoalProgress(goal) {
+  if (!goal || goal.type !== 'numeric') return 0;
+  const start = Number(goal.start);
+  const current = Number(goal.current);
+  const target = Number(goal.target);
+  if (![start, current, target].every(Number.isFinite)) return 0;
+  if (target === start) return current === target ? 100 : 0;
+  const raw = target > start
+    ? (current - start) / (target - start)
+    : (start - current) / (start - target);
+  return Math.max(0, Math.min(100, Math.round(raw * 100)));
+}
+
+function buildSmoothPath(coords) {
+  if (!coords.length) return '';
+  if (coords.length === 1) return `M${coords[0].x} ${coords[0].y}`;
+  let path = `M${coords[0].x} ${coords[0].y}`;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const p0 = coords[i - 1] || coords[i];
+    const p1 = coords[i];
+    const p2 = coords[i + 1];
+    const p3 = coords[i + 2] || p2;
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    path += ` C${cp1x.toFixed(1)} ${cp1y.toFixed(1)} ${cp2x.toFixed(1)} ${cp2y.toFixed(1)} ${p2.x} ${p2.y}`;
+  }
+  return path;
+}
+
+function renderGoalChart(goal) {
+  const chartWrap = document.querySelector('.goals-widget .goal-chart');
+  const line = document.querySelector('.goals-widget .goal-line-path');
+  const points = document.querySelector('.goals-widget .goal-point-group');
+  if (!chartWrap || !line || !points) return;
+
+  if (!goal || goal.type !== 'numeric') {
+    chartWrap.hidden = true;
+    return;
+  }
+
+  chartWrap.hidden = false;
+  const history = (goal.history || []).slice(-8);
+  const values = history.map(item => Number(item.value)).filter(Number.isFinite);
+  if (!values.length) values.push(Number(goal.current) || 0);
+  if (values.length === 1) values.unshift(values[0]);
+
+  const target = Number(goal.target);
+  const min = Math.min(...values, Number.isFinite(target) ? target : values[0]);
+  const max = Math.max(...values, Number.isFinite(target) ? target : values[0]);
+  const span = Math.max(1, max - min);
+  const coords = values.map((value, index) => ({
+    x: Number((index * (320 / Math.max(1, values.length - 1))).toFixed(1)),
+    y: Number((72 - ((value - min) / span) * 50).toFixed(1))
+  }));
+
+  line.setAttribute('d', buildSmoothPath(coords));
+  points.innerHTML = coords.map(point => `<circle cx="${point.x}" cy="${point.y}" r="3.2"/>`).join('');
+}
+
 function renderGoals() {
   const box = document.querySelector('.goals-widget');
   if (!box) return;
 
-  const goal = state.goals[0];
+  const goal = normalizeGoal(state.goals[0]);
+  if (goal) state.goals = [goal];
   const title = box.querySelector('h3');
   const values = box.querySelector('.goal-values');
-  const chart = box.querySelector('.goal-line-path');
 
-  if (goal) {
-    title.textContent = goal.name;
-    values.textContent = `${goal.current} → ${goal.target}`;
-    chart?.setAttribute('d', 'M0 70 C60 60 110 62 160 45 C220 38 270 25 320 18');
-  } else {
+  box.classList.toggle('is-text-goal', Boolean(goal?.type === 'text'));
+  box.classList.toggle('is-goal-completed', Boolean(goal?.type === 'text' && goal.status === 'completed'));
+
+  if (!goal) {
     title.textContent = 'Создай первую цель';
     values.textContent = 'Добавь цель, чтобы отслеживать прогресс';
-    chart?.setAttribute('d', 'M0 70 C80 70 160 70 320 70');
+    renderGoalChart(null);
+  } else if (goal.type === 'numeric') {
+    title.textContent = goal.name;
+    const unit = goal.unit ? ` ${goal.unit}` : '';
+    values.textContent = `${formatGoalValue(goal.current)}${unit} → ${formatGoalValue(goal.target)}${unit} · ${getGoalProgress(goal)}%`;
+    renderGoalChart(goal);
+  } else {
+    title.textContent = goal.name;
+    values.textContent = goal.text || (goal.status === 'completed' ? 'Цель выполнена' : 'В процессе');
+    values.dataset.status = goal.status === 'completed' ? 'Выполнено' : 'В процессе';
+    renderGoalChart(goal);
   }
 
   const button = box.querySelector('.widget-action');
@@ -274,28 +485,22 @@ function renderPlan() {
   if (!entries.length) {
     const empty = document.createElement('div');
     empty.className = 'empty-plan';
-
     const copy = document.createElement('p');
     copy.textContent = 'Настрой свой тренировочный график';
-
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = 'Создать план';
     button.addEventListener('click', openPlan);
-
     empty.append(copy, button);
     plan.appendChild(empty);
   } else {
     entries.forEach(([day, workout]) => {
       const row = document.createElement('div');
       row.className = 'workout-line dynamic-plan-row';
-
       const dayLabel = document.createElement('small');
       dayLabel.textContent = day;
-
       const workoutLabel = document.createElement('strong');
       workoutLabel.textContent = workout;
-
       row.append(dayLabel, workoutLabel);
       plan.appendChild(row);
     });
@@ -321,10 +526,15 @@ function formatWorkoutDuration(seconds) {
   const totalMinutes = Math.max(0, Math.round(Number(seconds || 0) / 60));
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-
   if (hours && minutes) return `${hours} ч ${minutes} мин`;
   if (hours) return `${hours} ч`;
   return `${Math.max(1, minutes)} мин`;
+}
+
+function formatClock(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
 function clearWorkoutTimer() {
@@ -334,10 +544,30 @@ function clearWorkoutTimer() {
   }
 }
 
+function reconcileStaleActiveWorkout(shouldPersist = true) {
+  if (!state.activeWorkout?.started) return false;
+  const started = new Date(state.activeWorkout.started);
+  if (Number.isNaN(started.getTime())) {
+    state.activeWorkout = null;
+    if (shouldPersist) persist();
+    return true;
+  }
+  const startedKey = state.activeWorkout.dateKey || getDateKey(started);
+  if (startedKey === getDateKey(new Date())) return false;
+
+  // The user did press “Start”, so the historical day remains purple even if
+  // the session was never explicitly finished. It is not counted in minutes.
+  state.attendance[startedKey] = 'started';
+  state.activeWorkout = null;
+  if (shouldPersist) persist();
+  return true;
+}
+
 function renderToday() {
   const box = document.querySelector('.today-widget');
   if (!box) return;
 
+  reconcileStaleActiveWorkout(false);
   const now = new Date();
   const today = getDayKey(now);
   const todayKey = getDateKey(now);
@@ -351,7 +581,8 @@ function renderToday() {
   const button = box.querySelector('.start-button');
 
   if (eyebrow) eyebrow.textContent = 'Сегодня';
-  box.classList.toggle('is-active', Boolean(state.activeWorkout && getDateKey(new Date(state.activeWorkout.started)) === todayKey));
+  const activeToday = Boolean(state.activeWorkout && getDateKey(new Date(state.activeWorkout.started)) === todayKey);
+  box.classList.toggle('is-active', activeToday);
   box.classList.toggle('is-completed', Boolean(completed));
   clearWorkoutTimer();
 
@@ -359,7 +590,8 @@ function renderToday() {
     title.textContent = completed.workout || workout || 'Тренировка';
     if (summary) {
       summary.hidden = false;
-      summary.textContent = `Завершено · ${formatWorkoutDuration(completed.duration)}`;
+      const range = [formatClock(completed.started), formatClock(completed.ended)].filter(Boolean).join('–');
+      summary.textContent = `${range ? `${range} · ` : ''}${formatWorkoutDuration(completed.duration)}`;
     }
     if (timer) timer.textContent = '';
     if (button) {
@@ -375,18 +607,13 @@ function renderToday() {
     summary.textContent = '';
   }
 
-  if (workout && workout !== 'Отдых') {
-    title.textContent = workout;
-  } else if (workout === 'Отдых') {
-    title.textContent = 'День отдыха';
-  } else {
-    title.textContent = 'Нет запланированной тренировки';
-  }
+  if (workout && workout !== 'Отдых') title.textContent = workout;
+  else if (workout === 'Отдых') title.textContent = 'День отдыха';
+  else title.textContent = 'Нет запланированной тренировки';
 
   if (!button) return;
   button.disabled = false;
 
-  const activeToday = state.activeWorkout && getDateKey(new Date(state.activeWorkout.started)) === todayKey;
   if (activeToday) {
     button.textContent = 'Завершить тренировку';
     button.onclick = finishWorkout;
@@ -482,6 +709,7 @@ function getCalendarStatus(date) {
   // An explicit date result always wins over a later edit of the weekly plan.
   if (isWorkoutCompletedOnDate(current) || recordedStatus === 'done') return 'done';
   if (recordedStatus === 'missed' && current < today) return 'missed';
+  if (recordedStatus === 'started') return 'started';
 
   if (state.activeWorkout) {
     const started = new Date(state.activeWorkout.started);
@@ -503,6 +731,7 @@ function getCalendarStatus(date) {
 function getCalendarStatusLabel(status) {
   if (status.includes('done')) return 'тренировка выполнена';
   if (status.includes('active')) return 'тренировка идёт';
+  if (status.includes('started')) return 'тренировка была начата';
   if (status.includes('missed')) return 'тренировка пропущена';
   if (status.includes('scheduled')) return 'тренировка запланирована';
   if (status.includes('rest')) return 'день отдыха';
@@ -583,41 +812,88 @@ function renderActivityChart(){
   const line = document.querySelector('.chart-line-path');
   const area = document.querySelector('.chart-area-path');
   const points = document.querySelector('.chart-point-group');
+  const totalEl = document.querySelector('.activity-total');
+  const metaEl = document.querySelector('.activity-meta');
   if(!line || !area || !points) return;
 
   const today = startOfDay(new Date());
   const monday = new Date(today);
   monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
 
-  const values = Array.from({length: 7}, (_, index) => {
+  const days = Array.from({length: 7}, (_, index) => {
     const date = new Date(monday);
     date.setDate(monday.getDate() + index);
-    const status = getCalendarStatus(date);
-    if (status.includes('done')) return 92;
-    if (status.includes('active')) return 76;
-    if (status.includes('missed')) return 24;
-    if (status.includes('scheduled')) return 56;
-    if (status.includes('rest')) return 18;
-    return 38;
+    return date;
   });
 
+  const secondsByDay = days.map(date => {
+    const key = getDateKey(date);
+    let seconds = (state.history || [])
+      .filter(item => item.status === 'completed' && (item.dateKey || getDateKey(new Date(item.date))) === key)
+      .reduce((sum, item) => sum + Math.max(0, Number(item.duration) || 0), 0);
+
+    if (state.activeWorkout?.started) {
+      const started = new Date(state.activeWorkout.started);
+      if (!Number.isNaN(started.getTime()) && getDateKey(started) === key) {
+        seconds += Math.max(0, Math.floor((Date.now() - started.getTime()) / 1000));
+      }
+    }
+    return seconds;
+  });
+
+  const values = secondsByDay.map(seconds => seconds / 60);
+  const completedThisWeek = (state.history || []).filter(item => {
+    if (item.status !== 'completed') return false;
+    const key = item.dateKey || getDateKey(new Date(item.date));
+    return days.some(day => getDateKey(day) === key);
+  }).length;
+  const totalSeconds = secondsByDay.reduce((sum, value) => sum + value, 0);
+
+  if (totalEl) totalEl.textContent = totalSeconds > 0 ? formatWorkoutDuration(totalSeconds) : '0 мин';
+  if (metaEl) {
+    if (!completedThisWeek && !state.activeWorkout) metaEl.textContent = 'пока нет активности за эту неделю';
+    else {
+      const average = completedThisWeek ? Math.round((totalSeconds / 60) / completedThisWeek) : 0;
+      metaEl.textContent = `${completedThisWeek} ${completedThisWeek === 1 ? 'тренировка' : completedThisWeek < 5 ? 'тренировки' : 'тренировок'}${average ? ` · в среднем ${average} мин` : ''}`;
+    }
+  }
+
+  const maxValue = Math.max(30, ...values);
   const coords = values.map((value, index) => ({
     x: Number((index * (320 / 6)).toFixed(1)),
-    y: Number((108 - (value / 100 * 85)).toFixed(1))
+    y: Number((104 - (value / maxValue) * 80).toFixed(1))
   }));
 
-  const path = coords.map((point, index) => `${index ? 'L' : 'M'}${point.x} ${point.y}`).join(' ');
+  const path = buildSmoothPath(coords);
   line.setAttribute('d', path);
-  area.setAttribute('d', `${path} V116 H0 Z`);
-  points.innerHTML = coords.map(point => `<circle cx="${point.x}" cy="${point.y}" r="3.2"/>`).join('');
+  area.setAttribute('d', `${path} L320 112 L0 112 Z`);
+  points.innerHTML = coords.map((point, index) => {
+    const minutes = Math.round(values[index]);
+    return `<circle cx="${point.x}" cy="${point.y}" r="3.2"><title>${minutes} мин</title></circle>`;
+  }).join('');
 }
 
 
+function setGoalType(type) {
+  selectedGoalType = type === 'text' ? 'text' : 'numeric';
+  document.querySelectorAll('[data-goal-type]').forEach(button => {
+    button.classList.toggle('is-selected', button.dataset.goalType === selectedGoalType);
+  });
+  const numeric = document.getElementById('goal-numeric-fields');
+  const text = document.getElementById('goal-text-fields');
+  if (numeric) numeric.hidden = selectedGoalType !== 'numeric';
+  if (text) text.hidden = selectedGoalType !== 'text';
+}
+
 function addGoal() {
-  const goal = state.goals[0];
+  const goal = normalizeGoal(state.goals[0]);
   document.getElementById('goal-name').value = goal?.name || '';
-  document.getElementById('goal-current').value = goal?.current || '';
-  document.getElementById('goal-target').value = goal?.target || '';
+  document.getElementById('goal-current').value = goal?.type === 'numeric' ? goal.current : '';
+  document.getElementById('goal-target').value = goal?.type === 'numeric' ? goal.target : '';
+  document.getElementById('goal-unit').value = goal?.type === 'numeric' ? goal.unit || '' : '';
+  document.getElementById('goal-text').value = goal?.type === 'text' ? goal.text || '' : '';
+  document.getElementById('goal-status').value = goal?.type === 'text' ? goal.status || 'active' : 'active';
+  setGoalType(goal?.type || 'numeric');
   document.getElementById('goal-sheet').hidden = false;
 }
 
@@ -630,11 +906,53 @@ function openGoal() {
 }
 
 function saveGoal() {
-  state.goals = [{
-    name: document.getElementById('goal-name').value || 'Новая цель',
-    current: document.getElementById('goal-current').value || 0,
-    target: document.getElementById('goal-target').value || 0
-  }];
+  const name = document.getElementById('goal-name').value.trim();
+  if (!name) {
+    showToast('Добавь название цели');
+    return;
+  }
+
+  const previous = normalizeGoal(state.goals[0]);
+  const now = new Date().toISOString();
+
+  if (selectedGoalType === 'text') {
+    const text = document.getElementById('goal-text').value.trim();
+    if (!text) {
+      showToast('Опиши желаемый результат');
+      return;
+    }
+    state.goals = [{
+      type: 'text',
+      name,
+      text,
+      status: document.getElementById('goal-status').value === 'completed' ? 'completed' : 'active',
+      updatedAt: now
+    }];
+  } else {
+    const current = parseGoalNumber(document.getElementById('goal-current').value);
+    const target = parseGoalNumber(document.getElementById('goal-target').value);
+    if (current === null || target === null) {
+      showToast('Укажи текущее и целевое значение');
+      return;
+    }
+
+    const previousNumeric = previous?.type === 'numeric' ? previous : null;
+    const history = previousNumeric?.history ? [...previousNumeric.history] : [];
+    if (!history.length || Number(history[history.length - 1]?.value) !== current) {
+      history.push({ date: now, value: current });
+    }
+
+    state.goals = [{
+      type: 'numeric',
+      name,
+      current,
+      target,
+      start: previousNumeric ? Number(previousNumeric.start) : current,
+      unit: document.getElementById('goal-unit').value.trim(),
+      history: history.slice(-30),
+      updatedAt: now
+    }];
+  }
 
   persist();
   closeSheets();
@@ -643,6 +961,10 @@ function saveGoal() {
 }
 
 function deleteGoal() {
+  if (!state.goals.length) {
+    closeSheets();
+    return;
+  }
   state.goals = [];
   persist();
   closeSheets();
@@ -662,6 +984,8 @@ function openPlan() {
 }
 
 function savePlan(){
+  // Freeze all past results against the old plan before replacing it.
+  syncAttendanceByDate();
   const newPlan = {};
   document.querySelectorAll('.day-picker').forEach(row => {
     const day = row.dataset.day;
@@ -787,6 +1111,7 @@ function updateWorkoutTimer() {
     }
     const sec = Math.max(0, Math.floor((Date.now() - started.getTime()) / 1000));
     el.textContent = formatWorkoutTime(sec);
+    if (sec % 30 === 0) renderActivityChart();
     workoutTimerHandle = setTimeout(tick, 1000);
   };
 
@@ -806,5 +1131,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   closeSheets();
   setupSheetGestures();
+  reconcileStaleActiveWorkout(false);
+  persistLocal();
   renderFitness();
+  syncTrainingWithServer();
 });
