@@ -62,10 +62,12 @@ const STORAGE = {
   plan: 'fitness_plan',
   history: 'fitness_history',
   attendance: 'fitness_attendance',
+  planMeta: 'fitness_plan_meta_v2',
   finance: 'finance_budget_v2'
 };
 
 let selectedDay = null;
+let calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
 let financeData = JSON.parse(localStorage.getItem(STORAGE.finance) || 'null') || {
   monthlyIncome:0,
@@ -83,14 +85,22 @@ const state = {
   plan: JSON.parse(localStorage.getItem(STORAGE.plan) || '{}'),
   history: JSON.parse(localStorage.getItem(STORAGE.history) || '[]'),
   attendance: JSON.parse(localStorage.getItem(STORAGE.attendance) || '{}'),
+  planMeta: JSON.parse(localStorage.getItem(STORAGE.planMeta) || 'null') || { effectiveFrom: null },
   activeWorkout: JSON.parse(localStorage.getItem('active_workout') || 'null')
 };
+
+if (!state.planMeta.effectiveFrom && Object.keys(state.plan).length) {
+  // Older builds stored attendance only by weekday, so their exact historical dates
+  // cannot be reconstructed safely. Start date-based tracking from this build onward.
+  state.planMeta.effectiveFrom = getDateKey(new Date());
+}
 
 function persist() {
   localStorage.setItem(STORAGE.goals, JSON.stringify(state.goals));
   localStorage.setItem(STORAGE.plan, JSON.stringify(state.plan));
   localStorage.setItem(STORAGE.history, JSON.stringify(state.history));
   localStorage.setItem(STORAGE.attendance, JSON.stringify(state.attendance));
+  localStorage.setItem(STORAGE.planMeta, JSON.stringify(state.planMeta));
   localStorage.setItem('active_workout', JSON.stringify(state.activeWorkout));
 }
 
@@ -139,6 +149,7 @@ function openTraining() {
   if (!screen) return;
   screen.hidden = false;
   document.body.classList.add('training-open');
+  calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   renderFitness();
 }
 
@@ -319,105 +330,198 @@ function getDayKey(date = new Date()) {
   return days[date.getDay()];
 }
 
-function updateAttendanceByDate() {
-  const now = new Date();
-  const today = getDayKey(now);
-  const plan = state.plan || {};
+function getDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
-  Object.keys(plan).forEach(day => {
-    if (day === today) return;
-    if (!plan[day] || plan[day] === 'Отдых') return;
-    if (state.attendance[day] === 'done') return;
+function startOfDay(date = new Date()) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
 
-    const order = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
-    const todayIndex = order.indexOf(today);
-    const dayIndex = order.indexOf(day);
+function isSameMonth(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+}
 
-    if (dayIndex >= 0 && todayIndex > dayIndex) {
-      state.attendance[day] = 'missed';
-    }
+function getPlanEffectiveDate() {
+  const key = state.planMeta?.effectiveFrom;
+  if (!key) return null;
+  const date = new Date(`${key}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : startOfDay(date);
+}
+
+function isWorkoutCompletedOnDate(date) {
+  const key = getDateKey(date);
+  return (state.history || []).some(item => {
+    if (item.status !== 'completed') return false;
+    if (item.dateKey) return item.dateKey === key;
+    const historyDate = new Date(item.date);
+    return !Number.isNaN(historyDate.getTime()) && getDateKey(historyDate) === key;
   });
-  persist();
+}
+
+function syncAttendanceByDate() {
+  const effectiveFrom = getPlanEffectiveDate();
+  if (!effectiveFrom) return;
+
+  const today = startOfDay(new Date());
+  const cursor = new Date(effectiveFrom);
+  const oldestAllowed = new Date(today);
+  oldestAllowed.setDate(oldestAllowed.getDate() - 366);
+  if (cursor < oldestAllowed) cursor.setTime(oldestAllowed.getTime());
+
+  let changed = false;
+
+  while (cursor < today) {
+    const key = getDateKey(cursor);
+    const workout = state.plan?.[getDayKey(cursor)];
+
+    if (isWorkoutCompletedOnDate(cursor)) {
+      if (state.attendance[key] !== 'done') {
+        state.attendance[key] = 'done';
+        changed = true;
+      }
+    } else if (workout && workout !== 'Отдых' && !state.attendance[key]) {
+      state.attendance[key] = 'missed';
+      changed = true;
+    }
+
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  if (changed) persist();
+}
+
+function getCalendarStatus(date) {
+  const today = startOfDay(new Date());
+  const current = startOfDay(date);
+  const key = getDateKey(current);
+  const workout = state.plan?.[getDayKey(current)];
+  const effectiveFrom = getPlanEffectiveDate();
+
+  if (isWorkoutCompletedOnDate(current) || state.attendance[key] === 'done') return 'done';
+
+  if (state.activeWorkout) {
+    const started = new Date(state.activeWorkout.started);
+    if (!Number.isNaN(started.getTime()) && getDateKey(started) === key) return 'active';
+  }
+
+  if (current > today) return workout && workout !== 'Отдых' ? 'future scheduled' : 'future';
+
+  if (current.getTime() === today.getTime()) {
+    return workout && workout !== 'Отдых' ? 'scheduled' : 'rest';
+  }
+
+  // We cannot infer exact attendance for dates that predate date-based tracking.
+  if (!effectiveFrom || current < effectiveFrom) return 'untracked';
+
+  if (!workout || workout === 'Отдых') return 'rest';
+  return state.attendance[key] === 'missed' ? 'missed' : 'missed';
+}
+
+function getCalendarStatusLabel(status) {
+  if (status.includes('done')) return 'тренировка выполнена';
+  if (status.includes('active')) return 'тренировка идёт';
+  if (status.includes('missed')) return 'тренировка пропущена';
+  if (status.includes('scheduled')) return 'тренировка запланирована';
+  if (status.includes('rest')) return 'день отдыха';
+  if (status.includes('future')) return 'будущий день';
+  return 'нет данных';
+}
+
+function shiftCalendarMonth(delta) {
+  const next = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() + delta, 1);
+  const currentMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+  if (next > currentMonth) return;
+  calendarCursor = next;
+  renderCalendar();
 }
 
 function renderCalendar() {
   const grid = document.querySelector('.attendance-grid');
   if (!grid) return;
 
-  updateAttendanceByDate();
+  syncAttendanceByDate();
 
   const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
+  const year = calendarCursor.getFullYear();
+  const month = calendarCursor.getMonth();
   const monthTitle = document.querySelector('.attendance-month');
+  const nextButton = document.querySelector('.calendar-next');
 
   if (monthTitle) {
     monthTitle.textContent = new Intl.DateTimeFormat('ru-RU', {
       month: 'long',
       year: 'numeric'
-    }).format(now).replace(' г.', '');
+    }).format(calendarCursor).replace(' г.', '');
+  }
+
+  if (nextButton) {
+    const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    nextButton.disabled = isSameMonth(calendarCursor, currentMonth);
   }
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  // Monday based calendar: 0 = Monday ... 6 = Sunday
-  const firstDay = (new Date(year, month, 1).getDay() + 6) % 7;
-
+  const firstDay = (new Date(year, month, 1).getDay() + 6) % 7; // Monday = 0
+  const totalSlots = Math.ceil((firstDay + daysInMonth) / 7) * 7; // Complete rows only; no stretched empty sixth row.
   let html = '';
 
   for (let i = 0; i < firstDay; i++) {
     html += '<span class="calendar-day empty" aria-hidden="true"></span>';
   }
 
-  for (let d = 1; d <= daysInMonth; d++) {
-    const date = new Date(year, month, d);
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(year, month, day);
     const status = getCalendarStatus(date);
-    const today = date.toDateString() === now.toDateString();
+    const isToday = getDateKey(date) === getDateKey(now);
+    const label = getCalendarStatusLabel(status);
+    const monthName = new Intl.DateTimeFormat('ru-RU', { month: 'long' }).format(date);
 
-    html += `<span class="calendar-day ${status}${today ? ' today' : ''}" aria-label="${d} число"></span>`;
+    html += `<span class="calendar-day ${status}${isToday ? ' today' : ''}" aria-label="${day} ${monthName}: ${label}">${day}</span>`;
+  }
+
+  const usedSlots = firstDay + daysInMonth;
+  for (let i = usedSlots; i < totalSlots; i++) {
+    html += '<span class="calendar-day empty" aria-hidden="true"></span>';
   }
 
   grid.innerHTML = html;
-}
-
-function getCalendarStatus(date) {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const current = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-  const day = getDayKey(date);
-  const workoutPlan = state.plan?.[day];
-
-  // День без тренировки в плане — спокойный нейтральный день
-  if (!workoutPlan || workoutPlan === 'Отдых') return 'rest';
-
-  const item = (state.history || []).find(h => {
-    const hd = new Date(h.date);
-    return hd.toDateString() === current.toDateString() && h.status === 'completed';
-  });
-
-  // Завершенная тренировка имеет максимальный приоритет
-  if (item) return 'done';
-
-  // Будущая запланированная тренировка не считается пропуском
-  if (current > today) return '';
-
-  // Сегодня или прошедший день с планом без выполнения
-  return 'missed';
 }
 
 function renderActivityChart(){
   const line = document.querySelector('.chart-line-path');
   const area = document.querySelector('.chart-area-path');
   const points = document.querySelector('.chart-point-group');
-  if(!line || !points) return;
+  if(!line || !area || !points) return;
 
-  const days=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
-  const values = days.map(d => state.attendance[d]==='done' ? 90 : state.attendance[d]==='missed' ? 25 : state.attendance[d]==='rest' ? 10 : 45);
-  const coords = values.map((v,i)=>`${i*53.3} ${108-(v/100*85)}`);
-  const d = 'M'+coords.join(' C');
-  line.setAttribute('d', d);
-  area.setAttribute('d', d+' V116H0Z');
-  points.innerHTML = coords.map(c=>{const [x,y]=c.split(' '); return `<circle cx="${x}" cy="${y}" r="3.2"/>`;}).join('');
+  const today = startOfDay(new Date());
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+
+  const values = Array.from({length: 7}, (_, index) => {
+    const date = new Date(monday);
+    date.setDate(monday.getDate() + index);
+    const status = getCalendarStatus(date);
+    if (status.includes('done')) return 92;
+    if (status.includes('active')) return 76;
+    if (status.includes('missed')) return 24;
+    if (status.includes('scheduled')) return 56;
+    if (status.includes('rest')) return 18;
+    return 38;
+  });
+
+  const coords = values.map((value, index) => ({
+    x: Number((index * (320 / 6)).toFixed(1)),
+    y: Number((108 - (value / 100 * 85)).toFixed(1))
+  }));
+
+  const path = coords.map((point, index) => `${index ? 'L' : 'M'}${point.x} ${point.y}`).join(' ');
+  line.setAttribute('d', path);
+  area.setAttribute('d', `${path} V116 H0 Z`);
+  points.innerHTML = coords.map(point => `<circle cx="${point.x}" cy="${point.y}" r="3.2"/>`).join('');
 }
 
 
@@ -478,6 +582,7 @@ function savePlan(){
     if (value) newPlan[day] = value;
   });
   state.plan = newPlan;
+  state.planMeta = { effectiveFrom: getDateKey(new Date()) };
   persist();
   closeSheets();
   renderFitness();
@@ -494,10 +599,15 @@ function startWorkout() {
     return;
   }
 
+  if (workout === 'Отдых') {
+    showToast('Сегодня день отдыха');
+    return;
+  }
+
   state.activeWorkout={started:now.toISOString(), workout, day};
 
-  // Сразу отмечаем сегодняшний день как активную тренировку
-  state.attendance[day] = 'done';
+  // Starting a workout is not the same as completing it. Track it by exact date.
+  state.attendance[getDateKey(now)] = 'active';
 
   persist();
   renderCalendar();
@@ -513,9 +623,17 @@ function finishWorkout(){
   const started = state.activeWorkout.started;
   const finished = new Date().toISOString();
 
-  state.history = state.history.filter(h => new Date(h.date).toDateString() !== new Date().toDateString());
+  const workoutDate = new Date(started);
+  const workoutDateKey = getDateKey(workoutDate);
+
+  state.history = state.history.filter(h => {
+    if (h.dateKey) return h.dateKey !== workoutDateKey;
+    const historyDate = new Date(h.date);
+    return Number.isNaN(historyDate.getTime()) || getDateKey(historyDate) !== workoutDateKey;
+  });
   state.history.push({
     date: finished,
+    dateKey: workoutDateKey,
     started,
     ended: finished,
     day: state.activeWorkout.day,
@@ -524,7 +642,7 @@ function finishWorkout(){
     status:'completed'
   });
 
-  state.attendance[state.activeWorkout.day] = 'done';
+  state.attendance[workoutDateKey] = 'done';
   state.activeWorkout=null;
   persist();
   renderFitness();

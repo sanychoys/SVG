@@ -211,11 +211,19 @@
 
     <div class="top-training-row">
       <section class="apple-widget attendance-widget">
-        <div class="widget-header widget-header--tight">
-          <h2 class="attendance-month">Месяц</h2>
+        <div class="widget-header widget-header--tight calendar-header">
+          <h2 class="attendance-month" aria-live="polite">Месяц</h2>
+          <div class="calendar-nav" aria-label="Навигация по месяцам">
+            <button type="button" class="calendar-nav-button" onclick="shiftCalendarMonth(-1)" aria-label="Предыдущий месяц">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg>
+            </button>
+            <button type="button" class="calendar-nav-button calendar-next" onclick="shiftCalendarMonth(1)" aria-label="Следующий месяц">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5.5L16 12l-6.5 6.5"/></svg>
+            </button>
+          </div>
         </div>
         <div class="attendance-weekdays" aria-hidden="true"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div>
-        <div class="attendance-grid" aria-label="Календарь посещения"></div>
+        <div class="attendance-grid" aria-label="Календарь тренировок"></div>
       </section>
 
       <section class="apple-widget week-widget">
