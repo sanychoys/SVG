@@ -5,6 +5,7 @@ from aiogram.types import Message
 from aiogram.filters import Command
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 import uvicorn
 
 from config import BOT_TOKEN
@@ -22,6 +23,22 @@ dp = Dispatcher()
 # API встроен в основной файл проекта
 # Отдельные backend-файлы не создаются
 app = FastAPI(title="SVGTracker API")
+
+
+# Frontend serving for Telegram Mini App
+@app.get("/")
+def home():
+    return FileResponse("index.html")
+
+
+@app.get("/style.css")
+def css():
+    return FileResponse("style.css", media_type="text/css")
+
+
+@app.get("/script.js")
+def js():
+    return FileResponse("script.js", media_type="application/javascript")
 
 
 @app.get("/api/test")
