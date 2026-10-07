@@ -3255,87 +3255,122 @@ body.training-open {
   font-weight: 700;
 }
 
-/* Training calendar v2 — one canonical layout, no competing overrides. */
-.single-training-screen .top-training-row {
-  grid-template-columns: 1fr;
-  gap: 12px;
-  align-items: start;
+/* Training UX v3 — compact Apple Fitness-style calendar and mobile-safe inputs. */
+
+/* iOS / Telegram WebView zooms focused form controls below 16px. Keep native zoom available,
+   but prevent that automatic focus jump by using a mobile-safe control font size. */
+input,
+select,
+textarea,
+.day-input,
+.sheet-panel input,
+.sheet-panel select,
+.sheet-panel textarea {
+  font-size: 16px !important;
 }
 
+button,
+input,
+select,
+textarea,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+.sheet-panel {
+  max-height: 90dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.single-training-screen .top-training-row {
+  display: grid;
+  grid-template-columns: minmax(118px, .82fr) minmax(0, 1.32fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+/* Compact calendar: no visible dates, only status dots. */
 .single-training-screen .attendance-widget {
-  --calendar-cell: 34px;
-  --calendar-gap: 8px;
+  --calendar-dot: 9px;
+  --calendar-gap-x: 6px;
+  --calendar-gap-y: 7px;
   width: 100%;
-  max-width: none;
+  min-width: 0;
   min-height: 0;
-  height: auto;
-  padding: 16px;
+  padding: 13px 12px 12px;
   overflow: hidden;
 }
 
 .single-training-screen .attendance-widget::after {
-  background: rgba(255,255,255,0.07);
-  opacity: 0.35;
+  display: none;
 }
 
 .single-training-screen .calendar-header {
-  margin-bottom: 14px;
+  min-height: 28px;
+  margin-bottom: 8px;
+  gap: 6px;
 }
 
 .single-training-screen .attendance-month {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   text-transform: capitalize;
-  font-size: 19px;
-  font-weight: 680;
-  letter-spacing: -0.035em;
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 660;
+  letter-spacing: -0.025em;
 }
 
 .single-training-screen .calendar-nav {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
+  flex: 0 0 auto;
 }
 
 .single-training-screen .calendar-nav-button {
   appearance: none;
-  width: 30px;
-  height: 30px;
+  width: 23px;
+  height: 23px;
   display: grid;
   place-items: center;
   padding: 0;
-  border: 1px solid rgba(255,255,255,0.10);
-  border-radius: 10px;
-  background: rgba(255,255,255,0.055);
-  color: rgba(255,255,255,0.88);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.055);
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255,255,255,.055);
+  color: rgba(255,255,255,.72);
+  box-shadow: none;
   cursor: pointer;
-  transition: background .16s ease, transform .16s ease, opacity .16s ease;
 }
 
 .single-training-screen .calendar-nav-button svg {
-  width: 14px;
-  height: 14px;
+  width: 11px;
+  height: 11px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.9;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .single-training-screen .calendar-nav-button:active {
   transform: scale(.94);
-  background: rgba(255,255,255,0.09);
+  background: rgba(255,255,255,.09);
 }
 
 .single-training-screen .calendar-nav-button:disabled {
-  opacity: .24;
+  opacity: .18;
   cursor: default;
 }
 
 .single-training-screen .attendance-weekdays,
 .single-training-screen .attendance-grid {
   display: grid;
-  grid-template-columns: repeat(7, var(--calendar-cell));
-  column-gap: var(--calendar-gap);
+  grid-template-columns: repeat(7, var(--calendar-dot));
+  column-gap: var(--calendar-gap-x);
   width: max-content;
   margin-left: auto;
   margin-right: auto;
@@ -3343,44 +3378,39 @@ body.training-open {
 }
 
 .single-training-screen .attendance-weekdays {
-  margin-bottom: 8px;
-  color: rgba(255,255,255,0.40);
-  font-size: 10px;
+  margin-bottom: 7px;
+  color: rgba(255,255,255,.34);
+  font-size: 7px;
   line-height: 1;
-  font-weight: 600;
-  letter-spacing: .01em;
+  font-weight: 650;
   text-align: center;
 }
 
 .single-training-screen .attendance-weekdays span {
-  width: var(--calendar-cell);
+  width: var(--calendar-dot);
   display: grid;
   place-items: center;
 }
 
 .single-training-screen .attendance-grid {
-  row-gap: var(--calendar-gap);
+  row-gap: var(--calendar-gap-y);
 }
 
 .single-training-screen .attendance-grid .calendar-day {
-  position: relative;
-  width: var(--calendar-cell);
-  height: var(--calendar-cell);
-  min-width: var(--calendar-cell);
-  min-height: var(--calendar-cell);
-  display: grid;
-  place-items: center;
+  width: var(--calendar-dot);
+  height: var(--calendar-dot);
+  min-width: var(--calendar-dot);
+  min-height: var(--calendar-dot);
   margin: 0;
-  border: 1px solid transparent;
+  padding: 0;
+  border: 0 !important;
   border-radius: 50%;
-  background: transparent;
-  color: rgba(255,255,255,0.78);
-  font-size: 12px;
-  line-height: 1;
-  font-weight: 560;
-  font-variant-numeric: tabular-nums;
-  box-shadow: none;
-  outline: none;
+  background: rgba(255,255,255,.11);
+  box-shadow: none !important;
+  outline: none !important;
+  font-size: 0;
+  color: transparent;
+  transition: transform .14s ease, background .14s ease, opacity .14s ease;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -3391,78 +3421,170 @@ body.training-open {
 }
 
 .single-training-screen .attendance-grid .calendar-day.untracked,
-.single-training-screen .attendance-grid .calendar-day.rest,
-.single-training-screen .attendance-grid .calendar-day.future {
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-}
-
-.single-training-screen .attendance-grid .calendar-day.untracked,
 .single-training-screen .attendance-grid .calendar-day.rest {
-  color: rgba(255,255,255,0.38);
+  background: rgba(255,255,255,.11);
 }
 
 .single-training-screen .attendance-grid .calendar-day.future {
-  color: rgba(255,255,255,0.23);
+  background: rgba(255,255,255,.055);
 }
 
 .single-training-screen .attendance-grid .calendar-day.scheduled {
-  background: rgba(255,255,255,0.075);
-  border-color: rgba(255,255,255,0.075);
-  color: rgba(255,255,255,0.90);
+  background: rgba(255,255,255,.42);
 }
 
+/* Started and completed workouts are purple. */
+.single-training-screen .attendance-grid .calendar-day.active,
 .single-training-screen .attendance-grid .calendar-day.done {
-  background: rgba(255,255,255,0.96);
-  color: #070809;
-  font-weight: 720;
-  box-shadow: 0 4px 14px rgba(255,255,255,0.10);
+  background: #8f72ff;
 }
 
+/* A planned workout that was never started before the day ended is red. */
 .single-training-screen .attendance-grid .calendar-day.missed {
-  background: transparent;
-  color: rgba(255,255,255,0.34);
-  border-color: rgba(255,255,255,0.12);
-  box-shadow: none;
+  background: #ff5368;
 }
 
 .single-training-screen .attendance-grid .calendar-day.missed::after {
-  content: "";
-  position: absolute;
-  bottom: 5px;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.28);
+  display: none !important;
 }
 
-.single-training-screen .attendance-grid .calendar-day.active {
-  background: rgba(255,255,255,0.10);
-  color: rgba(255,255,255,0.98);
-  border-color: rgba(255,255,255,0.46);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
-}
-
+/* Today is indicated by size only — never by a ring/outline. */
 .single-training-screen .attendance-grid .calendar-day.today {
-  box-shadow: 0 0 0 2px #070809, 0 0 0 3px rgba(255,255,255,0.94);
+  transform: scale(1.22);
+  background: rgba(255,255,255,.58);
 }
 
+.single-training-screen .attendance-grid .calendar-day.today.active,
 .single-training-screen .attendance-grid .calendar-day.today.done {
-  box-shadow: 0 0 0 2px #070809, 0 0 0 3px rgba(255,255,255,0.94), 0 4px 14px rgba(255,255,255,0.12);
+  background: #8f72ff;
 }
 
-@media (max-width: 390px) {
-  .single-training-screen .attendance-widget {
-    --calendar-cell: 32px;
-    --calendar-gap: 7px;
-    padding: 14px;
+.single-training-screen .attendance-grid .calendar-day.today.missed {
+  background: #ff5368;
+}
+
+/* Plan stays to the right of the compact calendar. */
+.single-training-screen .week-widget {
+  min-width: 0;
+  padding: 13px 13px 12px;
+}
+
+.single-training-screen .week-widget .widget-header {
+  min-height: 28px;
+  margin-bottom: 6px;
+}
+
+.single-training-screen .week-widget h2 {
+  font-size: 16px;
+}
+
+.single-training-screen .week-widget .widget-action {
+  width: 29px;
+  height: 29px;
+}
+
+.single-training-screen .workout-line {
+  grid-template-columns: 23px minmax(0, 1fr);
+  gap: 7px;
+  padding: 5px 0;
+}
+
+.single-training-screen .workout-line small {
+  font-size: 9px;
+}
+
+.single-training-screen .workout-line strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.18;
+}
+
+.single-training-screen .empty-plan {
+  padding: 4px 0 0;
+}
+
+.single-training-screen .empty-plan p {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--fitness-muted);
+}
+
+.single-training-screen .empty-plan button {
+  min-height: 34px;
+  border-radius: 11px;
+  font-size: 12px;
+}
+
+/* Activity remains a full-width block directly below calendar + plan. */
+.single-training-screen .chart-widget {
+  margin-top: 10px;
+}
+
+.single-training-screen .workout-summary {
+  margin-top: -2px;
+  color: rgba(225,229,236,.56);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.single-training-screen .workout-summary[hidden] {
+  display: none !important;
+}
+
+.single-training-screen .workout-timer {
+  min-height: 0;
+  margin: 0;
+  color: rgba(255,255,255,.98);
+  font-size: 30px;
+  line-height: 1.05;
+  font-weight: 720;
+  font-variant-numeric: tabular-nums;
+}
+
+.single-training-screen .workout-timer:empty {
+  display: none;
+}
+
+.single-training-screen .start-button:disabled {
+  cursor: default;
+  opacity: 1;
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.58);
+  box-shadow: none;
+}
+
+.single-training-screen .today-widget.is-completed .start-button {
+  background: rgba(255,255,255,.075);
+  color: rgba(255,255,255,.58);
+}
+
+@media (max-width: 360px) {
+  .single-training-screen .top-training-row {
+    grid-template-columns: minmax(112px, .8fr) minmax(0, 1.2fr);
+    gap: 8px;
   }
-}
 
-@media (max-width: 350px) {
   .single-training-screen .attendance-widget {
-    --calendar-cell: 30px;
-    --calendar-gap: 5px;
+    --calendar-dot: 8px;
+    --calendar-gap-x: 5px;
+    --calendar-gap-y: 6px;
+    padding: 12px 9px 11px;
+  }
+
+  .single-training-screen .attendance-month {
+    font-size: 12px;
+  }
+
+  .single-training-screen .calendar-nav-button {
+    width: 21px;
+    height: 21px;
+  }
+
+  .single-training-screen .week-widget {
+    padding-left: 11px;
+    padding-right: 11px;
   }
 }

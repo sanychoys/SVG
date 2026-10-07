@@ -66,8 +66,8 @@ const STORAGE = {
   finance: 'finance_budget_v2'
 };
 
-let selectedDay = null;
 let calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let workoutTimerHandle = null;
 
 let financeData = JSON.parse(localStorage.getItem(STORAGE.finance) || 'null') || {
   monthlyIncome:0,
@@ -266,18 +266,38 @@ function renderPlan() {
 
   plan.querySelectorAll('.dynamic-plan-row, .empty-plan').forEach(e => e.remove());
 
-  const entries = Object.entries(state.plan);
+  const orderedDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  const entries = orderedDays
+    .filter(day => Object.prototype.hasOwnProperty.call(state.plan, day))
+    .map(day => [day, state.plan[day]]);
+
   if (!entries.length) {
-    plan.insertAdjacentHTML('beforeend', `
-      <div class="empty-plan">
-        <p>Настрой свой тренировочный график</p>
-        <button onclick="openPlan()">Создать план</button>
-      </div>`);
+    const empty = document.createElement('div');
+    empty.className = 'empty-plan';
+
+    const copy = document.createElement('p');
+    copy.textContent = 'Настрой свой тренировочный график';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Создать план';
+    button.addEventListener('click', openPlan);
+
+    empty.append(copy, button);
+    plan.appendChild(empty);
   } else {
     entries.forEach(([day, workout]) => {
-      plan.insertAdjacentHTML('beforeend',
-        `<div class="workout-line dynamic-plan-row"><small>${day}</small><strong>${workout}</strong></div>`
-      );
+      const row = document.createElement('div');
+      row.className = 'workout-line dynamic-plan-row';
+
+      const dayLabel = document.createElement('small');
+      dayLabel.textContent = day;
+
+      const workoutLabel = document.createElement('strong');
+      workoutLabel.textContent = workout;
+
+      row.append(dayLabel, workoutLabel);
+      plan.appendChild(row);
     });
   }
 
@@ -285,17 +305,75 @@ function renderPlan() {
   if (button) button.onclick = editPlan;
 }
 
+function getCompletedWorkoutForDate(date = new Date()) {
+  const key = getDateKey(date);
+  return [...(state.history || [])]
+    .reverse()
+    .find(item => {
+      if (item.status !== 'completed') return false;
+      if (item.dateKey) return item.dateKey === key;
+      const historyDate = new Date(item.date);
+      return !Number.isNaN(historyDate.getTime()) && getDateKey(historyDate) === key;
+    }) || null;
+}
+
+function formatWorkoutDuration(seconds) {
+  const totalMinutes = Math.max(0, Math.round(Number(seconds || 0) / 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours && minutes) return `${hours} ч ${minutes} мин`;
+  if (hours) return `${hours} ч`;
+  return `${Math.max(1, minutes)} мин`;
+}
+
+function clearWorkoutTimer() {
+  if (workoutTimerHandle) {
+    clearTimeout(workoutTimerHandle);
+    workoutTimerHandle = null;
+  }
+}
+
 function renderToday() {
   const box = document.querySelector('.today-widget');
   if (!box) return;
 
-  const days = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-  const today = days[new Date().getDay()];
+  const now = new Date();
+  const today = getDayKey(now);
+  const todayKey = getDateKey(now);
   const workout = state.plan[today];
+  const completed = getCompletedWorkoutForDate(now);
 
   const title = box.querySelector('h2');
   const eyebrow = box.querySelector('.module-eyebrow');
+  const summary = box.querySelector('.workout-summary');
+  const timer = box.querySelector('.workout-timer');
+  const button = box.querySelector('.start-button');
+
   if (eyebrow) eyebrow.textContent = 'Сегодня';
+  box.classList.toggle('is-active', Boolean(state.activeWorkout && getDateKey(new Date(state.activeWorkout.started)) === todayKey));
+  box.classList.toggle('is-completed', Boolean(completed));
+  clearWorkoutTimer();
+
+  if (completed) {
+    title.textContent = completed.workout || workout || 'Тренировка';
+    if (summary) {
+      summary.hidden = false;
+      summary.textContent = `Завершено · ${formatWorkoutDuration(completed.duration)}`;
+    }
+    if (timer) timer.textContent = '';
+    if (button) {
+      button.textContent = 'Тренировка завершена';
+      button.onclick = null;
+      button.disabled = true;
+    }
+    return;
+  }
+
+  if (summary) {
+    summary.hidden = true;
+    summary.textContent = '';
+  }
 
   if (workout && workout !== 'Отдых') {
     title.textContent = workout;
@@ -305,21 +383,20 @@ function renderToday() {
     title.textContent = 'Нет запланированной тренировки';
   }
 
-  const button = box.querySelector('.start-button');
   if (!button) return;
+  button.disabled = false;
 
-  if (workout && workout !== 'Отдых') {
-    if (state.activeWorkout) {
-      button.textContent = 'Идёт тренировка';
-      button.onclick = () => {
-        if(confirm('Завершить тренировку?')) finishWorkout();
-      };
-      updateWorkoutTimer();
-    } else {
-      button.textContent = 'Начать тренировку';
-      button.onclick = startWorkout;
-    }
+  const activeToday = state.activeWorkout && getDateKey(new Date(state.activeWorkout.started)) === todayKey;
+  if (activeToday) {
+    button.textContent = 'Завершить тренировку';
+    button.onclick = finishWorkout;
+    updateWorkoutTimer();
+  } else if (workout && workout !== 'Отдых') {
+    if (timer) timer.textContent = '';
+    button.textContent = 'Начать тренировку';
+    button.onclick = startWorkout;
   } else {
+    if (timer) timer.textContent = '';
     button.textContent = 'Настроить план';
     button.onclick = openPlan;
   }
@@ -398,10 +475,13 @@ function getCalendarStatus(date) {
   const today = startOfDay(new Date());
   const current = startOfDay(date);
   const key = getDateKey(current);
+  const recordedStatus = state.attendance?.[key];
   const workout = state.plan?.[getDayKey(current)];
   const effectiveFrom = getPlanEffectiveDate();
 
-  if (isWorkoutCompletedOnDate(current) || state.attendance[key] === 'done') return 'done';
+  // An explicit date result always wins over a later edit of the weekly plan.
+  if (isWorkoutCompletedOnDate(current) || recordedStatus === 'done') return 'done';
+  if (recordedStatus === 'missed' && current < today) return 'missed';
 
   if (state.activeWorkout) {
     const started = new Date(state.activeWorkout.started);
@@ -414,11 +494,10 @@ function getCalendarStatus(date) {
     return workout && workout !== 'Отдых' ? 'scheduled' : 'rest';
   }
 
-  // We cannot infer exact attendance for dates that predate date-based tracking.
-  if (!effectiveFrom || current < effectiveFrom) return 'untracked';
-
+  // Exact attendance before date-based tracking cannot be reconstructed safely.
+  if (!effectiveFrom || current < effectiveFrom) return recordedStatus || 'untracked';
   if (!workout || workout === 'Отдых') return 'rest';
-  return state.attendance[key] === 'missed' ? 'missed' : 'missed';
+  return 'missed';
 }
 
 function getCalendarStatusLabel(status) {
@@ -454,9 +533,8 @@ function renderCalendar() {
 
   if (monthTitle) {
     monthTitle.textContent = new Intl.DateTimeFormat('ru-RU', {
-      month: 'long',
-      year: 'numeric'
-    }).format(calendarCursor).replace(' г.', '');
+      month: 'short'
+    }).format(calendarCursor).replace('.', '');
   }
 
   if (nextButton) {
@@ -466,11 +544,14 @@ function renderCalendar() {
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDay = (new Date(year, month, 1).getDay() + 6) % 7; // Monday = 0
-  const totalSlots = Math.ceil((firstDay + daysInMonth) / 7) * 7; // Complete rows only; no stretched empty sixth row.
-  let html = '';
+  const totalSlots = Math.ceil((firstDay + daysInMonth) / 7) * 7;
+  const fragment = document.createDocumentFragment();
 
   for (let i = 0; i < firstDay; i++) {
-    html += '<span class="calendar-day empty" aria-hidden="true"></span>';
+    const empty = document.createElement('span');
+    empty.className = 'calendar-day empty';
+    empty.setAttribute('aria-hidden', 'true');
+    fragment.appendChild(empty);
   }
 
   for (let day = 1; day <= daysInMonth; day++) {
@@ -480,15 +561,22 @@ function renderCalendar() {
     const label = getCalendarStatusLabel(status);
     const monthName = new Intl.DateTimeFormat('ru-RU', { month: 'long' }).format(date);
 
-    html += `<span class="calendar-day ${status}${isToday ? ' today' : ''}" aria-label="${day} ${monthName}: ${label}">${day}</span>`;
+    const dot = document.createElement('span');
+    dot.className = `calendar-day ${status}${isToday ? ' today' : ''}`;
+    dot.setAttribute('aria-label', `${day} ${monthName}: ${label}`);
+    dot.title = `${day} ${monthName}: ${label}`;
+    fragment.appendChild(dot);
   }
 
   const usedSlots = firstDay + daysInMonth;
   for (let i = usedSlots; i < totalSlots; i++) {
-    html += '<span class="calendar-day empty" aria-hidden="true"></span>';
+    const empty = document.createElement('span');
+    empty.className = 'calendar-day empty';
+    empty.setAttribute('aria-hidden', 'true');
+    fragment.appendChild(empty);
   }
 
-  grid.innerHTML = html;
+  grid.replaceChildren(fragment);
 }
 
 function renderActivityChart(){
@@ -593,6 +681,20 @@ function startWorkout() {
   const now = new Date();
   const day = getDayKey(now);
   const workout = state.plan[day];
+  const todayKey = getDateKey(now);
+
+  if (getCompletedWorkoutForDate(now)) {
+    showToast('Сегодняшняя тренировка уже завершена');
+    return;
+  }
+
+  if (state.activeWorkout) {
+    const activeDate = new Date(state.activeWorkout.started);
+    if (!Number.isNaN(activeDate.getTime()) && getDateKey(activeDate) === todayKey) {
+      showToast('Тренировка уже идёт');
+      return;
+    }
+  }
 
   if (!workout) {
     showToast('Сегодня тренировка не запланирована');
@@ -604,64 +706,91 @@ function startWorkout() {
     return;
   }
 
-  state.activeWorkout={started:now.toISOString(), workout, day};
+  state.activeWorkout = {
+    started: now.toISOString(),
+    workout,
+    day,
+    dateKey: todayKey
+  };
 
-  // Starting a workout is not the same as completing it. Track it by exact date.
-  state.attendance[getDateKey(now)] = 'active';
+  // Purple means the planned workout was actually started.
+  state.attendance[todayKey] = 'active';
 
   persist();
-  renderCalendar();
   renderFitness();
   showToast('Тренировка начата');
 }
 
+function finishWorkout() {
+  if (!state.activeWorkout) return;
 
-function finishWorkout(){
-  if(!state.activeWorkout) return;
+  const startedDate = new Date(state.activeWorkout.started);
+  if (Number.isNaN(startedDate.getTime())) {
+    state.activeWorkout = null;
+    persist();
+    renderFitness();
+    return;
+  }
 
-  const elapsed = Math.floor((Date.now()-new Date(state.activeWorkout.started).getTime())/1000);
-  const started = state.activeWorkout.started;
-  const finished = new Date().toISOString();
+  const finishedDate = new Date();
+  const elapsed = Math.max(1, Math.floor((finishedDate.getTime() - startedDate.getTime()) / 1000));
+  const workoutDateKey = state.activeWorkout.dateKey || getDateKey(startedDate);
 
-  const workoutDate = new Date(started);
-  const workoutDateKey = getDateKey(workoutDate);
-
+  // Keep one canonical completed session for a calendar date.
   state.history = state.history.filter(h => {
     if (h.dateKey) return h.dateKey !== workoutDateKey;
     const historyDate = new Date(h.date);
     return Number.isNaN(historyDate.getTime()) || getDateKey(historyDate) !== workoutDateKey;
   });
+
   state.history.push({
-    date: finished,
+    date: finishedDate.toISOString(),
     dateKey: workoutDateKey,
-    started,
-    ended: finished,
+    started: startedDate.toISOString(),
+    ended: finishedDate.toISOString(),
     day: state.activeWorkout.day,
     workout: state.activeWorkout.workout,
     duration: elapsed,
-    status:'completed'
+    status: 'completed'
   });
 
+  // A completed session stays purple in the compact calendar.
   state.attendance[workoutDateKey] = 'done';
-  state.activeWorkout=null;
+  state.activeWorkout = null;
   persist();
   renderFitness();
   showToast('Тренировка завершена');
 }
 
-function formatWorkoutTime(seconds){
-  const h=Math.floor(seconds/3600);
-  const m=Math.floor((seconds%3600)/60);
-  const s=seconds%60;
-  return h ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+function formatWorkoutTime(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return h
+    ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+    : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
-function updateWorkoutTimer(){
-  const el=document.querySelector('.workout-timer');
-  if(!el || !state.activeWorkout) return;
-  const sec=Math.floor((Date.now()-new Date(state.activeWorkout.started).getTime())/1000);
-  el.textContent=formatWorkoutTime(sec);
-  setTimeout(updateWorkoutTimer,1000);
+function updateWorkoutTimer() {
+  clearWorkoutTimer();
+
+  const el = document.querySelector('.workout-timer');
+  if (!el || !state.activeWorkout) return;
+
+  const started = new Date(state.activeWorkout.started);
+  if (Number.isNaN(started.getTime())) return;
+
+  const tick = () => {
+    if (!state.activeWorkout) {
+      clearWorkoutTimer();
+      return;
+    }
+    const sec = Math.max(0, Math.floor((Date.now() - started.getTime()) / 1000));
+    el.textContent = formatWorkoutTime(sec);
+    workoutTimerHandle = setTimeout(tick, 1000);
+  };
+
+  tick();
 }
 
 document.addEventListener('DOMContentLoaded', () => {

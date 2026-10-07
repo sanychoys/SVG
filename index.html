@@ -222,7 +222,7 @@
             </button>
           </div>
         </div>
-        <div class="attendance-weekdays" aria-hidden="true"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div>
+        <div class="attendance-weekdays" aria-hidden="true"><span>П</span><span>В</span><span>С</span><span>Ч</span><span>П</span><span>С</span><span>В</span></div>
         <div class="attendance-grid" aria-label="Календарь тренировок"></div>
       </section>
 
@@ -287,6 +287,7 @@
     <section class="apple-widget today-widget">
       <span class="module-eyebrow">Сегодня</span>
       <h2>Нет запланированной тренировки</h2>
+      <div class="workout-summary" hidden></div>
       <div class="workout-timer"></div>
       <button type="button" class="start-button" onclick="openPlan()">Настроить план</button>
     </section>
@@ -353,14 +354,6 @@
  </div>
 </div>
 
-<div id="workout-picker" class="ios-sheet" hidden>
- <div class="sheet-panel small-sheet">
-  <div class="sheet-handle"></div><h2>Тренировка</h2>
-
-  <button onclick="setWorkout('Своя тренировка')">Своя тренировка</button>
-  <button onclick="setWorkout('')">Не тренируюсь</button>
- </div>
-</div>
 
 <div id="finance-sheet" class="ios-sheet" hidden>
 <div class="sheet-panel"><div class="sheet-handle"></div><h2>Добавить данные</h2>
@@ -373,7 +366,6 @@
 
 </main>
 
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="script.js"></script>
 </body>
