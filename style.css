@@ -3400,3 +3400,66 @@ body.training-open {
 .attendance-grid .missed {background:rgba(255,70,90,.65);box-shadow:0 0 10px rgba(255,70,90,.35);}
 .attendance-grid .today {border-color:white;}
 .workout-timer {font-size:34px;font-weight:700;margin:12px 0;color:white;min-height:40px;}
+
+
+/* ===== SVGTracker training calendar final refinement ===== */
+
+/* Компактный трекер: календарь не зависит от размера плана */
+.attendance-widget {
+  padding-bottom: 8px;
+}
+
+.attendance-grid {
+  display: grid !important;
+  grid-template-columns: repeat(7, 18px) !important;
+  gap: 9px 12px !important;
+  width: max-content !important;
+  padding: 8px 0 0 !important;
+  justify-content: start !important;
+}
+
+.attendance-grid .calendar-day {
+  width: 18px !important;
+  height: 18px !important;
+  min-height: 18px !important;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  background: rgba(255,255,255,.18) !important;
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.attendance-grid .calendar-day.done {
+  background: #8b00ff !important;
+  box-shadow: 0 0 10px rgba(139,0,255,.45) !important;
+}
+
+.attendance-grid .calendar-day.missed {
+  background: #ff453a !important;
+  box-shadow: none !important;
+}
+
+.attendance-grid .calendar-day.rest {
+  background: #ffffff !important;
+}
+
+.attendance-grid .calendar-day.today {
+  outline: none !important;
+  border: 0 !important;
+}
+
+/* Убираем лишнее пустое место блока "Сегодня" */
+.today-widget {
+  min-height: 0 !important;
+  padding-bottom: 10px !important;
+}
+
+.today-widget h2 {
+  margin-bottom: 10px !important;
+}
+
+/* График активности строится как компактный блок */
+.chart-block {
+  margin-top: 10px !important;
+}
