@@ -9,6 +9,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 import uvicorn
 
 from config import BOT_TOKEN
@@ -95,15 +96,45 @@ def api_training_state(x_telegram_init_data: str | None = Header(default=None)):
 
 @app.put("/api/training/state")
 def api_save_training_state(
-    state: dict,
+    payload: dict,
     x_telegram_init_data: str | None = Header(default=None),
 ):
     _, user_id = authenticated_user(x_telegram_init_data)
+
+    # v10 clients send an envelope with the state plus the server version they
+    # last observed. Legacy clients that send the state directly remain valid.
+    if isinstance(payload.get("state"), dict):
+        state = payload["state"]
+        base_updated_at = payload.get("baseUpdatedAt")
+    else:
+        state = payload
+        base_updated_at = None
+
     encoded = json.dumps(state, ensure_ascii=False).encode("utf-8")
     if len(encoded) > MAX_TRAINING_STATE_BYTES:
         raise HTTPException(status_code=413, detail="Training state is too large")
 
-    allowed = {"goals", "plan", "history", "attendance", "planMeta", "activeWorkout"}
+    current = get_training_state(user_id)
+    if base_updated_at and current and current["updated_at"] != base_updated_at:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "conflict",
+                "state": current["state"],
+                "updated_at": current["updated_at"],
+            },
+        )
+
+    allowed = {
+        "goals",
+        "plan",
+        "planOverrides",
+        "history",
+        "attendance",
+        "planMeta",
+        "activeWorkout",
+        "sync",
+    }
     clean_state = {key: state.get(key) for key in allowed}
     updated_at = save_training_state(user_id, clean_state)
     return {"status": "ok", "updated_at": updated_at}

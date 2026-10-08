@@ -206,6 +206,7 @@
       <div class="header-copy">
         <h1>Тренировки</h1>
         <p>План, прогресс и цели</p>
+        <span class="training-sync-status" data-status="local" aria-live="polite">Локально</span>
       </div>
     </header>
 
@@ -241,7 +242,18 @@
     </div>
 
     <section class="apple-widget chart-widget">
-      <div class="widget-header widget-header--tight"><h2>Активность</h2></div>
+      <div class="widget-header widget-header--tight activity-header">
+        <h2>Активность</h2>
+        <div class="activity-nav" aria-label="Навигация по неделям">
+          <button type="button" class="calendar-nav-button" onclick="shiftActivityWeek(-1)" aria-label="Предыдущая неделя">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg>
+          </button>
+          <span class="activity-week-label" aria-live="polite">Эта неделя</span>
+          <button type="button" class="calendar-nav-button activity-next" onclick="shiftActivityWeek(1)" aria-label="Следующая неделя">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5.5L16 12l-6.5 6.5"/></svg>
+          </button>
+        </div>
+      </div>
       <div class="activity-summary" aria-live="polite">
         <strong class="activity-total">00:00</strong>
         <span class="activity-meta">за эту неделю</span>
@@ -293,7 +305,12 @@
       <h2>Нет запланированной тренировки</h2>
       <div class="workout-summary" hidden></div>
       <div class="workout-timer"></div>
+      <div class="active-workout-tools" hidden>
+        <button type="button" class="compact-action workout-exercises-button" onclick="openExercises()">Упражнения <span class="workout-exercise-count">0</span></button>
+        <button type="button" class="compact-action is-danger" onclick="cancelActiveWorkout()">Отменить запуск</button>
+      </div>
       <button type="button" class="start-button" onclick="openPlan()">Настроить план</button>
+      <button type="button" class="today-secondary-action" onclick="openCustomWorkout()" hidden>Другая тренировка</button>
     </section>
 
     <section class="apple-widget goals-widget">
@@ -305,29 +322,32 @@
           </svg>
         </button>
       </div>
-      <h3>Набрать 5 кг</h3>
-      <div class="goal-values">75 кг → 80 кг</div>
-      <div class="goal-chart">
-        <svg viewBox="0 0 320 90" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Прогресс достижения цели">
+      <div class="goal-switcher" aria-label="Список целей"></div>
+      <div class="goal-current-summary" role="button" tabindex="0" onclick="openGoal()">
+        <h3>Создай первую цель</h3>
+        <div class="goal-values">Добавь цель, чтобы отслеживать прогресс</div>
+      </div>
+      <div class="goal-text-history" hidden></div>
+      <div class="goal-chart" hidden>
+        <svg viewBox="0 0 320 90" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="График прогресса целей">
           <g class="goal-guides">
             <line x1="0" y1="72" x2="320" y2="72"/>
-            <line x1="64" y1="10" x2="64" y2="80"/>
-            <line x1="128" y1="10" x2="128" y2="80"/>
-            <line x1="192" y1="10" x2="192" y2="80"/>
-            <line x1="256" y1="10" x2="256" y2="80"/>
+            <line x1="0" y1="47" x2="320" y2="47"/>
+            <line x1="0" y1="22" x2="320" y2="22"/>
           </g>
-          <path class="goal-line-path" d="M0 66C22 64 44 63 64 60C86 56 108 50 128 49C150 48 171 53 192 45C214 37 236 30 256 26C278 22 299 22 320 18"/>
-          <g class="goal-point-group">
-            <circle cx="0" cy="66" r="3.2"/>
-            <circle cx="64" cy="60" r="3.2"/>
-            <circle cx="128" cy="49" r="3.2"/>
-            <circle cx="192" cy="45" r="3.2"/>
-            <circle cx="256" cy="26" r="3.2"/>
-            <circle cx="320" cy="18" r="3.2"/>
-          </g>
+          <g class="goal-series-group"></g>
         </svg>
       </div>
+      <div class="goal-chart-range" hidden>
+        <span class="goal-range-start"></span>
+        <span class="goal-range-end"></span>
+      </div>
       <button type="button" class="start-button goal-record-button" onclick="openGoalResult()" hidden>Записать результат</button>
+      <div class="goal-tools">
+        <button type="button" class="goal-tool-button goal-history-button" onclick="openGoalHistory()" hidden>История</button>
+        <button type="button" class="goal-tool-button goal-archive-button" onclick="archiveSelectedGoal()" hidden>В архив</button>
+        <button type="button" class="goal-tool-button goal-archive-list-button" onclick="openGoalHistory(null, true)" hidden>Архив</button>
+      </div>
     </section>
   </div>
 </section>
@@ -386,7 +406,61 @@
    <div data-day="Сб" class="day-picker"><strong>Суббота</strong><input class="day-input" placeholder="Тренировка"></div>
    <div data-day="Вс" class="day-picker"><strong>Воскресенье</strong><input class="day-input" placeholder="Тренировка"></div>
   </div>
+  <div class="plan-exception-block">
+    <div class="sheet-section-title">Разовое изменение</div>
+    <input id="plan-exception-date" type="date" aria-label="Дата изменения">
+    <select id="plan-exception-action" onchange="togglePlanExceptionFields()" aria-label="Действие для выбранного дня">
+      <option value="cancel">Отменить тренировку в этот день</option>
+      <option value="move">Перенести тренировку</option>
+    </select>
+    <input id="plan-move-date" type="date" aria-label="Новая дата тренировки" hidden>
+    <button type="button" class="secondary" onclick="savePlanException()">Применить к дню</button>
+    <div class="plan-exception-list"></div>
+  </div>
   <button onclick="savePlan()">Сохранить план</button>
+ </div>
+</div>
+
+<div id="custom-workout-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+ <div class="sheet-panel" data-sheet-panel>
+  <div class="sheet-handle"></div><h2>Новая тренировка</h2>
+  <p class="sheet-subtitle">Можно начать тренировку вне недельного плана.</p>
+  <input id="custom-workout-name" placeholder="Например: Кардио" maxlength="80">
+  <button type="button" onclick="startCustomWorkout()">Начать тренировку</button>
+ </div>
+</div>
+
+<div id="finish-workout-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+ <div class="sheet-panel" data-sheet-panel>
+  <div class="sheet-handle"></div><h2>Завершить тренировку?</h2>
+  <p class="sheet-subtitle finish-workout-summary">Результат и упражнения сохранятся в истории.</p>
+  <button type="button" onclick="confirmFinishWorkout()">Завершить</button>
+  <button type="button" class="secondary" onclick="closeSheets()">Продолжить тренировку</button>
+ </div>
+</div>
+
+<div id="exercise-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+ <div class="sheet-panel exercise-sheet-panel" data-sheet-panel>
+  <div class="sheet-handle"></div>
+  <div class="sheet-title-row"><h2>Упражнения</h2><span class="exercise-sheet-count">0</span></div>
+  <p class="sheet-subtitle">Добавляй подходы по ходу тренировки. Вес можно оставить пустым.</p>
+  <div class="exercise-add-row">
+    <input id="exercise-name-input" placeholder="Название упражнения" maxlength="80">
+    <button type="button" class="secondary" onclick="addExercise()">Добавить</button>
+  </div>
+  <div class="exercise-list"></div>
+ </div>
+</div>
+
+<div id="goal-history-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+ <div class="sheet-panel goal-history-panel" data-sheet-panel>
+  <div class="sheet-handle"></div><h2>История цели</h2>
+  <p class="sheet-subtitle goal-history-subtitle">Все записанные изменения.</p>
+  <div class="goal-history-list"></div>
+  <div class="goal-archive-section">
+    <div class="sheet-section-title">Архив целей</div>
+    <div class="goal-archive-list"></div>
+  </div>
  </div>
 </div>
 

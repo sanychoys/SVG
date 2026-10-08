@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "svgtracker.db"
@@ -8,10 +8,12 @@ DB_PATH = Path(__file__).parent / "svgtracker.db"
 EMPTY_TRAINING_STATE = {
     "goals": [],
     "plan": {},
+    "planOverrides": {},
     "history": [],
     "attendance": {},
-    "planMeta": {"effectiveFrom": None},
+    "planMeta": {"effectiveFrom": None, "dayUpdatedAt": {}},
     "activeWorkout": None,
+    "sync": {"revision": 0, "updatedAt": None, "resetAt": None, "activeWorkoutClearedAt": None, "deviceId": None, "tombstones": {"goals": {}, "goalEntries": {}, "planOverrides": {}}},
 }
 
 
@@ -71,7 +73,7 @@ def get_or_create_user(data):
         row = db.execute(
             "SELECT id FROM users WHERE telegram_id=?", (telegram_id,)
         ).fetchone()
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         if row:
             db.execute(
                 "UPDATE users SET username=?, first_name=?, last_name=?, photo_url=? WHERE id=?",
@@ -114,7 +116,7 @@ def get_training_state(user_id):
 
 def save_training_state(user_id, state):
     payload = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
-    now = datetime.now().isoformat()
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     with connect() as db:
         db.execute(
             """
@@ -142,8 +144,17 @@ def reset_user_data(telegram_id):
         for table in ("finance", "mandatory_expenses", "expenses", "debts"):
             db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
-        now = datetime.now().isoformat()
-        empty_payload = json.dumps(EMPTY_TRAINING_STATE, ensure_ascii=False, separators=(",", ":"))
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        reset_state = dict(EMPTY_TRAINING_STATE)
+        reset_state["sync"] = {
+            "revision": 0,
+            "updatedAt": now,
+            "resetAt": now,
+            "activeWorkoutClearedAt": now,
+            "deviceId": None,
+            "tombstones": {"goals": {}, "goalEntries": {}, "planOverrides": {}},
+        }
+        empty_payload = json.dumps(reset_state, ensure_ascii=False, separators=(",", ":"))
         db.execute(
             """
             INSERT INTO training_state(user_id, state_json, updated_at)

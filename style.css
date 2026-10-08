@@ -3736,3 +3736,413 @@ textarea,
 .single-training-screen .goals-widget .goal-record-button[hidden] {
   display: none !important;
 }
+
+/* Goals v9 — multi-goal timeline and shared normalized progress chart. */
+.single-training-screen .goal-switcher {
+  display: flex;
+  gap: 7px;
+  margin: 1px 0 10px;
+  padding: 1px 0 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.single-training-screen .goal-switcher::-webkit-scrollbar { display: none; }
+.single-training-screen .goal-switcher:empty { display: none; }
+.single-training-screen .goal-switcher-item {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  max-width: 180px;
+  margin: 0;
+  padding: 0 10px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 999px;
+  background: rgba(255,255,255,.035);
+  color: rgba(255,255,255,.56);
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.single-training-screen .goal-switcher-item > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.single-training-screen .goal-switcher-item.is-selected {
+  border-color: rgba(255,255,255,.13);
+  background: rgba(255,255,255,.09);
+  color: rgba(255,255,255,.94);
+}
+.single-training-screen .goal-color-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 8px color-mix(in srgb, currentColor 35%, transparent);
+}
+.single-training-screen .goal-color-dot.is-text {
+  background: rgba(255,255,255,.34);
+  box-shadow: none;
+}
+.single-training-screen .goal-current-summary {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  box-shadow: none;
+}
+.single-training-screen .goal-current-summary:disabled { opacity: 1; }
+.single-training-screen .goal-current-summary h3 {
+  margin: 0 0 4px;
+}
+.single-training-screen .goal-current-summary .goal-values {
+  margin-bottom: 10px;
+}
+.single-training-screen .goal-series-line {
+  fill: none;
+  stroke-width: 2.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 5px rgba(255,255,255,.08));
+}
+.single-training-screen .goal-series-point {
+  stroke: rgba(8,9,12,.72);
+  stroke-width: 1.2;
+  cursor: pointer;
+}
+.single-training-screen .goal-chart-range {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -4px 9px 0;
+  color: rgba(255,255,255,.31);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.single-training-screen .goal-chart-range[hidden] { display: none !important; }
+.single-training-screen .goal-text-history {
+  display: grid;
+  gap: 5px;
+  margin: 4px 0 10px;
+}
+.single-training-screen .goal-text-history[hidden] { display: none !important; }
+.single-training-screen .goal-text-history-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.single-training-screen .goal-text-history-row small {
+  color: rgba(255,255,255,.31);
+  font-size: 9px;
+  white-space: nowrap;
+}
+.single-training-screen .goal-text-history-row span {
+  overflow: hidden;
+  color: rgba(255,255,255,.58);
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* === Training product layer v10 === */
+.training-sync-status{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  margin-top:3px;
+  font-size:10px;
+  line-height:1;
+  color:rgba(255,255,255,.42);
+}
+.training-sync-status::before{
+  content:"";
+  width:5px;
+  height:5px;
+  border-radius:50%;
+  background:rgba(255,255,255,.35);
+}
+.training-sync-status[data-status="saved"]::before{background:#73e6a3}
+.training-sync-status[data-status="saving"]::before{background:#f2df68}
+.training-sync-status[data-status="offline"]::before,
+.training-sync-status[data-status="error"]::before{background:#ff7b7b}
+.single-training-screen .activity-header{align-items:center}
+.single-training-screen .activity-nav{
+  display:flex;
+  align-items:center;
+  gap:5px;
+  min-width:0;
+}
+.single-training-screen .activity-week-label{
+  min-width:62px;
+  max-width:88px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  text-align:center;
+  font-size:10px;
+  color:rgba(255,255,255,.52);
+}
+.single-training-screen .activity-nav .calendar-nav-button{
+  width:27px;
+  height:27px;
+}
+.active-workout-tools{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+  margin:10px 0 2px;
+}
+.active-workout-tools[hidden]{display:none!important}
+.compact-action,
+.goal-tool-button{
+  min-height:34px;
+  border:0;
+  border-radius:12px;
+  background:rgba(255,255,255,.075);
+  color:rgba(255,255,255,.8);
+  font-size:12px;
+  font-weight:650;
+}
+.compact-action.is-danger{color:#ff8f8f;background:rgba(255,89,89,.08)}
+.workout-exercise-count{
+  display:inline-grid;
+  place-items:center;
+  min-width:18px;
+  height:18px;
+  margin-left:4px;
+  border-radius:9px;
+  background:rgba(255,255,255,.1);
+  font-size:10px;
+}
+.today-secondary-action{
+  width:100%;
+  min-height:34px;
+  margin-top:6px;
+  border:0;
+  background:transparent;
+  color:rgba(255,255,255,.5);
+  font-size:12px;
+  font-weight:650;
+}
+.today-secondary-action[hidden]{display:none!important}
+.goal-tools{
+  display:flex;
+  justify-content:center;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:7px;
+}
+.goal-tool-button{
+  width:auto;
+  min-width:72px;
+  padding:0 12px;
+}
+.goal-tool-button[hidden]{display:none!important}
+.sheet-section-title{
+  margin:16px 2px 6px;
+  color:rgba(255,255,255,.45);
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:.03em;
+  text-transform:uppercase;
+}
+.plan-exception-block{
+  margin-top:12px;
+  padding-top:2px;
+  border-top:1px solid rgba(255,255,255,.07);
+}
+.plan-exception-list{
+  display:grid;
+  gap:6px;
+  margin-top:8px;
+}
+.plan-exception-row,
+.goal-history-row,
+.goal-archive-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-height:42px;
+  padding:8px 10px;
+  border-radius:12px;
+  background:rgba(255,255,255,.045);
+}
+.plan-exception-row > span,
+.goal-history-row > span,
+.goal-archive-row > span{min-width:0;flex:1}
+.plan-exception-row strong,
+.goal-history-row strong,
+.goal-archive-row strong{display:block;font-size:12px;color:rgba(255,255,255,.86)}
+.plan-exception-row small,
+.goal-history-row small,
+.goal-archive-row small{display:block;margin-top:2px;font-size:10px;color:rgba(255,255,255,.42)}
+.plan-exception-row button,
+.goal-history-row button,
+.goal-archive-row button{
+  width:auto;
+  min-width:34px;
+  height:30px;
+  margin:0;
+  padding:0 9px;
+  border-radius:10px;
+  background:rgba(255,255,255,.08);
+  color:rgba(255,255,255,.7);
+  font-size:11px;
+}
+.exercise-sheet-panel,
+.goal-history-panel{
+  max-height:min(84vh,760px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
+}
+.sheet-title-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.sheet-title-row h2{margin:0}
+.exercise-sheet-count{font-size:11px;color:rgba(255,255,255,.45)}
+.exercise-add-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 92px;
+  gap:8px;
+  align-items:center;
+}
+.sheet-panel .exercise-add-row button{margin:6px 0;height:46px}
+.exercise-list{display:grid;gap:10px;margin-top:10px}
+.exercise-card{
+  padding:12px;
+  border-radius:16px;
+  background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.06);
+}
+.exercise-card-head{display:flex;align-items:flex-start;gap:10px}
+.exercise-card-copy{min-width:0;flex:1}
+.exercise-card-copy strong{display:block;font-size:14px;color:#fff}
+.exercise-card-copy small{display:block;margin-top:3px;font-size:10px;line-height:1.35;color:rgba(255,255,255,.4)}
+.exercise-remove{
+  width:28px!important;
+  height:28px!important;
+  min-width:28px!important;
+  margin:0!important;
+  padding:0!important;
+  border-radius:9px!important;
+  background:rgba(255,255,255,.06)!important;
+  color:rgba(255,255,255,.45)!important;
+}
+.exercise-sets{display:grid;gap:6px;margin-top:10px}
+.exercise-set-row{
+  display:grid;
+  grid-template-columns:24px minmax(0,1fr) minmax(0,1fr) 28px;
+  gap:6px;
+  align-items:center;
+}
+.exercise-set-index{text-align:center;font-size:10px;color:rgba(255,255,255,.35)}
+.exercise-set-row input{
+  height:38px!important;
+  margin:0!important;
+  padding:0 10px!important;
+  border-radius:11px!important;
+  font-size:16px!important;
+}
+.exercise-set-delete{
+  width:28px!important;
+  height:28px!important;
+  min-width:28px!important;
+  margin:0!important;
+  padding:0!important;
+  border-radius:9px!important;
+  background:transparent!important;
+  color:rgba(255,255,255,.35)!important;
+}
+.exercise-add-set{
+  height:34px!important;
+  margin-top:8px!important;
+  background:rgba(255,255,255,.07)!important;
+  color:rgba(255,255,255,.72)!important;
+  font-size:11px!important;
+}
+.goal-history-list,
+.goal-archive-list{display:grid;gap:6px}
+.goal-archive-section{margin-top:14px}
+.goal-archive-section.is-empty{display:none}
+.goal-history-row.is-baseline button[data-action="delete"]{visibility:hidden}
+.goal-history-row .row-actions{display:flex;gap:5px;flex:0 0 auto}
+.goal-history-row .row-actions button{padding:0 8px}
+.goal-history-empty{padding:16px 4px;text-align:center;color:rgba(255,255,255,.4);font-size:12px}
+@media (max-width:340px){
+  .single-training-screen .activity-week-label{min-width:50px;max-width:62px}
+  .active-workout-tools{grid-template-columns:1fr}
+  .exercise-add-row{grid-template-columns:1fr}
+  .sheet-panel .exercise-add-row button{margin-top:0}
+}
+
+/* === Training polish v11: interaction targets, transient UI and compact states === */
+.single-training-screen .empty-plan button {
+  width: auto;
+  min-height: 32px;
+  margin: 0;
+  padding: 0 11px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 10px;
+  background: rgba(255,255,255,.07);
+  color: rgba(255,255,255,.82);
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 650;
+}
+.single-training-screen .empty-plan button:active {
+  transform: scale(.97);
+  background: rgba(255,255,255,.11);
+}
+
+/* Calendar remains visually tiny, but each dot gets a forgiving invisible tap target. */
+.single-training-screen .attendance-grid .calendar-day:not(.empty) {
+  position: relative;
+  cursor: pointer;
+}
+.single-training-screen .attendance-grid .calendar-day:not(.empty)::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+/* SVG points stay visually minimal while being much easier to tap on mobile. */
+.single-training-screen .chart-point-group circle,
+.single-training-screen .goal-series-point {
+  stroke: rgba(255,255,255,.001);
+  stroke-width: 12px;
+  paint-order: stroke fill;
+  cursor: pointer;
+}
+
+/* Toasts shown from a sheet no longer cover the bottom controls of that sheet. */
+.app-toast.is-over-sheet {
+  top: calc(12px + env(safe-area-inset-top));
+  bottom: auto;
+  transform: translate(-50%, -10px);
+}
+.app-toast.is-over-sheet.is-visible {
+  transform: translate(-50%, 0);
+}
+
+@media (max-width: 430px) {
+  .single-training-screen .activity-summary {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .single-training-screen .activity-summary span {
+    flex: 1 1 150px;
+    white-space: normal;
+  }
+}
