@@ -15,11 +15,17 @@ import uvicorn
 from config import BOT_TOKEN
 from key import main_keyboard
 from finance_db import (
+    create_friend_request,
     get_or_create_user,
+    get_profile_data,
     get_training_state,
+    get_user_settings,
     init_db,
+    remove_friend,
     reset_user_data,
+    resolve_friend_request,
     save_training_state,
+    set_bot_notifications,
 )
 
 bot = Bot(token=BOT_TOKEN)
@@ -92,6 +98,81 @@ def api_training_state(x_telegram_init_data: str | None = Header(default=None)):
         "state": record["state"],
         "updated_at": record["updated_at"],
     }
+
+
+@app.get("/api/profile")
+def api_profile(x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(x_telegram_init_data)
+    return {"status": "ok", **get_profile_data(user_id)}
+
+
+@app.put("/api/profile/notifications")
+def api_profile_notifications(
+    payload: dict,
+    x_telegram_init_data: str | None = Header(default=None),
+):
+    _, user_id = authenticated_user(x_telegram_init_data)
+    if not isinstance(payload.get("enabled"), bool):
+        raise HTTPException(status_code=422, detail="enabled must be boolean")
+    settings = set_bot_notifications(user_id, payload["enabled"])
+    return {"status": "ok", "enabled": settings["bot_notifications"]}
+
+
+@app.post("/api/friends/request")
+async def api_friend_request(
+    payload: dict,
+    x_telegram_init_data: str | None = Header(default=None),
+):
+    user, user_id = authenticated_user(x_telegram_init_data)
+    result = create_friend_request(user_id, payload.get("username"))
+    status = result.get("status")
+    if status == "invalid":
+        raise HTTPException(status_code=422, detail="Укажи username")
+    if status == "not_found":
+        raise HTTPException(status_code=404, detail="Пользователь пока не зарегистрирован в SVGTracker")
+    if status == "self":
+        raise HTTPException(status_code=400, detail="Нельзя добавить самого себя")
+    if status == "created":
+        target_id = result.get("target_user_id")
+        target_telegram_id = result.get("target_telegram_id")
+        settings = get_user_settings(target_id) if target_id else {"bot_notifications": False}
+        if target_telegram_id and settings.get("bot_notifications"):
+            sender = user.get("first_name") or user.get("username") or "Пользователь SVGTracker"
+            sender_username = f" (@{user['username']})" if user.get("username") else ""
+            try:
+                await bot.send_message(
+                    chat_id=target_telegram_id,
+                    text=f"{sender}{sender_username} хочет добавить тебя в друзья в SVGTracker. Открой приложение, чтобы принять запрос.",
+                    reply_markup=main_keyboard(),
+                )
+            except Exception:
+                # Friend requests must still be saved even if Telegram delivery is unavailable.
+                pass
+    return {"status": "ok", "result": status, "target": result.get("target")}
+
+
+@app.post("/api/friends/requests/{request_id}/accept")
+def api_friend_accept(request_id: int, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(x_telegram_init_data)
+    if not resolve_friend_request(user_id, request_id, True):
+        raise HTTPException(status_code=404, detail="Запрос не найден")
+    return {"status": "ok"}
+
+
+@app.post("/api/friends/requests/{request_id}/reject")
+def api_friend_reject(request_id: int, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(x_telegram_init_data)
+    if not resolve_friend_request(user_id, request_id, False):
+        raise HTTPException(status_code=404, detail="Запрос не найден")
+    return {"status": "ok"}
+
+
+@app.delete("/api/friends/{friend_user_id}")
+def api_friend_remove(friend_user_id: int, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(x_telegram_init_data)
+    if not remove_friend(user_id, friend_user_id):
+        raise HTTPException(status_code=404, detail="Друг не найден")
+    return {"status": "ok"}
 
 
 @app.put("/api/training/state")

@@ -41,7 +41,9 @@ const STORAGE = {
   planMeta: 'fitness_plan_meta_v2',
   activeWorkout: 'active_workout',
   trainingDirty: 'fitness_server_dirty_v1',
-  finance: 'finance_budget_v2'
+  finance: 'finance_budget_v2',
+  schedule: 'schedule_events_v1',
+  notes: 'notes_v1'
 };
 
 let calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
@@ -73,6 +75,13 @@ let financeData = readJSON(STORAGE.finance, null) || {
   categories:{},
   budgetHistory:[]
 };
+let scheduleData = readJSON(STORAGE.schedule, []);
+if (!Array.isArray(scheduleData)) scheduleData = [];
+let notesData = readJSON(STORAGE.notes, []);
+if (!Array.isArray(notesData)) notesData = [];
+let profileState = { notifications_enabled: true, friends: [], incoming: [], outgoing: [] };
+let profileLoaded = false;
+let profileLoading = false;
 
 const state = {
   goals: readJSON(STORAGE.goals, []),
@@ -268,11 +277,11 @@ function saveFinanceEntry(){
   item.status='Открыт';
   editId ? financeData.debts=financeData.debts.map(x=>x.id===Number(editId)?item:x) : financeData.debts.push(item);
  }
- saveFinance();closeSheets();renderFinance();
+ saveFinance();closeSheets();renderFinance();renderHomeTrainingSummary();
 }
 function deleteFinance(type,id){
  financeData[type]=financeData[type].filter(x=>x.id!==id);
- saveFinance();renderFinance();
+ saveFinance();renderFinance();renderHomeTrainingSummary();
 }
 function renderFinance(){
  const income=Number(financeData.monthlyIncome || financeData.income?.amount || 0);
@@ -281,7 +290,6 @@ function renderFinance(){
  const activeDebt=financeData.debts.filter(d=>d.kind==='Я должен' && d.status!=='Закрыт').reduce((a,b)=>a+Number(b.amount),0);
  const available=Math.max(0,income-mandatory-spent-activeDebt);
  const percent=income?Math.round(available/income*100):0;
- financeData.budgetHistory.push({date:new Date().toISOString(), value:available}); financeData.budgetHistory=financeData.budgetHistory.slice(-60);
  const daily=Math.floor(available/daysLeft());
  document.getElementById('finance-budget-left').textContent=income?available.toLocaleString('ru-RU')+' ₽':'Настрой свой бюджет';
  document.getElementById('finance-day-limit').textContent=income?daily.toLocaleString('ru-RU')+' ₽':'—';
@@ -2410,90 +2418,228 @@ function renderHomeTrainingCard(nowMs = Date.now()) {
   }
 }
 
+
+function getLocalDateKeyFromValue(value) {
+  if (!value) return null;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : getDateKey(parsed);
+}
+
+function getFinanceEntriesForDate(date) {
+  const key = getDateKey(date);
+  const groups = [financeData.expenses, financeData.mandatoryExpenses, financeData.debts].filter(Array.isArray);
+  return groups.flat().filter(item => getLocalDateKeyFromValue(item?.date || item?.createdAt) === key);
+}
+
+function getTodaySpent(date = new Date()) {
+  const key = getDateKey(date);
+  return (financeData.expenses || []).reduce((sum, item) => {
+    if (getLocalDateKeyFromValue(item?.date || item?.createdAt) !== key) return sum;
+    const amount = Number(item?.amount);
+    return sum + (Number.isFinite(amount) && amount > 0 ? amount : 0);
+  }, 0);
+}
+
+function getScheduleEventDate(event) {
+  if (!event || typeof event !== 'object') return null;
+  const raw = event.start || event.startAt || event.dateTime || event.datetime || event.date || null;
+  if (!raw) return null;
+  if (typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const time = String(event.time || '12:00').trim();
+    const parsed = new Date(`${raw}T${/^\d{1,2}:\d{2}$/.test(time) ? time : '12:00'}:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getScheduleEventsForDate(date) {
+  const key = getDateKey(date);
+  return scheduleData.filter(event => {
+    const eventDate = getScheduleEventDate(event);
+    return eventDate && getDateKey(eventDate) === key && event?.status !== 'cancelled';
+  });
+}
+
+function getNextScheduleEvent(now = new Date()) {
+  const nowMs = now.getTime();
+  return scheduleData
+    .map(event => ({ event, date: getScheduleEventDate(event) }))
+    .filter(item => item.date && item.event?.status !== 'cancelled' && item.event?.status !== 'completed' && item.date.getTime() >= nowMs - 60_000)
+    .sort((a, b) => a.date - b.date)[0] || null;
+}
+
+function getNotesForDate(date) {
+  const key = getDateKey(date);
+  return notesData.filter(note => getLocalDateKeyFromValue(note?.updatedAt || note?.createdAt || note?.date) === key && note?.archived !== true);
+}
+
+function getTrainingSecondsForDate(date, nowMs = Date.now()) {
+  const key = getDateKey(date);
+  let seconds = getCompletedWorkoutsForDate(date).reduce((sum, item) => sum + normalizeWorkoutSeconds(item.duration), 0);
+  if (state.activeWorkout) {
+    const activeKey = state.activeWorkout.dateKey || getLocalDateKeyFromValue(state.activeWorkout.started);
+    if (activeKey === key) seconds += getWorkoutElapsedSeconds(state.activeWorkout, nowMs);
+  }
+  return seconds;
+}
+
+function getDashboardActivityBreakdown(date, nowMs = Date.now()) {
+  const trainingSeconds = getTrainingSecondsForDate(date, nowMs);
+  const financeEntries = getFinanceEntriesForDate(date);
+  const scheduleEvents = getScheduleEventsForDate(date);
+  const notes = getNotesForDate(date);
+  const completedEvents = scheduleEvents.filter(event => event?.completed || event?.status === 'completed').length;
+  const isFuture = startOfDay(date) > startOfDay(new Date(nowMs));
+  const training = isFuture ? 0 : Math.min(25, (trainingSeconds / (45 * 60)) * 25);
+  const finance = isFuture ? 0 : Math.min(25, (financeEntries.length / 3) * 25);
+  const schedule = isFuture ? 0 : (scheduleEvents.length ? Math.min(25, 10 + completedEvents * 10 + Math.min(5, Math.max(0, scheduleEvents.length - 1) * 2.5)) : 0);
+  const noteScore = isFuture ? 0 : Math.min(25, (notes.length / 2) * 25);
+  return {
+    training, finance, schedule, notes: noteScore,
+    score: Math.round(training + finance + schedule + noteScore),
+    trainingSeconds,
+    financeCount: financeEntries.length,
+    spent: getTodaySpent(date),
+    scheduleCount: scheduleEvents.length,
+    noteCount: notes.length
+  };
+}
+
+function getLastCompletedWorkout(before = new Date()) {
+  const cutoff = before.getTime();
+  return (state.history || [])
+    .filter(item => item?.status === 'completed')
+    .map(item => ({ item, time: new Date(item.ended || item.date || item.started || 0).getTime() }))
+    .filter(entry => Number.isFinite(entry.time) && entry.time <= cutoff)
+    .sort((a, b) => b.time - a.time)[0]?.item || null;
+}
+
+function formatRubles(value) {
+  const amount = Math.max(0, Math.round(Number(value) || 0));
+  return `${amount.toLocaleString('ru-RU')} ₽`;
+}
+
+function renderHomeDomainCards(now = new Date()) {
+  const spent = getTodaySpent(now);
+  const financePrimary = document.getElementById('home-finance-primary');
+  const financeSecondary = document.getElementById('home-finance-secondary');
+  if (financePrimary) financePrimary.textContent = spent ? `−${formatRubles(spent)} сегодня` : '0 ₽ сегодня';
+  if (financeSecondary) {
+    const entries = getFinanceEntriesForDate(now).length;
+    financeSecondary.textContent = entries ? `${entries} ${entries === 1 ? 'операция' : entries < 5 ? 'операции' : 'операций'} за день` : 'Расходов пока нет';
+  }
+
+  const next = getNextScheduleEvent(now);
+  const schedulePrimary = document.getElementById('home-schedule-primary');
+  const scheduleSecondary = document.getElementById('home-schedule-secondary');
+  if (next) {
+    const isToday = getDateKey(next.date) === getDateKey(now);
+    if (schedulePrimary) schedulePrimary.textContent = String(next.event.title || next.event.name || 'Событие');
+    if (scheduleSecondary) scheduleSecondary.textContent = `${isToday ? 'Сегодня' : new Intl.DateTimeFormat('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' }).format(next.date)} · ${new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(next.date)}`;
+  } else {
+    if (schedulePrimary) schedulePrimary.textContent = 'Событий нет';
+    if (scheduleSecondary) scheduleSecondary.textContent = 'Расписание пока пустое';
+  }
+
+  const notes = notesData.filter(note => note?.archived !== true);
+  const notesPrimary = document.getElementById('home-notes-primary');
+  const notesSecondary = document.getElementById('home-notes-secondary');
+  if (notesPrimary) notesPrimary.textContent = notes.length ? `${notes.length} ${notes.length === 1 ? 'заметка' : notes.length < 5 ? 'заметки' : 'заметок'}` : 'Заметок нет';
+  if (notesSecondary) {
+    const last = [...notes].sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))[0];
+    notesSecondary.textContent = last ? String(last.title || last.text || 'Последняя запись').slice(0, 54) : 'Новые записи появятся здесь';
+  }
+}
+
 function renderHomeActivity(nowMs = Date.now()) {
-  const snapshot = getTrainingWeekSnapshot(new Date(nowMs), nowMs);
-  const total = document.getElementById('home-training-time');
-  const count = document.getElementById('home-training-count');
-  const average = document.getElementById('home-training-average');
-  const progress = document.getElementById('home-training-progress');
+  const now = new Date(nowMs);
+  const monday = getWeekMonday(now);
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(monday);
+    day.setDate(monday.getDate() + index);
+    return day;
+  });
+  const breakdowns = days.map(day => getDashboardActivityBreakdown(day, nowMs));
+  const todayIndex = Math.max(0, Math.min(6, Math.round((startOfDay(now) - startOfDay(monday)) / 86400000)));
+  const elapsed = breakdowns.slice(0, todayIndex + 1);
+  const weekScore = elapsed.length ? Math.round(elapsed.reduce((sum, item) => sum + item.score, 0) / elapsed.length) : 0;
+
+  const spentEl = document.getElementById('home-finance-spent');
+  const workoutEl = document.getElementById('home-last-workout');
+  const scheduleEl = document.getElementById('home-next-schedule');
+  const scheduleLabel = document.getElementById('home-next-schedule-label');
+  const progress = document.getElementById('home-activity-progress');
   const line = document.getElementById('home-activity-line');
   const area = document.getElementById('home-activity-area');
   const points = document.getElementById('home-activity-points');
 
-  if (total) total.textContent = formatDashboardDuration(snapshot.totalSeconds);
-  if (count) count.textContent = String(snapshot.completedSessions.length + (snapshot.activeInWeek ? 1 : 0));
-  if (average) average.textContent = snapshot.completedSessions.length ? formatDashboardDuration(snapshot.averageSeconds) : '—';
+  const todaySpent = getTodaySpent(now);
+  if (spentEl) spentEl.textContent = todaySpent ? `−${formatRubles(todaySpent)}` : '0 ₽';
+
+  const lastWorkout = getLastCompletedWorkout(now);
+  if (workoutEl) workoutEl.textContent = lastWorkout ? formatDashboardDuration(normalizeWorkoutSeconds(lastWorkout.duration)) : '—';
+
+  const next = getNextScheduleEvent(now);
+  if (scheduleEl) scheduleEl.textContent = next ? new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(next.date) : '—';
+  if (scheduleLabel) scheduleLabel.textContent = next ? String(next.event.title || next.event.name || 'Следующее').slice(0, 22) : 'Следующее';
 
   if (progress) {
     const value = progress.querySelector('b');
     const label = progress.querySelector('small');
-    progress.classList.toggle('is-live', snapshot.activeInWeek);
-    if (snapshot.activeInWeek) {
-      if (value) value.textContent = 'LIVE';
-      if (label) label.textContent = 'тренировка идёт';
-    } else if (snapshot.plannedCount) {
-      const percent = Math.round((snapshot.completedPlanned / snapshot.plannedCount) * 100);
-      if (value) value.textContent = `${percent}%`;
-      if (label) label.textContent = 'плана недели';
-    } else {
-      const sessionCount = snapshot.completedSessions.length + (snapshot.activeInWeek ? 1 : 0);
-      if (value) value.textContent = String(sessionCount);
-      if (label) label.textContent = `${getWorkoutCountNoun(sessionCount)} за неделю`;
-    }
+    progress.classList.remove('is-live');
+    if (value) value.textContent = `${weekScore}%`;
+    if (label) label.textContent = 'общей активности';
   }
 
   if (!line || !area || !points) return;
-  const baseScale = 4 * 60 * 60;
-  const headroom = 60 * 60;
-  const peak = Math.max(0, ...snapshot.secondsByDay);
-  const scale = Math.max(baseScale, peak + headroom);
   const baselineY = 124;
   const topY = 28;
-  const coords = snapshot.secondsByDay.map((seconds, index) => ({
+  const coords = breakdowns.map((item, index) => ({
     x: Number((index * (336 / 6)).toFixed(1)),
-    y: Number((baselineY - Math.max(0, Math.min(1, seconds / scale)) * (baselineY - topY)).toFixed(1))
+    y: Number((baselineY - Math.max(0, Math.min(100, item.score)) / 100 * (baselineY - topY)).toFixed(1))
   }));
   const path = buildSmoothPath(coords);
   line.setAttribute('d', path);
   area.setAttribute('d', `${path} L336 142 L0 142 Z`);
   points.replaceChildren();
   coords.forEach((point, index) => {
+    const day = days[index];
+    const data = breakdowns[index];
+    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    group.setAttribute('tabindex', '0');
+    group.setAttribute('role', 'button');
+    const hit = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    hit.setAttribute('cx', point.x); hit.setAttribute('cy', point.y); hit.setAttribute('r', '12'); hit.setAttribute('fill', 'transparent');
     const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    circle.setAttribute('cx', point.x);
-    circle.setAttribute('cy', point.y);
-    circle.setAttribute('r', getDateKey(snapshot.days[index]) === getDateKey(new Date(nowMs)) ? '3.8' : '3.2');
-    circle.setAttribute('tabindex', '0');
-    circle.dataset.dayIndex = String(index);
-    const daySessions = getCompletedWorkoutsForDate(snapshot.days[index]).length;
-    const label = new Intl.DateTimeFormat('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' }).format(snapshot.days[index]);
-    const activity = snapshot.secondsByDay[index] ? formatWorkoutDuration(snapshot.secondsByDay[index]) : 'без тренировки';
-    const suffix = daySessions ? ` · ${daySessions} ${getSessionCountNoun(daySessions)}` : '';
-    circle.setAttribute('aria-label', `${label}: ${activity}${suffix}`);
-    const announce = () => {
-      showToast(`${label} · ${activity}${suffix}`);
-    };
-    circle.addEventListener('click', announce);
-    circle.addEventListener('keydown', event => {
-      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); announce(); }
-    });
-    points.appendChild(circle);
+    circle.setAttribute('cx', point.x); circle.setAttribute('cy', point.y);
+    circle.setAttribute('r', getDateKey(day) === getDateKey(now) ? '3.8' : '3.2');
+    const label = new Intl.DateTimeFormat('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' }).format(day);
+    const detail = `${data.score}% · тренировки ${formatDashboardDuration(data.trainingSeconds)} · финансы ${data.financeCount} · расписание ${data.scheduleCount} · заметки ${data.noteCount}`;
+    group.setAttribute('aria-label', `${label}: ${detail}`);
+    const announce = () => showToast(`${label} · ${detail}`);
+    group.addEventListener('click', announce);
+    group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); announce(); } });
+    group.append(hit, circle);
+    points.appendChild(group);
   });
 }
+
 
 function renderHomeTrainingSummary(nowMs = Date.now()) {
   renderHomeTrainingCard(nowMs);
   renderHomeActivity(nowMs);
+  renderHomeDomainCards(new Date(nowMs));
   const status = document.querySelector('.subtle-status');
   if (!status) return;
-  const today = new Date(nowMs);
-  const sessions = getCompletedWorkoutsForDate(today);
-  const planned = getPlannedWorkoutForDate(today);
-  const activeToday = Boolean(state.activeWorkout);
-  if (activeToday) status.textContent = `Тренировка идёт · ${formatWorkoutDuration(getWorkoutElapsedSeconds(state.activeWorkout, nowMs))}`;
-  else if (sessions.length) status.textContent = sessions.length === 1 ? 'Сегодняшняя тренировка выполнена' : `Сегодня: ${sessions.length} ${getWorkoutCountNoun(sessions.length)}`;
-  else if (planned && planned !== 'Отдых') status.textContent = `Сегодня по плану: ${planned}`;
-  else status.textContent = 'Сегодня день восстановления';
+  const today = getDashboardActivityBreakdown(new Date(nowMs), nowMs);
+  const activeDomains = [today.training > 0, today.finance > 0, today.schedule > 0, today.notes > 0].filter(Boolean).length;
+  if (state.activeWorkout) status.textContent = `Тренировка идёт · ${formatWorkoutDuration(getWorkoutElapsedSeconds(state.activeWorkout, nowMs))}`;
+  else if (activeDomains) status.textContent = `Сегодня активны ${activeDomains} из 4 сфер`;
+  else status.textContent = 'Сегодня можно начать с любого раздела';
 }
+
 
 function shiftActivityWeek(delta) {
   const currentMonday = getWeekMonday(new Date());
@@ -3009,3 +3155,275 @@ function normalizeTextGoalHistory(goal, targetText, fallbackStatus) {
   });
   return sortGoalHistory(history);
 }
+
+/* === Dashboard profile & social layer v14 ============================== */
+function telegramApiHeaders(json = false) {
+  if (!tg?.initData) return null;
+  return {
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+    'X-Telegram-Init-Data': tg.initData
+  };
+}
+
+function getApiErrorMessage(payload, fallback = 'Не удалось выполнить действие') {
+  const detail = payload?.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  return fallback;
+}
+
+function profileDisplayName(person) {
+  const full = [person?.first_name, person?.last_name].filter(Boolean).join(' ').trim();
+  return full || (person?.username ? `@${person.username}` : 'Пользователь SVGTracker');
+}
+
+function renderProfileState() {
+  const count = document.getElementById('profile-friends-count');
+  const toggle = document.getElementById('profile-notifications-toggle');
+  const status = document.getElementById('profile-drawer-status');
+  const username = document.getElementById('profile-drawer-username');
+  if (count) count.textContent = String(profileState.friends?.length || 0);
+  if (toggle) {
+    toggle.checked = profileState.notifications_enabled !== false;
+    toggle.disabled = !tg?.initData;
+  }
+  const user = window.SVG_TELEGRAM_USER;
+  if (username) username.textContent = user?.username ? `@${user.username}` : (user ? 'Аккаунт Telegram' : 'Открой SVGTracker в Telegram');
+  if (status) {
+    const incoming = profileState.incoming?.length || 0;
+    status.textContent = !tg?.initData
+      ? 'Социальные функции доступны внутри Telegram'
+      : incoming
+        ? `${incoming} ${incoming === 1 ? 'новый запрос в друзья' : 'новых запроса в друзья'}`
+        : 'Настройки синхронизируются с аккаунтом Telegram';
+  }
+  renderFriendsSheet();
+}
+
+async function loadProfileData(force = false) {
+  if (!tg?.initData || profileLoading || (profileLoaded && !force)) {
+    renderProfileState();
+    return profileState;
+  }
+  profileLoading = true;
+  try {
+    const response = await fetch('/api/profile', { headers: telegramApiHeaders(false) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(getApiErrorMessage(payload, 'Профиль временно недоступен'));
+    profileState = {
+      notifications_enabled: payload.notifications_enabled !== false,
+      friends: Array.isArray(payload.friends) ? payload.friends : [],
+      incoming: Array.isArray(payload.incoming) ? payload.incoming : [],
+      outgoing: Array.isArray(payload.outgoing) ? payload.outgoing : []
+    };
+    profileLoaded = true;
+    renderProfileState();
+    return profileState;
+  } catch (error) {
+    const status = document.getElementById('profile-drawer-status');
+    if (status) status.textContent = error?.message || 'Профиль временно недоступен';
+    return profileState;
+  } finally {
+    profileLoading = false;
+  }
+}
+
+function openProfileDrawer() {
+  const drawer = document.getElementById('profile-drawer');
+  if (!drawer) return;
+  drawer.hidden = false;
+  document.body.classList.add('profile-drawer-open');
+  requestAnimationFrame(() => drawer.classList.add('is-open'));
+  renderProfileState();
+  loadProfileData(true);
+}
+
+function closeProfileDrawer(immediate = false) {
+  const drawer = document.getElementById('profile-drawer');
+  if (!drawer || drawer.hidden) return;
+  drawer.classList.remove('is-open');
+  document.body.classList.remove('profile-drawer-open');
+  if (immediate) drawer.hidden = true;
+  else setTimeout(() => { if (!drawer.classList.contains('is-open')) drawer.hidden = true; }, 220);
+}
+
+async function toggleBotNotifications(enabled) {
+  const toggle = document.getElementById('profile-notifications-toggle');
+  const previous = profileState.notifications_enabled !== false;
+  profileState.notifications_enabled = Boolean(enabled);
+  renderProfileState();
+  if (!tg?.initData) {
+    profileState.notifications_enabled = previous;
+    renderProfileState();
+    showToast('Открой приложение внутри Telegram');
+    return;
+  }
+  if (toggle) toggle.disabled = true;
+  try {
+    const response = await fetch('/api/profile/notifications', {
+      method: 'PUT',
+      headers: telegramApiHeaders(true),
+      body: JSON.stringify({ enabled: Boolean(enabled) })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(getApiErrorMessage(payload));
+    profileState.notifications_enabled = payload.enabled !== false;
+    showToast(profileState.notifications_enabled ? 'Уведомления включены' : 'Уведомления выключены');
+  } catch (error) {
+    profileState.notifications_enabled = previous;
+    showToast(error?.message || 'Не удалось изменить уведомления');
+  } finally {
+    if (toggle) toggle.disabled = false;
+    renderProfileState();
+  }
+}
+
+function createSocialAvatar(person) {
+  const avatar = document.createElement('span');
+  avatar.className = 'social-avatar';
+  const letter = (person?.first_name || person?.username || '?').trim().charAt(0).toUpperCase() || '?';
+  if (person?.photo_url) {
+    const image = document.createElement('img');
+    image.src = person.photo_url;
+    image.alt = '';
+    image.onerror = () => { image.remove(); avatar.textContent = letter; };
+    avatar.appendChild(image);
+  } else avatar.textContent = letter;
+  return avatar;
+}
+
+function createSocialPersonCopy(person, secondaryText = '') {
+  const copy = document.createElement('span');
+  copy.className = 'social-person-copy';
+  const name = document.createElement('strong');
+  name.textContent = profileDisplayName(person);
+  const meta = document.createElement('small');
+  meta.textContent = secondaryText || (person?.username ? `@${person.username}` : 'SVGTracker');
+  copy.append(name, meta);
+  return copy;
+}
+
+function renderSocialEmpty(container, text) {
+  const empty = document.createElement('p');
+  empty.className = 'social-empty';
+  empty.textContent = text;
+  container.replaceChildren(empty);
+}
+
+function renderFriendsSheet() {
+  const friendsList = document.getElementById('friends-list');
+  const incomingList = document.getElementById('friends-incoming-list');
+  const outgoingList = document.getElementById('friends-outgoing-list');
+  const incomingSection = document.getElementById('friends-incoming-section');
+  const outgoingSection = document.getElementById('friends-outgoing-section');
+  if (!friendsList || !incomingList || !outgoingList) return;
+
+  const friends = profileState.friends || [];
+  if (!friends.length) renderSocialEmpty(friendsList, 'Пока никого. Добавь друга по Telegram username.');
+  else {
+    friendsList.replaceChildren(...friends.map(person => {
+      const row = document.createElement('div'); row.className = 'social-person-row';
+      row.append(createSocialAvatar(person), createSocialPersonCopy(person));
+      const action = document.createElement('button'); action.type = 'button'; action.className = 'social-small-action is-danger'; action.textContent = 'Удалить';
+      action.addEventListener('click', () => requestConfirm(`Удалить ${profileDisplayName(person)} из друзей?`, () => removeFriendById(person.id)));
+      row.appendChild(action); return row;
+    }));
+  }
+
+  const incoming = profileState.incoming || [];
+  if (incomingSection) incomingSection.hidden = !incoming.length;
+  incomingList.replaceChildren(...incoming.map(person => {
+    const row = document.createElement('div'); row.className = 'social-person-row';
+    row.append(createSocialAvatar(person), createSocialPersonCopy(person, person?.username ? `@${person.username}` : 'Хочет добавить тебя'));
+    const actions = document.createElement('span'); actions.className = 'social-inline-actions';
+    const accept = document.createElement('button'); accept.type = 'button'; accept.className = 'social-small-action'; accept.textContent = 'Принять'; accept.addEventListener('click', () => resolveFriendRequestFromUi(person.request_id, true));
+    const reject = document.createElement('button'); reject.type = 'button'; reject.className = 'social-small-action is-muted'; reject.textContent = 'Отклонить'; reject.addEventListener('click', () => resolveFriendRequestFromUi(person.request_id, false));
+    actions.append(accept, reject); row.appendChild(actions); return row;
+  }));
+
+  const outgoing = profileState.outgoing || [];
+  if (outgoingSection) outgoingSection.hidden = !outgoing.length;
+  outgoingList.replaceChildren(...outgoing.map(person => {
+    const row = document.createElement('div'); row.className = 'social-person-row';
+    row.append(createSocialAvatar(person), createSocialPersonCopy(person, 'Запрос отправлен'));
+    return row;
+  }));
+}
+
+function openFriendsSheet() {
+  closeProfileDrawer(true);
+  const sheet = document.getElementById('friends-sheet');
+  if (!sheet) return;
+  sheet.hidden = false;
+  renderFriendsSheet();
+  loadProfileData(true);
+}
+
+function openAddFriendSheet() {
+  closeProfileDrawer(true);
+  const sheet = document.getElementById('add-friend-sheet');
+  if (!sheet) return;
+  sheet.hidden = false;
+  const input = document.getElementById('friend-username-input');
+  if (input) { input.value = ''; setTimeout(() => input.focus(), 120); }
+}
+
+async function submitFriendRequest() {
+  const input = document.getElementById('friend-username-input');
+  const button = document.getElementById('friend-request-button');
+  const username = String(input?.value || '').trim();
+  if (!username) { showToast('Укажи Telegram username'); return; }
+  if (!tg?.initData) { showToast('Открой приложение внутри Telegram'); return; }
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch('/api/friends/request', {
+      method: 'POST', headers: telegramApiHeaders(true), body: JSON.stringify({ username })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(getApiErrorMessage(payload, 'Не удалось отправить запрос'));
+    closeSheets();
+    const result = payload.result;
+    showToast(result === 'accepted' ? 'Теперь вы друзья' : result === 'already_friends' ? 'Вы уже друзья' : result === 'pending' ? 'Запрос уже отправлен' : 'Запрос отправлен');
+    await loadProfileData(true);
+  } catch (error) {
+    showToast(error?.message || 'Не удалось отправить запрос');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function resolveFriendRequestFromUi(requestId, accept) {
+  if (!tg?.initData) return;
+  try {
+    const response = await fetch(`/api/friends/requests/${encodeURIComponent(requestId)}/${accept ? 'accept' : 'reject'}`, {
+      method: 'POST', headers: telegramApiHeaders(false)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(getApiErrorMessage(payload));
+    showToast(accept ? 'Запрос принят' : 'Запрос отклонён');
+    await loadProfileData(true);
+  } catch (error) {
+    showToast(error?.message || 'Не удалось обработать запрос');
+  }
+}
+
+async function removeFriendById(friendId) {
+  if (!tg?.initData) return;
+  try {
+    const response = await fetch(`/api/friends/${encodeURIComponent(friendId)}`, {
+      method: 'DELETE', headers: telegramApiHeaders(false)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(getApiErrorMessage(payload));
+    showToast('Удалено из друзей');
+    await loadProfileData(true);
+  } catch (error) {
+    showToast(error?.message || 'Не удалось удалить друга');
+  }
+}
+
+window.addEventListener('online', () => loadProfileData(true));
+document.addEventListener('DOMContentLoaded', () => {
+  renderProfileState();
+  renderHomeTrainingSummary();
+  if (tg?.initData) loadProfileData(false);
+});
