@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import time
 from urllib.parse import parse_qsl
 
@@ -15,17 +16,21 @@ import uvicorn
 from config import BOT_TOKEN
 from key import main_keyboard
 from finance_db import (
+    block_user,
     create_friend_request,
     get_or_create_user,
     get_profile_data,
     get_training_state,
+    get_finance_state,
     get_user_settings,
     init_db,
     remove_friend,
     reset_user_data,
     resolve_friend_request,
     save_training_state,
+    save_finance_state,
     set_bot_notifications,
+    unblock_user,
 )
 
 bot = Bot(token=BOT_TOKEN)
@@ -33,7 +38,9 @@ dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
 MAX_TRAINING_STATE_BYTES = 1_000_000
-INIT_DATA_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+MAX_FINANCE_STATE_BYTES = 600_000
+INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
+logger = logging.getLogger("svgtracker")
 
 
 def verify_telegram_init_data(init_data: str):
@@ -100,6 +107,52 @@ def api_training_state(x_telegram_init_data: str | None = Header(default=None)):
     }
 
 
+@app.get("/api/finance/state")
+def api_finance_state(x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(x_telegram_init_data)
+    record = get_finance_state(user_id)
+    if not record:
+        return {"status": "ok", "exists": False, "state": None}
+    return {
+        "status": "ok",
+        "exists": True,
+        "state": record["state"],
+        "updated_at": record["updated_at"],
+    }
+
+
+@app.put("/api/finance/state")
+def api_save_finance_state(
+    payload: dict,
+    x_telegram_init_data: str | None = Header(default=None),
+):
+    _, user_id = authenticated_user(x_telegram_init_data)
+    state = payload.get("state") if isinstance(payload.get("state"), dict) else payload
+    base_updated_at = payload.get("baseUpdatedAt") if isinstance(payload.get("state"), dict) else None
+    encoded = json.dumps(state, ensure_ascii=False).encode("utf-8")
+    if len(encoded) > MAX_FINANCE_STATE_BYTES:
+        raise HTTPException(status_code=413, detail="Finance state is too large")
+
+    current = get_finance_state(user_id)
+    if base_updated_at and current and current["updated_at"] != base_updated_at:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "conflict",
+                "state": current["state"],
+                "updated_at": current["updated_at"],
+            },
+        )
+
+    allowed = {
+        "version", "monthlyIncome", "monthlyBudgets", "categories",
+        "mandatoryExpenses", "expenses", "debts", "sync"
+    }
+    clean_state = {key: state.get(key) for key in allowed if key in state}
+    updated_at = save_finance_state(user_id, clean_state)
+    return {"status": "ok", "updated_at": updated_at}
+
+
 @app.get("/api/profile")
 def api_profile(x_telegram_init_data: str | None = Header(default=None)):
     _, user_id = authenticated_user(x_telegram_init_data)
@@ -132,6 +185,8 @@ async def api_friend_request(
         raise HTTPException(status_code=404, detail="Пользователь пока не зарегистрирован в SVGTracker")
     if status == "self":
         raise HTTPException(status_code=400, detail="Нельзя добавить самого себя")
+    if status == "blocked":
+        raise HTTPException(status_code=403, detail="Запрос этому пользователю недоступен")
     if status == "created":
         target_id = result.get("target_user_id")
         target_telegram_id = result.get("target_telegram_id")
@@ -146,8 +201,11 @@ async def api_friend_request(
                     reply_markup=main_keyboard(),
                 )
             except Exception:
-                # Friend requests must still be saved even if Telegram delivery is unavailable.
-                pass
+                # The request itself remains valid, but delivery failures must stay observable.
+                logger.exception(
+                    "Failed to send friend-request notification to Telegram user %s",
+                    target_telegram_id,
+                )
     return {"status": "ok", "result": status, "target": result.get("target")}
 
 
@@ -172,6 +230,22 @@ def api_friend_remove(friend_user_id: int, x_telegram_init_data: str | None = He
     _, user_id = authenticated_user(x_telegram_init_data)
     if not remove_friend(user_id, friend_user_id):
         raise HTTPException(status_code=404, detail="Друг не найден")
+    return {"status": "ok"}
+
+
+@app.post("/api/friends/{target_user_id}/block")
+def api_friend_block(target_user_id: int, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(x_telegram_init_data)
+    if not block_user(user_id, target_user_id):
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    return {"status": "ok"}
+
+
+@app.delete("/api/friends/{target_user_id}/block")
+def api_friend_unblock(target_user_id: int, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(x_telegram_init_data)
+    if not unblock_user(user_id, target_user_id):
+        raise HTTPException(status_code=404, detail="Блокировка не найдена")
     return {"status": "ok"}
 
 
@@ -259,7 +333,7 @@ async def reset_data_request(message: Message):
         ]
     )
     await message.answer(
-        "Это очистит твои тренировочные и связанные тестовые данные в базе. "
+        "Это очистит твои тренировочные, финансовые и связанные тестовые данные в базе. "
         "Действие нельзя отменить.",
         reply_markup=keyboard,
     )

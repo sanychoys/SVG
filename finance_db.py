@@ -16,6 +16,23 @@ EMPTY_TRAINING_STATE = {
     "sync": {"revision": 0, "updatedAt": None, "resetAt": None, "activeWorkoutClearedAt": None, "deviceId": None, "tombstones": {"goals": {}, "goalEntries": {}, "planOverrides": {}}},
 }
 
+EMPTY_FINANCE_STATE = {
+    "version": 4,
+    "monthlyIncome": 0,
+    "monthlyBudgets": {},
+    "categories": [],
+    "mandatoryExpenses": [],
+    "expenses": [],
+    "debts": [],
+    "sync": {
+        "updatedAt": None,
+        "resetAt": None,
+        "budgetUpdatedAt": None,
+        "tombstones": {"expenses": {}, "mandatoryExpenses": {}, "debts": {}, "categories": {}},
+    },
+}
+
+
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -68,6 +85,12 @@ def init_db():
                 state_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS finance_state(
+                user_id INTEGER PRIMARY KEY,
+                state_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS user_settings(
                 user_id INTEGER PRIMARY KEY,
                 bot_notifications INTEGER NOT NULL DEFAULT 1,
@@ -98,6 +121,16 @@ def init_db():
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY(friend_user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS user_blocks(
+                blocker_user_id INTEGER NOT NULL,
+                blocked_user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(blocker_user_id, blocked_user_id),
+                FOREIGN KEY(blocker_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(blocked_user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked
+                ON user_blocks(blocked_user_id);
             """
         )
 
@@ -165,6 +198,37 @@ def save_training_state(user_id, state):
         db.execute(
             """
             INSERT INTO training_state(user_id, state_json, updated_at)
+            VALUES(?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                state_json=excluded.state_json,
+                updated_at=excluded.updated_at
+            """,
+            (user_id, payload, now),
+        )
+    return now
+
+
+def get_finance_state(user_id):
+    with connect() as db:
+        row = db.execute(
+            "SELECT state_json, updated_at FROM finance_state WHERE user_id=?", (user_id,)
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            state = json.loads(row["state_json"])
+        except (TypeError, json.JSONDecodeError):
+            state = {}
+        return {"state": state, "updated_at": row["updated_at"]}
+
+
+def save_finance_state(user_id, state):
+    payload = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
+    now = utc_now()
+    with connect() as db:
+        db.execute(
+            """
+            INSERT INTO finance_state(user_id, state_json, updated_at)
             VALUES(?,?,?)
             ON CONFLICT(user_id) DO UPDATE SET
                 state_json=excluded.state_json,
@@ -261,12 +325,72 @@ def get_profile_data(user_id):
             """,
             (user_id,),
         ).fetchall()
+        blocked = db.execute(
+            """
+            SELECT u.id, u.username, u.first_name, u.last_name, u.photo_url, b.created_at
+            FROM user_blocks b
+            JOIN users u ON u.id=b.blocked_user_id
+            WHERE b.blocker_user_id=?
+            ORDER BY b.created_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
     return {
+        # The setting currently controls one concrete notification class: friend requests.
         "notifications_enabled": settings["bot_notifications"],
         "friends": [user_public_dict(row) for row in friends],
         "incoming": [dict(user_public_dict(row), request_id=row["request_id"], created_at=row["created_at"]) for row in incoming],
         "outgoing": [dict(user_public_dict(row), request_id=row["request_id"], created_at=row["created_at"]) for row in outgoing],
+        "blocked": [dict(user_public_dict(row), blocked_at=row["created_at"]) for row in blocked],
     }
+
+
+def users_are_blocked(db, first_user_id, second_user_id):
+    return db.execute(
+        """
+        SELECT 1 FROM user_blocks
+        WHERE (blocker_user_id=? AND blocked_user_id=?)
+           OR (blocker_user_id=? AND blocked_user_id=?)
+        LIMIT 1
+        """,
+        (first_user_id, second_user_id, second_user_id, first_user_id),
+    ).fetchone() is not None
+
+
+def block_user(user_id, target_user_id):
+    if int(user_id) == int(target_user_id):
+        return False
+    now = utc_now()
+    with connect() as db:
+        target = db.execute("SELECT id FROM users WHERE id=?", (target_user_id,)).fetchone()
+        if not target:
+            return False
+        db.execute(
+            "INSERT OR IGNORE INTO user_blocks(blocker_user_id, blocked_user_id, created_at) VALUES(?,?,?)",
+            (user_id, target_user_id, now),
+        )
+        # Blocking is definitive: remove friendship and any pending requests in either direction.
+        db.execute(
+            "DELETE FROM friendships WHERE (user_id=? AND friend_user_id=?) OR (user_id=? AND friend_user_id=?)",
+            (user_id, target_user_id, target_user_id, user_id),
+        )
+        db.execute(
+            """
+            UPDATE friend_requests SET status='rejected', updated_at=?
+            WHERE status='pending' AND ((sender_user_id=? AND receiver_user_id=?) OR (sender_user_id=? AND receiver_user_id=?))
+            """,
+            (now, user_id, target_user_id, target_user_id, user_id),
+        )
+        return True
+
+
+def unblock_user(user_id, target_user_id):
+    with connect() as db:
+        cur = db.execute(
+            "DELETE FROM user_blocks WHERE blocker_user_id=? AND blocked_user_id=?",
+            (user_id, target_user_id),
+        )
+        return cur.rowcount > 0
 
 
 def create_friend_request(user_id, username):
@@ -283,6 +407,9 @@ def create_friend_request(user_id, username):
         target_id = target["id"]
         if target_id == user_id:
             return {"status": "self"}
+        if users_are_blocked(db, user_id, target_id):
+            # Do not reveal which side created the block.
+            return {"status": "blocked"}
         existing_friend = db.execute(
             "SELECT 1 FROM friendships WHERE user_id=? AND friend_user_id=?",
             (user_id, target_id),
@@ -339,10 +466,13 @@ def resolve_friend_request(user_id, request_id, accept):
         ).fetchone()
         if not row or row["receiver_user_id"] != user_id or row["status"] != "pending":
             return False
+        sender_id = row["sender_user_id"]
+        if accept and users_are_blocked(db, user_id, sender_id):
+            db.execute("UPDATE friend_requests SET status='rejected', updated_at=? WHERE id=?", (now, request_id))
+            return False
         status = "accepted" if accept else "rejected"
         db.execute("UPDATE friend_requests SET status=?, updated_at=? WHERE id=?", (status, now, request_id))
         if accept:
-            sender_id = row["sender_user_id"]
             db.execute("INSERT OR IGNORE INTO friendships(user_id, friend_user_id, created_at) VALUES(?,?,?)", (user_id, sender_id, now))
             db.execute("INSERT OR IGNORE INTO friendships(user_id, friend_user_id, created_at) VALUES(?,?,?)", (sender_id, user_id, now))
         return True
@@ -375,8 +505,26 @@ def reset_user_data(telegram_id):
         user_id = row["id"]
         for table in ("finance", "mandatory_expenses", "expenses", "debts"):
             db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
-
         now = utc_now()
+        reset_finance = dict(EMPTY_FINANCE_STATE)
+        reset_finance["sync"] = {
+            "updatedAt": now,
+            "resetAt": now,
+            "budgetUpdatedAt": None,
+            "tombstones": {"expenses": {}, "mandatoryExpenses": {}, "debts": {}, "categories": {}},
+        }
+        empty_finance_payload = json.dumps(reset_finance, ensure_ascii=False, separators=(",", ":"))
+        db.execute(
+            """
+            INSERT INTO finance_state(user_id, state_json, updated_at)
+            VALUES(?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                state_json=excluded.state_json,
+                updated_at=excluded.updated_at
+            """,
+            (user_id, empty_finance_payload, now),
+        )
+
         reset_state = dict(EMPTY_TRAINING_STATE)
         reset_state["sync"] = {
             "revision": 0,

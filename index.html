@@ -182,14 +182,15 @@
 <div id="profile-drawer" class="profile-drawer" hidden>
   <button type="button" class="profile-drawer-backdrop" onclick="closeProfileDrawer()" aria-label="Закрыть профиль"></button>
   <aside class="profile-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="profile-drawer-title">
-    <div class="profile-drawer-handle"></div>
     <header class="profile-drawer-header">
-      <div>
+      <div class="profile-drawer-copy">
         <span class="section-label">Профиль</span>
-        <h2 id="profile-drawer-title">Мой SVGTracker</h2>
-        <p id="profile-drawer-username">Telegram</p>
+        <h2 id="profile-drawer-title">Пользователь</h2>
+        <button type="button" id="profile-drawer-username" class="profile-username-copy" onclick="copyProfileUsername()" aria-label="Скопировать Telegram username">Telegram</button>
       </div>
-      <button type="button" class="profile-close" onclick="closeProfileDrawer()" aria-label="Закрыть">×</button>
+      <button type="button" class="profile-close" onclick="closeProfileDrawer()" aria-label="Закрыть">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>
+      </button>
     </header>
     <div class="profile-action-list">
       <button type="button" class="profile-action-row" onclick="openFriendsSheet()">
@@ -200,8 +201,12 @@
         <span>Добавить в друзья</span>
         <span class="profile-action-meta">@username <span>›</span></span>
       </button>
+      <button type="button" class="profile-action-row" onclick="openBlockedUsersSheet()">
+        <span>Заблокированные</span>
+        <span class="profile-action-meta"><b id="profile-blocked-count">0</b><span>›</span></span>
+      </button>
       <label class="profile-action-row profile-toggle-row">
-        <span>Уведомления от бота</span>
+        <span class="profile-action-copy"><strong>Запросы в друзья</strong><small>Уведомлять сообщением от бота</small></span>
         <span class="ios-switch">
           <input id="profile-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked)">
           <span class="ios-switch-track" aria-hidden="true"></span>
@@ -241,15 +246,85 @@
   </div>
 </div>
 
+<div id="blocked-users-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+  <div class="sheet-panel social-sheet-panel">
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row">
+      <div><span class="section-label">Приватность</span><h3>Заблокированные</h3></div>
+      <button type="button" class="sheet-close" onclick="closeSheets()">×</button>
+    </div>
+    <p class="social-hint">Заблокированный пользователь не сможет отправить тебе запрос в друзья. Блокировка не отправляет ему уведомление.</p>
+    <div id="blocked-users-list" class="social-section"></div>
+  </div>
+</div>
+
 <section id="finance-screen" class="single-training-screen" hidden>
-<div class="training-overlay-shell finance-shell">
-<header class="premium-header"><button class="apple-action-button workouts-back" onclick="closeFinance()">‹</button><div class="header-copy"><h1>Финансы</h1><p>Умный контроль месячного бюджета</p></div></header>
-<section class="apple-widget finance-balance"><span class="section-label">Ваш бюджет</span><h2 id="finance-budget-left">Настрой бюджет</h2><div class="finance-stats"><div><small>Сегодня можно</small><strong id="finance-day-limit">—</strong></div><div><small id="finance-percent">—</small></div></div><div class="finance-chart"><svg viewBox="0 0 320 80"><path d="M0 60 C60 50 100 65 150 35 C220 15 260 45 320 20"/></svg></div></section>
-<section class="apple-widget"><h2>Обязательные расходы</h2><div id="finance-mandatory"></div><button onclick="openFinanceSheet('mandatory')">Добавить расход</button></section>
-<section class="apple-widget"><h2>Куда уходят деньги</h2><div id="finance-cats"></div></section>
-<section class="apple-widget"><h2>Долги</h2><div id="finance-debts"></div><button onclick="openFinanceSheet('debt')">Добавить долг</button></section>
-<button class="finance-add" onclick="openFinanceSheet('expense')">+</button>
-</div></section>
+  <div class="training-overlay-shell finance-shell">
+    <header class="premium-header finance-header">
+      <button type="button" class="apple-action-button workouts-back" onclick="closeFinance()" aria-label="Назад">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg>
+      </button>
+      <div class="header-copy">
+        <h1>Финансы</h1>
+        <div class="finance-month-nav" aria-label="Навигация по месяцам">
+          <button type="button" onclick="shiftFinanceMonth(-1)" aria-label="Предыдущий месяц">‹</button>
+          <p id="finance-month-label">Текущий месяц</p>
+          <button type="button" id="finance-month-next" onclick="shiftFinanceMonth(1)" aria-label="Следующий месяц">›</button>
+        </div>
+        <span class="finance-sync-status" data-status="local" aria-live="polite">Локально</span>
+      </div>
+      <button type="button" class="apple-action-button finance-settings-button" onclick="openFinanceBudgetSheet()" aria-label="Настроить бюджет">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M8 14v6"/></svg>
+      </button>
+    </header>
+
+    <section class="apple-widget finance-overview-widget">
+      <div class="finance-overview-head">
+        <div><span class="section-label">Свободный бюджет</span><h2 id="finance-budget-left">Настрой бюджет</h2></div>
+        <div class="finance-percent-badge"><strong id="finance-percent-value">—</strong><small>осталось</small></div>
+      </div>
+      <div class="finance-budget-track" aria-hidden="true"><span id="finance-budget-progress-bar"></span></div>
+      <p class="finance-budget-caption" id="finance-budget-caption">Укажи месячный доход и обязательные расходы</p>
+      <div class="finance-today-grid">
+        <article><small>Сегодня можно</small><strong id="finance-day-limit">—</strong><span id="finance-day-context">Лимит появится после настройки</span></article>
+        <article><small>Потрачено сегодня</small><strong id="finance-today-spent">0 ₽</strong><span id="finance-today-status">Расходов пока нет</span></article>
+      </div>
+    </section>
+
+    <section class="apple-widget finance-spending-widget">
+      <div class="widget-header widget-header--tight finance-widget-head">
+        <div><span class="section-label">Динамика</span><h2>Расходы за 7 дней</h2></div>
+        <div class="finance-head-actions"><strong id="finance-week-spent">0 ₽</strong><button type="button" class="finance-text-action" onclick="openFinanceTransactionsSheet()">История</button></div>
+      </div>
+      <div id="finance-spend-chart" class="finance-spend-chart" aria-label="Расходы за последние семь дней"></div>
+      <div class="finance-chart-caption"><span>Столбец — фактический расход</span><span id="finance-spend-chart-caption">Лимит рассчитывается на каждый день</span></div>
+    </section>
+
+    <div class="finance-quick-grid">
+      <button type="button" class="apple-widget finance-quick-card" onclick="openFinanceMandatorySheet()">
+        <span class="finance-quick-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 5h12v14H6zM9 9h6M9 13h4"/></svg></span>
+        <span><small>Обязательные</small><strong id="finance-mandatory-total">0 ₽</strong><em id="finance-mandatory-count">Нет расходов</em></span><b>›</b>
+      </button>
+      <button type="button" class="apple-widget finance-quick-card" onclick="openFinanceDebtsSheet()">
+        <span class="finance-quick-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 8h10M7 12h7M7 16h5"/><path d="M5 4h14v16H5z"/></svg></span>
+        <span><small>Долги</small><strong id="finance-debt-balance">0 ₽</strong><em id="finance-debt-caption">Нет открытых</em></span><b>›</b>
+      </button>
+    </div>
+
+    <section class="apple-widget finance-category-widget">
+      <div class="widget-header widget-header--tight finance-widget-head">
+        <div><span class="section-label">Структура</span><h2>Куда уходят деньги</h2></div>
+        <button type="button" class="finance-text-action" onclick="openFinanceCategoriesSheet()">Категории</button>
+      </div>
+      <div id="finance-category-chart" class="finance-category-chart"></div>
+    </section>
+
+    <button type="button" class="finance-record-button" onclick="openFinanceActionSheet()">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      <span>Записать операцию</span>
+    </button>
+  </div>
+</section>
 
 <section id="training-screen" class="single-training-screen" hidden>
   <div class="training-overlay-shell">
@@ -542,14 +617,111 @@
 </div>
 
 
-<div id="finance-sheet" class="ios-sheet" hidden>
-<div class="sheet-panel"><div class="sheet-handle"></div><h2>Добавить данные</h2>
-<select id="finance-entry-type"><option value="expense">Расход</option><option value="income">Доход</option><option value="mandatory">Обязательный расход</option><option value="debt">Долг</option></select>
-<input id="finance-edit-id" type="hidden"><input id="finance-entry-title" placeholder="Название / человек">
-<input id="finance-entry-amount" placeholder="Сумма">
-<select id="finance-entry-category"><option>Еда</option><option>Дом</option><option>Транспорт</option><option>Развлечения</option><option>Здоровье</option><option>Другое</option></select>
-<select id="finance-debt-kind"><option>Мне должны</option><option>Я должен</option></select>
-<button onclick="saveFinanceEntry()">Сохранить</button></div></div>
+<div id="finance-action-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+  <div class="sheet-panel finance-action-panel" data-sheet-panel>
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Финансы</span><h3>Что записать?</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
+    <div class="finance-action-list">
+      <button type="button" onclick="openFinanceEntrySheet('expense')"><span class="finance-action-symbol is-expense">−</span><span><strong>Расход</strong><small>Покупка или ежедневная трата</small></span><b>›</b></button>
+      <button type="button" onclick="openFinanceEntrySheet('mandatory')"><span class="finance-action-symbol is-mandatory">•</span><span><strong>Обязательный расход</strong><small>Регулярный платёж этого месяца</small></span><b>›</b></button>
+      <button type="button" onclick="openFinanceDebtEditor()"><span class="finance-action-symbol is-debt">↔</span><span><strong>Долг</strong><small>Я взял или дал деньги</small></span><b>›</b></button>
+      <button type="button" onclick="openFinanceBudgetSheet()"><span class="finance-action-symbol">₽</span><span><strong>Настроить бюджет</strong><small>Месячный доход</small></span><b>›</b></button>
+    </div>
+  </div>
+</div>
+
+<div id="finance-entry-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+  <div class="sheet-panel finance-form-panel" data-sheet-panel>
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Финансы</span><h3 id="finance-entry-sheet-title">Новый расход</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
+    <input id="finance-entry-type" type="hidden"><input id="finance-edit-id" type="hidden">
+    <label class="sheet-field"><span>Название</span><input id="finance-entry-title" autocomplete="off" maxlength="80" placeholder="Например, продукты"></label>
+    <label class="sheet-field"><span>Сумма</span><div class="finance-money-input"><input id="finance-entry-amount" inputmode="decimal" autocomplete="off" placeholder="0"><b>₽</b></div></label>
+    <label class="sheet-field"><span>Категория</span><select id="finance-entry-category" aria-label="Категория расхода"></select></label>
+    <label class="sheet-field"><span>Дата</span><input id="finance-entry-date" type="date"></label>
+    <button type="button" class="sheet-primary-action" onclick="saveFinanceEntryV15()">Сохранить</button>
+    <button type="button" id="finance-entry-delete-button" class="sheet-danger-button" onclick="deleteFinanceEntryV15()" hidden>Удалить</button>
+  </div>
+</div>
+
+<div id="finance-budget-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+  <div class="sheet-panel finance-form-panel" data-sheet-panel>
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Бюджет</span><h3>Месячный доход</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
+    <p class="sheet-subtitle">Обязательные расходы резервируются сразу. Остаток делится на оставшиеся дни месяца.</p>
+    <label class="sheet-field"><span>Доход на месяц</span><div class="finance-money-input"><input id="finance-monthly-income-input" inputmode="decimal" autocomplete="off" placeholder="22000"><b>₽</b></div></label>
+    <div class="finance-budget-preview"><span>Перенос с прошлого месяца</span><strong id="finance-budget-sheet-carryover">0 ₽</strong></div>
+    <div class="finance-budget-preview"><span>Обязательные расходы</span><strong id="finance-budget-sheet-mandatory">0 ₽</strong></div>
+    <div class="finance-budget-preview"><span>Доступно на месяц</span><strong id="finance-budget-sheet-free">0 ₽</strong></div>
+    <button type="button" class="sheet-primary-action" onclick="saveFinanceBudgetSettings()">Сохранить бюджет</button>
+  </div>
+</div>
+
+<div id="finance-transactions-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+  <div class="sheet-panel finance-list-panel" data-sheet-panel>
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Финансы</span><h3>История расходов</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
+    <div id="finance-transactions-list" class="finance-list"></div>
+    <button type="button" class="sheet-primary-action" onclick="openFinanceEntrySheet('expense')">Добавить расход</button>
+  </div>
+</div>
+
+<div id="finance-mandatory-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+  <div class="sheet-panel finance-list-panel" data-sheet-panel>
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Бюджет</span><h3>Обязательные расходы</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
+    <div id="finance-mandatory-list" class="finance-list"></div>
+    <button type="button" class="sheet-primary-action" onclick="openFinanceEntrySheet('mandatory')">Добавить расход</button>
+  </div>
+</div>
+
+<div id="finance-debts-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+  <div class="sheet-panel finance-list-panel" data-sheet-panel>
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Финансы</span><h3>Долги</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
+    <div class="finance-debt-summary"><div><small>Я должен</small><strong id="finance-debts-owe">0 ₽</strong></div><div><small>Мне должны</small><strong id="finance-debts-lent">0 ₽</strong></div></div>
+    <div id="finance-debts-list" class="finance-list"></div>
+    <button type="button" class="sheet-primary-action" onclick="openFinanceDebtEditor()">Добавить долг</button>
+  </div>
+</div>
+
+<div id="finance-debt-edit-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+  <div class="sheet-panel finance-form-panel" data-sheet-panel>
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Долги</span><h3 id="finance-debt-editor-title">Новый долг</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
+    <input id="finance-debt-edit-id" type="hidden">
+    <label class="sheet-field"><span>Ситуация</span><select id="finance-debt-kind"><option value="owe">Я взял в долг</option><option value="lent">Я дал в долг</option></select></label>
+    <label class="sheet-field"><span>Человек</span><input id="finance-debt-person" autocomplete="off" maxlength="80" placeholder="Имя"></label>
+    <label class="sheet-field"><span>Сумма</span><div class="finance-money-input"><input id="finance-debt-amount" inputmode="decimal" autocomplete="off" placeholder="0"><b>₽</b></div></label>
+    <label class="sheet-field"><span>Вернуть до <em>необязательно</em></span><input id="finance-debt-due" type="date"></label>
+    <button type="button" class="sheet-primary-action" onclick="saveFinanceDebt()">Сохранить</button>
+    <button type="button" id="finance-debt-close-button" class="sheet-secondary-action" onclick="closeFinanceDebt()" hidden>Отметить закрытым</button>
+    <button type="button" id="finance-debt-reopen-button" class="sheet-secondary-action" onclick="reopenFinanceDebt()" hidden>Вернуть в открытые</button>
+    <button type="button" id="finance-debt-delete-button" class="sheet-danger-button" onclick="deleteFinanceDebt()" hidden>Удалить</button>
+  </div>
+</div>
+
+<div id="finance-categories-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+  <div class="sheet-panel finance-list-panel" data-sheet-panel>
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Финансы</span><h3>Категории</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
+    <div id="finance-category-list" class="finance-category-list"></div>
+    <button type="button" class="sheet-primary-action" onclick="openFinanceCategoryEditor()">Новая категория</button>
+  </div>
+</div>
+
+<div id="finance-category-edit-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+  <div class="sheet-panel finance-form-panel" data-sheet-panel>
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Категория</span><h3 id="finance-category-editor-title">Новая категория</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
+    <input id="finance-category-edit-id" type="hidden">
+    <label class="sheet-field"><span>Название</span><input id="finance-category-name" autocomplete="off" maxlength="32" placeholder="Например, Кофе"></label>
+    <div class="finance-color-field"><span>Цвет</span><div id="finance-category-color-picker" class="finance-color-picker" role="group" aria-label="Цвет категории"></div></div>
+    <label class="sheet-field" id="finance-category-transfer-field" hidden><span>Перенести связанные записи в</span><select id="finance-category-transfer-target"></select></label>
+    <button type="button" class="sheet-primary-action" onclick="saveFinanceCategory()">Сохранить</button>
+    <button type="button" id="finance-category-delete-button" class="sheet-danger-button" onclick="deleteFinanceCategory()" hidden>Удалить категорию</button>
+  </div>
+</div>
 
 </main>
 
