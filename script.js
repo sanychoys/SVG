@@ -50,9 +50,11 @@ let trainingSaveTimer = null;
 let trainingServerReady = false;
 let trainingSyncInFlight = false;
 let selectedGoalType = 'numeric';
+let selectedGoalColor = null;
 let selectedGoalId = null;
 let editingGoalId = null;
 const MAX_ACTIVE_WORKOUT_SECONDS = 18 * 60 * 60;
+const GOAL_COLORS = ['#9b83ff', '#45d6ff', '#ff8bb7', '#73e6a3', '#ffb45e', '#5f9cff', '#f2df68', '#c78cff'];
 
 function readJSON(key, fallback) {
   try {
@@ -338,14 +340,50 @@ function formatGoalHistoryDate(value, withTime = false) {
   ).format(new Date(time));
 }
 
-const GOAL_COLORS = ['#9b83ff', '#45d6ff', '#ff8bb7', '#73e6a3', '#ffb45e', '#5f9cff', '#f2df68', '#c78cff'];
+
+function normalizeGoalColor(value) {
+  const normalized = String(value || '').toLowerCase();
+  return GOAL_COLORS.find(color => color.toLowerCase() === normalized) || null;
+}
 
 function getGoalColor(goal, fallbackIndex = 0) {
-  // The index comes from the stable active-goal order. This intentionally
-  // guarantees different colors for adjacent goals instead of relying on a
-  // hash that can collide inside the small palette.
+  const explicit = normalizeGoalColor(goal?.color);
+  if (explicit) return explicit;
   const index = Math.abs(Number(fallbackIndex) || 0) % GOAL_COLORS.length;
   return GOAL_COLORS[index];
+}
+
+function getGoalDisplayColor(goal) {
+  const active = getActiveGoals();
+  const activeIndex = active.findIndex(item => item.id === goal?.id);
+  if (activeIndex >= 0) return getGoalColor(goal, activeIndex);
+  const archived = getArchivedGoals();
+  const archivedIndex = archived.findIndex(item => item.id === goal?.id);
+  return getGoalColor(goal, Math.max(0, archivedIndex));
+}
+
+function getNextGoalColor() {
+  const used = new Set((state.goals || []).filter(goal => !goal.archivedAt).map(goal => normalizeGoalColor(goal?.color)).filter(Boolean));
+  return GOAL_COLORS.find(color => !used.has(color)) || GOAL_COLORS[(state.goals || []).length % GOAL_COLORS.length];
+}
+
+function renderGoalColorPicker() {
+  const picker = document.getElementById('goal-color-picker');
+  if (!picker) return;
+  if (!selectedGoalColor) selectedGoalColor = getNextGoalColor();
+  picker.replaceChildren(...GOAL_COLORS.map(color => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `goal-color-choice${selectedGoalColor === color ? ' is-selected' : ''}`;
+    button.style.setProperty('--goal-choice-color', color);
+    button.setAttribute('aria-label', `Выбрать цвет ${color}`);
+    button.setAttribute('aria-pressed', selectedGoalColor === color ? 'true' : 'false');
+    button.addEventListener('click', () => {
+      selectedGoalColor = color;
+      renderGoalColorPicker();
+    });
+    return button;
+  }));
 }
 
 function getGoalRawProgress(goal, value) {
@@ -394,80 +432,155 @@ function getNumericGoalSeries(goals) {
 
 function renderGoalsChart(goals) {
   const chartWrap = document.querySelector('.goals-widget .goal-chart');
+  const svg = chartWrap?.querySelector('svg');
+  const guides = chartWrap?.querySelector('.goal-guides');
+  const axisLabels = chartWrap?.querySelector('.goal-axis-labels');
   const seriesGroup = document.querySelector('.goals-widget .goal-series-group');
   const range = document.querySelector('.goals-widget .goal-chart-range');
   const rangeStart = document.querySelector('.goals-widget .goal-range-start');
   const rangeEnd = document.querySelector('.goals-widget .goal-range-end');
-  if (!chartWrap || !seriesGroup) return;
+  if (!chartWrap || !seriesGroup || !svg) return;
 
   const series = getNumericGoalSeries(goals);
   if (!series.length) {
     chartWrap.hidden = true;
     if (range) range.hidden = true;
     seriesGroup.replaceChildren();
+    guides?.replaceChildren();
+    axisLabels?.replaceChildren();
     return;
   }
 
   chartWrap.hidden = false;
-  const allEntries = series.flatMap(item => item.entries);
+  const allEntries = series.flatMap(item => item.entries.map(entry => ({
+    ...entry,
+    progress: getGoalRawProgress(item.goal, entry.value)
+  })));
   const minTime = Math.min(...allEntries.map(item => item.time));
   const maxTime = Math.max(...allEntries.map(item => item.time));
   const timeSpan = Math.max(1, maxTime - minTime);
   const singleInstant = maxTime === minTime;
-  const left = 8, right = 312, bottom = 72, height = 50;
-  const fragment = document.createDocumentFragment();
 
-  series.forEach(item => {
+  const rawMin = Math.min(0, ...allEntries.map(item => item.progress));
+  const rawMax = Math.max(100, ...allEntries.map(item => item.progress));
+  const yMin = rawMin < 0 ? Math.floor(rawMin / 25) * 25 : 0;
+  const yMax = rawMax > 100 ? Math.ceil(rawMax / 25) * 25 : 100;
+  const ySpan = Math.max(1, yMax - yMin);
+  const left = 32, right = 312, top = 14, bottom = 96;
+  const yFor = progress => bottom - ((progress - yMin) / ySpan) * (bottom - top);
+
+  const guideValues = yMin === 0 && yMax === 100
+    ? [100, 50, 0]
+    : [...new Set([yMax, 100, 0, yMin])].filter(value => value >= yMin && value <= yMax).sort((a, b) => b - a);
+
+  if (guides && axisLabels) {
+    const guideFragment = document.createDocumentFragment();
+    const labelFragment = document.createDocumentFragment();
+    guideValues.forEach(value => {
+      const y = Number(yFor(value).toFixed(1));
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', String(left));
+      line.setAttribute('x2', String(right));
+      line.setAttribute('y1', String(y));
+      line.setAttribute('y2', String(y));
+      if (value === 100) line.classList.add('is-target');
+      guideFragment.appendChild(line);
+
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', '2');
+      label.setAttribute('y', String(y + 3));
+      label.textContent = `${Math.round(value)}%`;
+      if (value === 100) label.classList.add('is-target');
+      labelFragment.appendChild(label);
+    });
+    guides.replaceChildren(guideFragment);
+    axisLabels.replaceChildren(labelFragment);
+  }
+
+  const fragment = document.createDocumentFragment();
+  const hasSelectedNumericSeries = series.some(item => item.goal.id === selectedGoalId);
+  series.forEach((item, seriesIndex) => {
     const coords = item.entries.map(entry => {
       const progress = getGoalRawProgress(item.goal, entry.value);
-      const visibleProgress = Math.max(0, Math.min(100, progress));
-      const x = singleInstant ? 160 : left + ((entry.time - minTime) / timeSpan) * (right - left);
-      const y = bottom - (visibleProgress / 100) * height;
+      const singleOffset = singleInstant ? (seriesIndex - (series.length - 1) / 2) * 12 : 0;
+      const x = singleInstant ? 172 + singleOffset : left + ((entry.time - minTime) / timeSpan) * (right - left);
+      const y = yFor(progress);
       return { ...entry, x: Number(x.toFixed(1)), y: Number(y.toFixed(1)), progress };
     });
 
+    const isSelected = item.goal.id === selectedGoalId;
+    if (isSelected && coords.length > 1) {
+      const baselineY = Number(yFor(0).toFixed(1));
+      const area = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      area.setAttribute('class', 'goal-series-area');
+      area.setAttribute('d', `${buildSmoothPath(coords)} L${coords[coords.length - 1].x} ${baselineY} L${coords[0].x} ${baselineY} Z`);
+      area.setAttribute('fill', item.color);
+      fragment.appendChild(area);
+    }
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('class', 'goal-series-line');
-    path.setAttribute('d', buildSmoothPath(coords));
+    path.setAttribute('class', `goal-series-line${isSelected ? ' is-selected' : hasSelectedNumericSeries ? ' is-muted' : ''}`);
+    if (coords.length === 1) {
+      path.setAttribute('d', `M${Math.max(left, coords[0].x - 5)} ${coords[0].y} L${Math.min(right, coords[0].x + 5)} ${coords[0].y}`);
+    } else {
+      path.setAttribute('d', buildSmoothPath(coords));
+    }
     path.setAttribute('stroke', item.color);
     path.setAttribute('data-goal-id', item.goal.id);
+    path.setAttribute('tabindex', '0');
+    path.setAttribute('role', 'button');
+    const selectSeries = () => selectGoal(item.goal.id);
+    path.addEventListener('click', selectSeries);
+    path.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectSeries(); }
+    });
     fragment.appendChild(path);
 
     coords.forEach(point => {
+      const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      group.setAttribute('class', `goal-point-group${isSelected ? ' is-selected' : ''}`);
+      const hit = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      hit.setAttribute('class', 'goal-point-hit');
+      hit.setAttribute('cx', point.x);
+      hit.setAttribute('cy', point.y);
+      hit.setAttribute('r', '9');
+      hit.setAttribute('fill', 'transparent');
       const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       circle.setAttribute('class', 'goal-series-point');
       circle.setAttribute('cx', point.x);
       circle.setAttribute('cy', point.y);
-      circle.setAttribute('r', '3.4');
+      circle.setAttribute('r', isSelected ? '3.8' : '3.2');
       circle.setAttribute('fill', item.color);
       circle.setAttribute('data-goal-id', item.goal.id);
-      circle.setAttribute('tabindex', '0');
-      circle.setAttribute('role', 'button');
       const unit = item.goal.unit ? ` ${item.goal.unit}` : '';
       const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
       title.textContent = `${item.goal.name} · ${formatGoalHistoryDate(point.recordedAt, true)} · ${formatGoalValue(point.value)}${unit} · ${Math.round(point.progress)}%`;
-      circle.appendChild(title);
+      group.append(hit, circle, title);
+      group.setAttribute('tabindex', '0');
+      group.setAttribute('role', 'button');
       const announce = () => {
         selectGoal(item.goal.id);
         showToast(`${item.goal.name}: ${formatGoalValue(point.value)}${unit} · ${Math.round(point.progress)}%`);
       };
-      circle.addEventListener('click', announce);
-      circle.addEventListener('keydown', event => {
+      group.addEventListener('click', announce);
+      group.addEventListener('keydown', event => {
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); announce(); }
       });
-      fragment.appendChild(circle);
+      fragment.appendChild(group);
     });
   });
 
   seriesGroup.replaceChildren(fragment);
   if (range && rangeStart && rangeEnd) {
     range.hidden = false;
-    rangeStart.textContent = formatGoalHistoryDate(new Date(minTime).toISOString());
+    const minIso = new Date(minTime).toISOString();
+    const maxIso = new Date(maxTime).toISOString();
+    const sameDay = getDateKey(new Date(minTime)) === getDateKey(new Date(maxTime));
+    rangeStart.textContent = formatGoalHistoryDate(minIso, sameDay && !singleInstant);
     if (singleInstant) {
       const count = allEntries.length;
       rangeEnd.textContent = `${count} ${count === 1 ? 'запись' : count < 5 ? 'записи' : 'записей'}`;
     } else {
-      rangeEnd.textContent = formatGoalHistoryDate(new Date(maxTime).toISOString());
+      rangeEnd.textContent = formatGoalHistoryDate(maxIso, sameDay);
     }
   }
 }
@@ -725,6 +838,8 @@ function setGoalType(type) {
 
 function fillGoalSheet(goal = null) {
   editingGoalId = goal?.id || null;
+  selectedGoalColor = goal ? getGoalDisplayColor(goal) : getNextGoalColor();
+  renderGoalColorPicker();
   const currentInput = document.getElementById('goal-current');
   document.getElementById('goal-name').value = goal?.name || '';
   if (currentInput) {
@@ -787,6 +902,7 @@ function saveGoal() {
       type: 'text',
       name,
       text,
+      color: selectedGoalColor || previousText?.color || getNextGoalColor(),
       status: previousText?.status || 'active',
       history: previousText?.history ? [...previousText.history] : [],
       createdAt: previous?.createdAt || now,
@@ -817,6 +933,7 @@ function saveGoal() {
       target,
       start: initialValue,
       unit: document.getElementById('goal-unit').value.trim(),
+      color: selectedGoalColor || previousNumeric?.color || getNextGoalColor(),
       history,
       createdAt: previous?.createdAt || now,
       updatedAt: now
@@ -1006,6 +1123,7 @@ function normalizeGoal(goal) {
   const updatedAt = goal.updatedAt || fallbackTimestamp;
   const id = getStableGoalId(goal, fallbackTimestamp);
   const archivedAt = goal.archivedAt || null;
+  const color = normalizeGoalColor(goal.color);
 
   if (type === 'text') {
     const targetText = String(goal.targetText || goal.text || [goal.current, goal.target]
@@ -1028,6 +1146,7 @@ function normalizeGoal(goal) {
       status: latest?.status === 'completed' ? 'completed' : fallbackStatus,
       lastResult: String(latestWithNote?.note || '').trim(),
       history,
+      color,
       archivedAt,
       createdAt: goal.createdAt || history[0]?.recordedAt || fallbackTimestamp,
       updatedAt
@@ -1062,6 +1181,7 @@ function normalizeGoal(goal) {
     unit: String(goal.unit || '').trim(),
     status,
     history,
+    color,
     archivedAt,
     createdAt: goal.createdAt || history[0]?.recordedAt || fallbackTimestamp,
     updatedAt
@@ -2259,17 +2379,25 @@ function renderGoals() {
   if (switcher) {
     switcher.replaceChildren();
     activeGoals.forEach((goal, index) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `goal-switcher-item${goal.id === selectedGoalId ? ' is-selected' : ''}`;
-      button.addEventListener('click', () => selectGoal(goal.id));
-      const dot = document.createElement('span');
-      dot.className = 'goal-color-dot';
-      if (goal.type === 'numeric') dot.style.background = getGoalColor(goal, index); else dot.classList.add('is-text');
-      const label = document.createElement('span');
-      label.textContent = goal.name;
-      button.append(dot, label);
-      switcher.appendChild(button);
+      const item = document.createElement('div');
+      item.className = `goal-switcher-item${goal.id === selectedGoalId ? ' is-selected' : ''}`;
+
+      const colorButton = document.createElement('button');
+      colorButton.type = 'button';
+      colorButton.className = 'goal-color-button';
+      colorButton.style.setProperty('--goal-color', getGoalColor(goal, index));
+      colorButton.setAttribute('aria-label', `Действия цели «${goal.name}»`);
+      colorButton.addEventListener('click', () => openGoalActions(goal.id));
+
+      const labelButton = document.createElement('button');
+      labelButton.type = 'button';
+      labelButton.className = 'goal-select-button';
+      labelButton.textContent = goal.name;
+      labelButton.setAttribute('aria-pressed', goal.id === selectedGoalId ? 'true' : 'false');
+      labelButton.addEventListener('click', () => selectGoal(goal.id));
+
+      item.append(colorButton, labelButton);
+      switcher.appendChild(item);
     });
   }
   box.classList.toggle('is-text-goal', Boolean(selected?.type === 'text'));
@@ -2309,22 +2437,66 @@ function renderGoals() {
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selected ? editGoal(selected.id) : addGoal(); }
     };
   }
-  const record = box.querySelector('.goal-record-button');
-  if (record) {
-    record.hidden = !selected;
-    record.onclick = selected ? () => openGoalResult(selected.id) : null;
-    record.textContent = selected?.type === 'text' ? 'Записать прогресс' : 'Записать результат';
-  }
-  const historyButton = box.querySelector('.goal-history-button');
-  if (historyButton) historyButton.hidden = !selected && !archivedGoals.length;
-  const archiveButton = box.querySelector('.goal-archive-button');
-  if (archiveButton) archiveButton.hidden = !selected || selected.status !== 'completed';
   const archiveListButton = box.querySelector('.goal-archive-list-button');
+  const goalTools = box.querySelector('.goal-tools');
   if (archiveListButton) {
     archiveListButton.hidden = !archivedGoals.length;
     archiveListButton.textContent = `Архив · ${archivedGoals.length}`;
   }
+  if (goalTools) goalTools.hidden = !archivedGoals.length;
   renderGoalsChart(activeGoals);
+}
+
+function openGoalActions(goalId) {
+  const goal = normalizeGoal(getGoalById(goalId));
+  if (!goal || goal.archivedAt) return;
+  selectedGoalId = goal.id;
+  renderGoals();
+
+  const sheet = document.getElementById('goal-actions-sheet');
+  if (!sheet) return;
+  const title = sheet.querySelector('.goal-actions-title');
+  const subtitle = sheet.querySelector('.goal-actions-subtitle');
+  const color = sheet.querySelector('.goal-actions-color');
+  const record = sheet.querySelector('.goal-action-primary');
+  if (title) title.textContent = goal.name;
+  if (color) { const goalColor = getGoalDisplayColor(goal); color.style.background = goalColor; color.style.setProperty('--goal-color', goalColor); }
+  if (record) record.textContent = goal.type === 'text' ? 'Записать прогресс' : 'Записать результат';
+  if (subtitle) {
+    if (goal.type === 'numeric') {
+      const unit = goal.unit ? ` ${goal.unit}` : '';
+      subtitle.textContent = `${formatGoalValue(goal.current)}${unit} из ${formatGoalValue(goal.target)}${unit} · ${getGoalProgress(goal)}%`;
+    } else {
+      subtitle.textContent = goal.status === 'completed' ? 'Выполнено' : 'В процессе';
+    }
+  }
+  sheet.hidden = false;
+}
+
+function goalActionRecord() {
+  const goalId = selectedGoalId;
+  closeSheets();
+  openGoalResult(goalId);
+}
+
+function goalActionHistory() {
+  const goalId = selectedGoalId;
+  closeSheets();
+  openGoalHistory(goalId);
+}
+
+function goalActionEdit() {
+  const goalId = selectedGoalId;
+  closeSheets();
+  editGoal(goalId);
+}
+
+function goalActionArchive() {
+  archiveSelectedGoal();
+}
+
+function goalActionDelete() {
+  deleteGoal(selectedGoalId);
 }
 
 function openGoalResult(goalId = selectedGoalId, entryId = null) {
@@ -2454,8 +2626,11 @@ function renderGoalHistorySheet(archiveOnly = false) {
     const row = document.createElement('div'); row.className = 'goal-archive-row';
     const copy = document.createElement('span'); const strong = document.createElement('strong'); strong.textContent = item.name;
     const small = document.createElement('small'); small.textContent = item.archivedAt ? `В архиве с ${formatGoalHistoryDate(item.archivedAt)}` : 'В архиве'; copy.append(strong, small);
+    const actions = document.createElement('div'); actions.className = 'row-actions';
     const restore = document.createElement('button'); restore.type = 'button'; restore.textContent = 'Вернуть'; restore.addEventListener('click', () => restoreGoal(item.id));
-    row.append(copy, restore); archive.appendChild(row);
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'is-danger'; remove.textContent = '×'; remove.setAttribute('aria-label', `Удалить цель «${item.name}»`); remove.addEventListener('click', () => deleteGoal(item.id));
+    actions.append(restore, remove);
+    row.append(copy, actions); archive.appendChild(row);
   });
 }
 
@@ -2477,12 +2652,21 @@ function deleteGoalHistoryEntry(goalId, entryId) {
 
 function archiveSelectedGoal() {
   const goal = normalizeGoal(getGoalById(selectedGoalId));
-  if (!goal || goal.status !== 'completed') return;
-  state.goals = state.goals.map(item => item.id === goal.id ? normalizeGoal({ ...goal, archivedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) : item);
-  selectedGoalId = null;
-  persist();
-  renderFitness();
-  showToast('Цель перемещена в архив');
+  if (!goal || goal.archivedAt) return;
+  const commitArchive = () => {
+    const now = new Date().toISOString();
+    state.goals = state.goals.map(item => item.id === goal.id ? normalizeGoal({ ...goal, archivedAt: now, updatedAt: now }) : item);
+    selectedGoalId = null;
+    persist();
+    closeSheets();
+    renderFitness();
+    showToast('Цель перемещена в архив');
+  };
+  if (goal.status === 'completed') {
+    commitArchive();
+  } else {
+    requestConfirm('Цель ещё не выполнена. Всё равно поместить её в архив?', commitArchive);
+  }
 }
 
 function restoreGoal(goalId) {
@@ -2497,12 +2681,14 @@ function restoreGoal(goalId) {
   showToast('Цель возвращена');
 }
 
-function deleteGoal() {
-  const goalId = editingGoalId || selectedGoalId;
+function deleteGoal(goalId = editingGoalId || selectedGoalId) {
   const goal = getGoalById(goalId);
   if (!goal) { closeSheets(); return; }
-  requestConfirm('Удалить цель и всю её историю?', () => {
+  requestConfirm(`Удалить цель «${goal.name}» и всю её историю?`, () => {
     recordSyncTombstone('goals', goalId);
+    (goal.history || []).forEach(entry => {
+      if (entry?.id) recordSyncTombstone('goalEntries', entry.id);
+    });
     state.goals = state.goals.filter(item => item.id !== goalId);
     editingGoalId = null;
     selectedGoalId = getActiveGoals()[0]?.id || null;

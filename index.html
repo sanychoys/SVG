@@ -329,11 +329,16 @@
       </div>
       <div class="goal-text-history" hidden></div>
       <div class="goal-chart" hidden>
-        <svg viewBox="0 0 320 90" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="График прогресса целей">
+        <svg viewBox="0 0 320 118" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="График прогресса целей">
           <g class="goal-guides">
-            <line x1="0" y1="72" x2="320" y2="72"/>
-            <line x1="0" y1="47" x2="320" y2="47"/>
-            <line x1="0" y1="22" x2="320" y2="22"/>
+            <line data-level="100" x1="30" y1="18" x2="314" y2="18"/>
+            <line data-level="50" x1="30" y1="55" x2="314" y2="55"/>
+            <line data-level="0" x1="30" y1="92" x2="314" y2="92"/>
+          </g>
+          <g class="goal-axis-labels" aria-hidden="true">
+            <text data-level="100" x="2" y="21">100%</text>
+            <text data-level="50" x="7" y="58">50%</text>
+            <text data-level="0" x="14" y="95">0%</text>
           </g>
           <g class="goal-series-group"></g>
         </svg>
@@ -342,10 +347,7 @@
         <span class="goal-range-start"></span>
         <span class="goal-range-end"></span>
       </div>
-      <button type="button" class="start-button goal-record-button" onclick="openGoalResult()" hidden>Записать результат</button>
       <div class="goal-tools">
-        <button type="button" class="goal-tool-button goal-history-button" onclick="openGoalHistory()" hidden>История</button>
-        <button type="button" class="goal-tool-button goal-archive-button" onclick="archiveSelectedGoal()" hidden>В архив</button>
         <button type="button" class="goal-tool-button goal-archive-list-button" onclick="openGoalHistory(null, true)" hidden>Архив</button>
       </div>
     </section>
@@ -362,6 +364,10 @@
     <button type="button" data-goal-type="numeric" onclick="setGoalType('numeric')">Числовая</button>
     <button type="button" data-goal-type="text" onclick="setGoalType('text')">Текстовая</button>
   </div>
+  <div class="goal-color-field">
+    <span class="sheet-field-label">Цвет</span>
+    <div id="goal-color-picker" class="goal-color-picker" role="group" aria-label="Цвет цели"></div>
+  </div>
   <div id="goal-numeric-fields" class="goal-fields">
     <div class="goal-value-row">
       <input id="goal-current" inputmode="decimal" placeholder="Стартовое значение">
@@ -373,7 +379,22 @@
     <textarea id="goal-text" rows="3" placeholder="Опиши результат, которого хочешь достичь" maxlength="240"></textarea>
   </div>
   <button type="button" onclick="saveGoal()">Сохранить цель</button>
-  <button type="button" class="sheet-danger-button" onclick="deleteGoal()">Удалить цель</button>
+ </div>
+</div>
+<div id="goal-actions-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+ <div class="sheet-panel goal-actions-panel" data-sheet-panel>
+  <div class="sheet-handle"></div>
+  <div class="goal-actions-heading">
+    <span class="goal-actions-color" aria-hidden="true"></span>
+    <div><h2 class="goal-actions-title">Цель</h2><p class="sheet-subtitle goal-actions-subtitle">Управление целью</p></div>
+  </div>
+  <div class="goal-actions-list">
+    <button type="button" class="goal-action-primary" onclick="goalActionRecord()">Записать результат</button>
+    <button type="button" onclick="goalActionHistory()">История</button>
+    <button type="button" onclick="goalActionEdit()">Настроить цель</button>
+    <button type="button" onclick="goalActionArchive()">Поместить в архив</button>
+    <button type="button" class="sheet-danger-button" onclick="goalActionDelete()">Удалить цель</button>
+  </div>
  </div>
 </div>
 <div id="goal-result-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
