@@ -33,31 +33,31 @@
     <div class="activity-head">
       <div>
         <span class="section-label">Активность</span>
-        <h2>Твой день</h2>
+        <h2>Эта неделя</h2>
       </div>
-      <div class="activity-progress">
-        <b>82%</b>
-        <small>выполнено</small>
+      <div class="activity-progress" id="home-training-progress">
+        <b>0%</b>
+        <small>плана недели</small>
       </div>
     </div>
 
     <div class="stats-row">
       <article class="mini-stat">
-        <strong>7</strong>
-        <small>Задачи</small>
+        <strong id="home-training-time">0м</strong>
+        <small>Время</small>
       </article>
       <article class="mini-stat">
-        <strong>3</strong>
+        <strong id="home-training-count">0</strong>
         <small>Тренировки</small>
       </article>
       <article class="mini-stat">
-        <strong>6ч</strong>
-        <small>Фокус</small>
+        <strong id="home-training-average">0м</strong>
+        <small>Среднее</small>
       </article>
     </div>
 
     <div class="chart-block">
-      <svg class="activity-chart" viewBox="0 0 336 156" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="График активности за неделю">
+      <svg class="activity-chart" viewBox="0 0 336 156" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="График длительности тренировок за текущую неделю">
         <defs>
           <linearGradient id="activityFill" x1="168" y1="18" x2="168" y2="142" gradientUnits="userSpaceOnUse">
             <stop stop-color="white" stop-opacity="0.32"/>
@@ -84,18 +84,10 @@
           <line x1="0" y1="128" x2="336" y2="128"/>
         </g>
 
-        <path class="chart-area" d="M0 108C18 100 37 90 56 88C74 86 93 101 112 99C130 96 149 50 168 46C186 42 205 98 224 90C242 82 261 56 280 55C298 54 317 68 336 63V142H0Z" fill="url(#activityFill)"/>
-        <path class="chart-line-glow" d="M0 108C18 100 37 90 56 88C74 86 93 101 112 99C130 96 149 50 168 46C186 42 205 98 224 90C242 82 261 56 280 55C298 54 317 68 336 63" stroke="url(#activityStroke)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" filter="url(#lineGlow)"/>
+        <path id="home-activity-area" class="chart-area" d="M0 124 L336 124 L336 142 L0 142 Z" fill="url(#activityFill)"/>
+        <path id="home-activity-line" class="chart-line-glow" d="M0 124 L336 124" stroke="url(#activityStroke)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" filter="url(#lineGlow)"/>
 
-        <g class="chart-points">
-          <circle cx="0" cy="108" r="3.2"/>
-          <circle cx="56" cy="88" r="3.2"/>
-          <circle cx="112" cy="99" r="3.2"/>
-          <circle cx="168" cy="46" r="3.7"/>
-          <circle cx="224" cy="90" r="3.2"/>
-          <circle cx="280" cy="55" r="3.2"/>
-          <circle cx="336" cy="63" r="3.2"/>
-        </g>
+        <g id="home-activity-points" class="chart-points"></g>
       </svg>
 
       <div class="days-row">
@@ -121,8 +113,8 @@
       </div>
       <div class="feature-body">
         <h3 class="card-title">Тренировки</h3>
-        <strong class="card-primary">Силовой блок</strong>
-        <p>3 из 4 выполнено</p>
+        <strong class="card-primary" id="home-workout-primary">План не задан</strong>
+        <p id="home-workout-secondary">Открой тренировки, чтобы начать</p>
       </div>
     </article>
 

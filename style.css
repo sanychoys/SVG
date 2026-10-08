@@ -4371,3 +4371,14 @@ textarea,
 .goal-archive-row .row-actions{display:flex;gap:5px;flex:0 0 auto}
 .goal-archive-row .row-actions .is-danger{color:#ff8f98;background:rgba(255,89,89,.07)}
 .single-training-screen .goal-series-area{opacity:.09;pointer-events:none}
+
+/* Dashboard training data polish v13 */
+.activity-progress.is-live b {
+  font-size: clamp(21px, 5.4vw, 25px);
+  letter-spacing: 0.035em;
+}
+
+.feature-card.workouts .card-primary,
+.feature-card.workouts .feature-body p {
+  overflow-wrap: anywhere;
+}

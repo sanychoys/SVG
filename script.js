@@ -1026,6 +1026,7 @@ function updateWorkoutTimer() {
 
     el.textContent = formatWorkoutDuration(sec);
     renderActivityChart(nowMs);
+    renderHomeTrainingSummary(nowMs);
 
     const elapsedMilliseconds = Math.max(0, nowMs - started.getTime());
     const millisecondsUntilNextSecond = 1000 - (elapsedMilliseconds % 1000);
@@ -1900,7 +1901,6 @@ function startCustomWorkout() {
 
 function startWorkout(customName = null, source = 'planned') {
   const now = new Date();
-  const todayKey = getDateKey(now);
   if (state.activeWorkout) { showToast('Тренировка уже идёт'); return; }
   const planned = getPlannedWorkoutForDate(now);
   const workout = String(customName || planned || '').trim();
@@ -2264,6 +2264,237 @@ function getWeekMonday(date = new Date()) {
   return day;
 }
 
+
+function formatDashboardDuration(seconds) {
+  const total = normalizeWorkoutSeconds(seconds);
+  if (!total) return '0м';
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (!hours) return total < 60 ? '<1м' : `${minutes}м`;
+  return minutes ? `${hours}ч ${String(minutes).padStart(2, '0')}м` : `${hours}ч`;
+}
+
+function getWorkoutCountNoun(count) {
+  const n = Math.abs(Number(count) || 0) % 100;
+  const last = n % 10;
+  if (n >= 11 && n <= 19) return 'тренировок';
+  if (last === 1) return 'тренировка';
+  if (last >= 2 && last <= 4) return 'тренировки';
+  return 'тренировок';
+}
+
+function getSessionCountNoun(count) {
+  const n = Math.abs(Number(count) || 0) % 100;
+  const last = n % 10;
+  if (n >= 11 && n <= 19) return 'сессий';
+  if (last === 1) return 'сессия';
+  if (last >= 2 && last <= 4) return 'сессии';
+  return 'сессий';
+}
+
+function getTrainingWeekSnapshot(referenceDate = new Date(), nowMs = Date.now()) {
+  const monday = getWeekMonday(referenceDate);
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(monday);
+    date.setDate(monday.getDate() + index);
+    return date;
+  });
+  const weekKeys = new Set(days.map(getDateKey));
+  const completedSessions = (state.history || []).filter(item => {
+    if (item.status !== 'completed') return false;
+    if (item.dateKey) return weekKeys.has(item.dateKey);
+    const rawDate = item.date || item.ended;
+    if (!rawDate) return false;
+    const parsed = new Date(rawDate);
+    if (Number.isNaN(parsed.getTime())) return false;
+    return weekKeys.has(getDateKey(parsed));
+  });
+  const activeKey = state.activeWorkout?.started
+    ? (state.activeWorkout.dateKey || getDateKey(new Date(state.activeWorkout.started)))
+    : null;
+  const activeInWeek = Boolean(activeKey && weekKeys.has(activeKey));
+  const activeSeconds = activeInWeek ? getWorkoutElapsedSeconds(state.activeWorkout, nowMs) : 0;
+  const secondsByDay = days.map(date => {
+    const key = getDateKey(date);
+    let seconds = completedSessions
+      .filter(item => {
+        if (item.dateKey) return item.dateKey === key;
+        const parsed = new Date(item.date || item.ended || 0);
+        return !Number.isNaN(parsed.getTime()) && getDateKey(parsed) === key;
+      })
+      .reduce((sum, item) => sum + normalizeWorkoutSeconds(item.duration), 0);
+    if (activeInWeek && activeKey === key) seconds += activeSeconds;
+    return seconds;
+  });
+  const completedSeconds = completedSessions.reduce((sum, item) => sum + normalizeWorkoutSeconds(item.duration), 0);
+  const effectiveFrom = getPlanEffectiveDate();
+  const plannedDays = days.filter(date => {
+    if (effectiveFrom && startOfDay(date) < effectiveFrom) return false;
+    const workout = getPlannedWorkoutForDate(date);
+    return Boolean(workout && workout !== 'Отдых');
+  });
+  const completedPlanned = plannedDays.filter(date => getCompletedWorkoutsForDate(date).length > 0).length;
+  return {
+    monday,
+    days,
+    completedSessions,
+    completedSeconds,
+    activeInWeek,
+    activeSeconds,
+    secondsByDay,
+    totalSeconds: completedSeconds + activeSeconds,
+    averageSeconds: completedSessions.length ? Math.floor(completedSeconds / completedSessions.length) : 0,
+    plannedCount: plannedDays.length,
+    completedPlanned
+  };
+}
+
+function getNextPlannedWorkout(fromDate = new Date(), maxDays = 14) {
+  const start = startOfDay(fromDate);
+  const effectiveFrom = getPlanEffectiveDate();
+  for (let offset = 1; offset <= maxDays; offset++) {
+    const date = new Date(start);
+    date.setDate(start.getDate() + offset);
+    if (effectiveFrom && date < effectiveFrom) continue;
+    const workout = getPlannedWorkoutForDate(date);
+    if (workout && workout !== 'Отдых') return { date, workout, offset };
+  }
+  return null;
+}
+
+function renderHomeTrainingCard(nowMs = Date.now()) {
+  const primary = document.getElementById('home-workout-primary');
+  const secondary = document.getElementById('home-workout-secondary');
+  if (!primary || !secondary) return;
+
+  const now = new Date(nowMs);
+  const todayKey = getDateKey(now);
+  const sessions = getCompletedWorkoutsForDate(now);
+  const planned = getPlannedWorkoutForDate(now);
+  const activeToday = Boolean(state.activeWorkout);
+
+  if (activeToday) {
+    primary.textContent = state.activeWorkout.workout || 'Тренировка';
+    secondary.textContent = `Идёт сейчас · ${formatWorkoutDuration(getWorkoutElapsedSeconds(state.activeWorkout, nowMs))}`;
+    return;
+  }
+
+  if (sessions.length) {
+    const total = sessions.reduce((sum, item) => sum + normalizeWorkoutSeconds(item.duration), 0);
+    if (sessions.length === 1) {
+      primary.textContent = sessions[0].workout || 'Тренировка завершена';
+      secondary.textContent = `Завершено · ${formatWorkoutDuration(total)}`;
+    } else {
+      primary.textContent = `${sessions.length} ${getWorkoutCountNoun(sessions.length)} сегодня`;
+      secondary.textContent = `Всего · ${formatWorkoutDuration(total)}`;
+    }
+    return;
+  }
+
+  if (planned && planned !== 'Отдых') {
+    primary.textContent = planned;
+    const override = getPlanOverride(now);
+    secondary.textContent = override?.movedFrom ? 'Перенесено на сегодня' : 'По плану на сегодня';
+    return;
+  }
+
+  const next = getNextPlannedWorkout(now);
+  primary.textContent = planned === 'Отдых' ? 'День отдыха' : 'Сегодня без тренировки';
+  if (next) {
+    const when = next.offset === 1
+      ? 'завтра'
+      : new Intl.DateTimeFormat('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' }).format(next.date);
+    secondary.textContent = `Следующая: ${next.workout} · ${when}`;
+  } else {
+    secondary.textContent = Object.keys(state.plan || {}).length ? 'Следующая тренировка не запланирована' : 'Настрой план или начни вне плана';
+  }
+}
+
+function renderHomeActivity(nowMs = Date.now()) {
+  const snapshot = getTrainingWeekSnapshot(new Date(nowMs), nowMs);
+  const total = document.getElementById('home-training-time');
+  const count = document.getElementById('home-training-count');
+  const average = document.getElementById('home-training-average');
+  const progress = document.getElementById('home-training-progress');
+  const line = document.getElementById('home-activity-line');
+  const area = document.getElementById('home-activity-area');
+  const points = document.getElementById('home-activity-points');
+
+  if (total) total.textContent = formatDashboardDuration(snapshot.totalSeconds);
+  if (count) count.textContent = String(snapshot.completedSessions.length + (snapshot.activeInWeek ? 1 : 0));
+  if (average) average.textContent = snapshot.completedSessions.length ? formatDashboardDuration(snapshot.averageSeconds) : '—';
+
+  if (progress) {
+    const value = progress.querySelector('b');
+    const label = progress.querySelector('small');
+    progress.classList.toggle('is-live', snapshot.activeInWeek);
+    if (snapshot.activeInWeek) {
+      if (value) value.textContent = 'LIVE';
+      if (label) label.textContent = 'тренировка идёт';
+    } else if (snapshot.plannedCount) {
+      const percent = Math.round((snapshot.completedPlanned / snapshot.plannedCount) * 100);
+      if (value) value.textContent = `${percent}%`;
+      if (label) label.textContent = 'плана недели';
+    } else {
+      const sessionCount = snapshot.completedSessions.length + (snapshot.activeInWeek ? 1 : 0);
+      if (value) value.textContent = String(sessionCount);
+      if (label) label.textContent = `${getWorkoutCountNoun(sessionCount)} за неделю`;
+    }
+  }
+
+  if (!line || !area || !points) return;
+  const baseScale = 4 * 60 * 60;
+  const headroom = 60 * 60;
+  const peak = Math.max(0, ...snapshot.secondsByDay);
+  const scale = Math.max(baseScale, peak + headroom);
+  const baselineY = 124;
+  const topY = 28;
+  const coords = snapshot.secondsByDay.map((seconds, index) => ({
+    x: Number((index * (336 / 6)).toFixed(1)),
+    y: Number((baselineY - Math.max(0, Math.min(1, seconds / scale)) * (baselineY - topY)).toFixed(1))
+  }));
+  const path = buildSmoothPath(coords);
+  line.setAttribute('d', path);
+  area.setAttribute('d', `${path} L336 142 L0 142 Z`);
+  points.replaceChildren();
+  coords.forEach((point, index) => {
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', point.x);
+    circle.setAttribute('cy', point.y);
+    circle.setAttribute('r', getDateKey(snapshot.days[index]) === getDateKey(new Date(nowMs)) ? '3.8' : '3.2');
+    circle.setAttribute('tabindex', '0');
+    circle.dataset.dayIndex = String(index);
+    const daySessions = getCompletedWorkoutsForDate(snapshot.days[index]).length;
+    const label = new Intl.DateTimeFormat('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' }).format(snapshot.days[index]);
+    const activity = snapshot.secondsByDay[index] ? formatWorkoutDuration(snapshot.secondsByDay[index]) : 'без тренировки';
+    const suffix = daySessions ? ` · ${daySessions} ${getSessionCountNoun(daySessions)}` : '';
+    circle.setAttribute('aria-label', `${label}: ${activity}${suffix}`);
+    const announce = () => {
+      showToast(`${label} · ${activity}${suffix}`);
+    };
+    circle.addEventListener('click', announce);
+    circle.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); announce(); }
+    });
+    points.appendChild(circle);
+  });
+}
+
+function renderHomeTrainingSummary(nowMs = Date.now()) {
+  renderHomeTrainingCard(nowMs);
+  renderHomeActivity(nowMs);
+  const status = document.querySelector('.subtle-status');
+  if (!status) return;
+  const today = new Date(nowMs);
+  const sessions = getCompletedWorkoutsForDate(today);
+  const planned = getPlannedWorkoutForDate(today);
+  const activeToday = Boolean(state.activeWorkout);
+  if (activeToday) status.textContent = `Тренировка идёт · ${formatWorkoutDuration(getWorkoutElapsedSeconds(state.activeWorkout, nowMs))}`;
+  else if (sessions.length) status.textContent = sessions.length === 1 ? 'Сегодняшняя тренировка выполнена' : `Сегодня: ${sessions.length} ${getWorkoutCountNoun(sessions.length)}`;
+  else if (planned && planned !== 'Отдых') status.textContent = `Сегодня по плану: ${planned}`;
+  else status.textContent = 'Сегодня день восстановления';
+}
+
 function shiftActivityWeek(delta) {
   const currentMonday = getWeekMonday(new Date());
   const base = activityWeekCursor ? new Date(activityWeekCursor) : currentMonday;
@@ -2323,7 +2554,7 @@ function renderActivityChart(nowMs = Date.now()) {
     else {
       const average = completedSessions.length ? Math.floor(completedSeconds / completedSessions.length) : 0;
       const count = completedSessions.length;
-      const noun = count === 1 ? 'тренировка' : count > 1 && count < 5 ? 'тренировки' : 'тренировок';
+      const noun = getWorkoutCountNoun(count);
       metaEl.textContent = count ? `${count} ${noun} · в среднем ${formatWorkoutDuration(average)}` : 'тренировка идёт сейчас';
     }
   }
@@ -2717,6 +2948,7 @@ function renderFitness() {
   renderToday();
   renderCalendar();
   renderActivityChart();
+  renderHomeTrainingSummary();
 }
 
 /* v10 history identity hardening: keep stable record IDs through edits/sync. */
