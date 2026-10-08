@@ -1,0 +1,17 @@
+[Unit]
+Description=SVGTracker Telegram Bot and API
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/SVG
+ExecStart=/var/www/SVG/venv/bin/python /var/www/SVG/main.py
+Restart=always
+RestartSec=2
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
