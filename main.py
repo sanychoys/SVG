@@ -5,6 +5,7 @@ import json
 import logging
 import time
 import uuid
+import threading
 from datetime import datetime
 from urllib.parse import parse_qsl
 
@@ -45,7 +46,12 @@ app = FastAPI(title="SVGTracker API")
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 logger = logging.getLogger("svgtracker")
+FINANCE_WRITE_LOCK = threading.RLock()
 
 SHORTCUT_DEFAULT_CATEGORIES = [
     {"id": "cat_food", "name": "Еда", "color": "#ff9f0a"},
@@ -179,23 +185,24 @@ def api_save_finance_state(
     if len(encoded) > MAX_FINANCE_STATE_BYTES:
         raise HTTPException(status_code=413, detail="Finance state is too large")
 
-    current = get_finance_state(user_id)
-    if base_updated_at and current and current["updated_at"] != base_updated_at:
-        return JSONResponse(
-            status_code=409,
-            content={
-                "status": "conflict",
-                "state": current["state"],
-                "updated_at": current["updated_at"],
-            },
-        )
+    with FINANCE_WRITE_LOCK:
+        current = get_finance_state(user_id)
+        if base_updated_at and current and current["updated_at"] != base_updated_at:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "status": "conflict",
+                    "state": current["state"],
+                    "updated_at": current["updated_at"],
+                },
+            )
 
-    allowed = {
-        "version", "monthlyIncome", "monthlyBudgets", "categories",
-        "mandatoryExpenses", "expenses", "incomes", "debts", "sync"
-    }
-    clean_state = {key: state.get(key) for key in allowed if key in state}
-    updated_at = save_finance_state(user_id, clean_state)
+        allowed = {
+            "version", "monthlyIncome", "monthlyBudgets", "categories",
+            "mandatoryExpenses", "expenses", "incomes", "debts", "sync"
+        }
+        clean_state = {key: state.get(key) for key in allowed if key in state}
+        updated_at = save_finance_state(user_id, clean_state)
     return {"status": "ok", "updated_at": updated_at}
 
 
@@ -236,65 +243,71 @@ async def api_shortcut_finance_transaction(
     user = shortcut_user(authorization)
     kind = str(payload.get("type") or "").strip().lower()
     if kind not in {"expense", "income"}:
-        raise HTTPException(status_code=422, detail="type must be expense or income")
+        return {"status": "error", "ok": False, "message": "Выбери: расход или доход"}
     try:
         amount = round(float(payload.get("amount")), 2)
     except (TypeError, ValueError):
-        raise HTTPException(status_code=422, detail="Укажи корректную сумму")
+        return {"status": "error", "ok": False, "message": "Укажи корректную сумму"}
     if not (0 < amount <= 100_000_000):
-        raise HTTPException(status_code=422, detail="Сумма должна быть больше нуля")
+        return {"status": "error", "ok": False, "message": "Сумма должна быть больше нуля"}
 
     date_value = str(payload.get("date") or "").strip()
     try:
         datetime.strptime(date_value, "%Y-%m-%d")
     except ValueError:
-        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
+        return {"status": "error", "ok": False, "message": "Некорректная дата. Нужен формат YYYY-MM-DD"}
 
-    state = finance_state_for_shortcut(user["user_id"])
     now = datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
     entry_id = f"shortcut_{kind}_{uuid.uuid4().hex}"
 
-    if kind == "expense":
-        category_id = str(payload.get("category_id") or "").strip()
-        category_name = str(payload.get("category_name") or "").strip().casefold()
-        category = next(
-            (item for item in state["categories"] if category_id and str(item.get("id")) == category_id),
-            None,
-        )
-        if not category and category_name:
+    with FINANCE_WRITE_LOCK:
+        state = finance_state_for_shortcut(user["user_id"])
+        if kind == "expense":
+            category_id = str(payload.get("category_id") or "").strip()
+            category_name = str(payload.get("category_name") or "").strip().casefold()
             category = next(
-                (item for item in state["categories"] if str(item.get("name") or "").strip().casefold() == category_name),
+                (item for item in state["categories"] if category_id and str(item.get("id")) == category_id),
                 None,
             )
-        if not category:
-            raise HTTPException(status_code=422, detail="Категория не найдена. Обнови список в Shortcut.")
-        category_id = str(category.get("id"))
-        title = str(payload.get("title") or category.get("name") or "Расход").strip()[:80]
-        entry = {
-            "id": entry_id,
-            "title": title or "Расход",
-            "amount": amount,
-            "categoryId": category_id,
-            "date": date_value,
-            "updatedAt": now,
-        }
-        state["expenses"].append(entry)
-        confirmation = f"Расход записан: {amount:g} ₽ · {category.get('name', 'Другое')}"
-    else:
-        title = str(payload.get("title") or "Доход").strip()[:80] or "Доход"
-        entry = {
-            "id": entry_id,
-            "title": title,
-            "amount": amount,
-            "date": date_value,
-            "updatedAt": now,
-        }
-        state["incomes"].append(entry)
-        confirmation = f"Доход записан: +{amount:g} ₽"
+            if not category and category_name:
+                category = next(
+                    (item for item in state["categories"] if str(item.get("name") or "").strip().casefold() == category_name),
+                    None,
+                )
+            if not category:
+                return {"status": "error", "ok": False, "message": "Категория не найдена. Обнови список в Shortcut."}
+            category_id = str(category.get("id"))
+            title = str(payload.get("title") or category.get("name") or "Расход").strip()[:80]
+            entry = {
+                "id": entry_id,
+                "title": title or "Расход",
+                "amount": amount,
+                "categoryId": category_id,
+                "date": date_value,
+                "updatedAt": now,
+            }
+            state["expenses"].append(entry)
+            confirmation = f"Расход записан: {amount:g} ₽ · {category.get('name', 'Другое')}"
+        else:
+            title = str(payload.get("title") or "Доход").strip()[:80] or "Доход"
+            entry = {
+                "id": entry_id,
+                "title": title,
+                "amount": amount,
+                "date": date_value,
+                "updatedAt": now,
+            }
+            state["incomes"].append(entry)
+            confirmation = f"Доход записан: +{amount:g} ₽"
 
-    state["version"] = max(int(state.get("version") or 0), 5)
-    state.setdefault("sync", {})["updatedAt"] = now
-    updated_at = save_finance_state(user["user_id"], state)
+        state["version"] = max(int(state.get("version") or 0), 5)
+        state.setdefault("sync", {})["updatedAt"] = now
+        updated_at = save_finance_state(user["user_id"], state)
+
+    logger.info(
+        "Shortcut finance transaction user_id=%s type=%s amount=%s date=%s entry_id=%s",
+        user["user_id"], kind, amount, date_value, entry_id,
+    )
 
     try:
         await bot.send_message(
@@ -307,6 +320,7 @@ async def api_shortcut_finance_transaction(
 
     return {
         "status": "ok",
+        "ok": True,
         "type": kind,
         "amount": amount,
         "message": confirmation,
@@ -328,8 +342,12 @@ def api_profile_notifications(
     _, user_id = authenticated_user(x_telegram_init_data)
     if not isinstance(payload.get("enabled"), bool):
         raise HTTPException(status_code=422, detail="enabled must be boolean")
-    settings = set_bot_notifications(user_id, payload["enabled"])
-    return {"status": "ok", "enabled": settings["bot_notifications"]}
+    kind = str(payload.get("kind") or "bot").strip().lower()
+    if kind not in {"bot", "friends"}:
+        raise HTTPException(status_code=422, detail="kind must be bot or friends")
+    settings = set_bot_notifications(user_id, payload["enabled"], kind=kind)
+    enabled_key = "friend_request_notifications" if kind == "friends" else "bot_notifications"
+    return {"status": "ok", "kind": kind, "enabled": settings[enabled_key]}
 
 
 @app.post("/api/friends/request")
@@ -351,8 +369,8 @@ async def api_friend_request(
     if status == "created":
         target_id = result.get("target_user_id")
         target_telegram_id = result.get("target_telegram_id")
-        settings = get_user_settings(target_id) if target_id else {"bot_notifications": False}
-        if target_telegram_id and settings.get("bot_notifications"):
+        settings = get_user_settings(target_id) if target_id else {"bot_notifications": False, "friend_request_notifications": False}
+        if target_telegram_id and settings.get("friend_request_notifications", True):
             sender = user.get("first_name") or user.get("username") or "Пользователь SVGTracker"
             sender_username = f" (@{user['username']})" if user.get("username") else ""
             try:
@@ -566,12 +584,32 @@ async def reset_data_cancel(callback: CallbackQuery):
 
 async def main():
     init_db()
-    print("Бот запущен")
+    logger.info("SVGTracker starting")
 
     api_config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
     api_server = uvicorn.Server(api_config)
+    bot_task = asyncio.create_task(dp.start_polling(bot), name="telegram-polling")
+    api_task = asyncio.create_task(api_server.serve(), name="uvicorn-api")
 
-    await asyncio.gather(dp.start_polling(bot), api_server.serve())
+    done, pending = await asyncio.wait(
+        {bot_task, api_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for task in done:
+        if task.cancelled():
+            continue
+        error = task.exception()
+        if error:
+            logger.error("SVGTracker component %s stopped with an error", task.get_name(), exc_info=(type(error), error, error.__traceback__))
+            for pending_task in pending:
+                pending_task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            raise error
+        logger.warning("SVGTracker component %s stopped; terminating process so systemd can restart it", task.get_name())
+
+    for pending_task in pending:
+        pending_task.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
 
 
 if __name__ == "__main__":

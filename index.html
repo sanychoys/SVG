@@ -206,9 +206,16 @@
         <span class="profile-action-meta"><b id="profile-blocked-count">0</b><span>›</span></span>
       </button>
       <label class="profile-action-row profile-toggle-row">
-        <span class="profile-action-copy"><strong>Запросы в друзья</strong><small>Уведомлять сообщением от бота</small></span>
+        <span class="profile-action-copy"><strong>Запросы в друзья</strong><small>Сообщать о новых запросах</small></span>
         <span class="ios-switch">
-          <input id="profile-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked)">
+          <input id="profile-friend-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked, 'friends')">
+          <span class="ios-switch-track" aria-hidden="true"></span>
+        </span>
+      </label>
+      <label class="profile-action-row profile-toggle-row">
+        <span class="profile-action-copy"><strong>Уведомления от бота</strong><small>Напоминания и полезные сообщения SVGTracker</small></span>
+        <span class="ios-switch">
+          <input id="profile-bot-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked, 'bot')">
           <span class="ios-switch-track" aria-hidden="true"></span>
         </span>
       </label>
@@ -297,7 +304,7 @@
         <div class="finance-head-actions"><strong id="finance-week-spent">0 ₽</strong><button type="button" class="finance-text-action" onclick="openFinanceTransactionsSheet()">История</button></div>
       </div>
       <div id="finance-spend-chart" class="finance-spend-chart" aria-label="Расходы за последние семь дней"></div>
-      <div class="finance-chart-caption"><span>Столбец — фактический расход</span><span id="finance-spend-chart-caption">Лимит рассчитывается на каждый день</span></div>
+      <div class="finance-chart-caption"><span>Линия — фактический расход</span><span id="finance-spend-chart-caption">Лимит показан пунктиром</span></div>
     </section>
 
     <div class="finance-quick-grid">

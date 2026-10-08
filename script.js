@@ -80,7 +80,7 @@ let scheduleData = readJSON(STORAGE.schedule, []);
 if (!Array.isArray(scheduleData)) scheduleData = [];
 let notesData = readJSON(STORAGE.notes, []);
 if (!Array.isArray(notesData)) notesData = [];
-let profileState = { notifications_enabled: true, friends: [], incoming: [], outgoing: [], blocked: [] };
+let profileState = { bot_notifications_enabled: true, friend_request_notifications_enabled: true, friends: [], incoming: [], outgoing: [], blocked: [] };
 let profileLoaded = false;
 let profileLoading = false;
 
@@ -3115,13 +3115,18 @@ function profileDisplayName(person) {
 
 function renderProfileState() {
   const count = document.getElementById('profile-friends-count');
-  const toggle = document.getElementById('profile-notifications-toggle');
+  const friendToggle = document.getElementById('profile-friend-notifications-toggle');
+  const botToggle = document.getElementById('profile-bot-notifications-toggle');
   const status = document.getElementById('profile-drawer-status');
   const username = document.getElementById('profile-drawer-username');
   if (count) count.textContent = String(profileState.friends?.length || 0);
-  if (toggle) {
-    toggle.checked = profileState.notifications_enabled !== false;
-    toggle.disabled = !tg?.initData;
+  if (friendToggle) {
+    friendToggle.checked = profileState.friend_request_notifications_enabled !== false;
+    friendToggle.disabled = !tg?.initData;
+  }
+  if (botToggle) {
+    botToggle.checked = profileState.bot_notifications_enabled !== false;
+    botToggle.disabled = !tg?.initData;
   }
   const user = window.SVG_TELEGRAM_USER;
   if (username) username.textContent = user?.username ? `@${user.username}` : (user ? 'Аккаунт Telegram' : 'Открой SVGTracker в Telegram');
@@ -3131,10 +3136,11 @@ function renderProfileState() {
       ? 'Социальные функции доступны внутри Telegram'
       : incoming
         ? `${incoming} ${incoming === 1 ? 'новый запрос в друзья' : 'новых запроса в друзья'}`
-        : 'Настройки синхронизируются с аккаунтом Telegram';
+        : 'Настройки синхронизированы с аккаунтом Telegram';
   }
   renderFriendsSheet();
 }
+
 
 async function loadProfileData(force = false) {
   if (!tg?.initData || profileLoading || (profileLoaded && !force)) {
@@ -3147,7 +3153,8 @@ async function loadProfileData(force = false) {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(getApiErrorMessage(payload, 'Профиль временно недоступен'));
     profileState = {
-      notifications_enabled: payload.notifications_enabled !== false,
+      bot_notifications_enabled: payload.bot_notifications_enabled !== false,
+      friend_request_notifications_enabled: payload.friend_request_notifications_enabled !== false,
       friends: Array.isArray(payload.friends) ? payload.friends : [],
       incoming: Array.isArray(payload.incoming) ? payload.incoming : [],
       outgoing: Array.isArray(payload.outgoing) ? payload.outgoing : [],
@@ -3184,13 +3191,15 @@ function closeProfileDrawer(immediate = false) {
   else setTimeout(() => { if (!drawer.classList.contains('is-open')) drawer.hidden = true; }, 220);
 }
 
-async function toggleBotNotifications(enabled) {
-  const toggle = document.getElementById('profile-notifications-toggle');
-  const previous = profileState.notifications_enabled !== false;
-  profileState.notifications_enabled = Boolean(enabled);
+async function toggleBotNotifications(enabled, kind = 'bot') {
+  const isFriends = kind === 'friends';
+  const key = isFriends ? 'friend_request_notifications_enabled' : 'bot_notifications_enabled';
+  const toggle = document.getElementById(isFriends ? 'profile-friend-notifications-toggle' : 'profile-bot-notifications-toggle');
+  const previous = profileState[key] !== false;
+  profileState[key] = Boolean(enabled);
   renderProfileState();
   if (!tg?.initData) {
-    profileState.notifications_enabled = previous;
+    profileState[key] = previous;
     renderProfileState();
     showToast('Открой приложение внутри Telegram');
     return;
@@ -3200,20 +3209,23 @@ async function toggleBotNotifications(enabled) {
     const response = await fetch('/api/profile/notifications', {
       method: 'PUT',
       headers: telegramApiHeaders(true),
-      body: JSON.stringify({ enabled: Boolean(enabled) })
+      body: JSON.stringify({ enabled: Boolean(enabled), kind: isFriends ? 'friends' : 'bot' })
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(getApiErrorMessage(payload));
-    profileState.notifications_enabled = payload.enabled !== false;
-    showToast(profileState.notifications_enabled ? 'Уведомления о запросах включены' : 'Уведомления о запросах выключены');
+    profileState[key] = payload.enabled !== false;
+    showToast(isFriends
+      ? (profileState[key] ? 'Уведомления о запросах включены' : 'Уведомления о запросах выключены')
+      : (profileState[key] ? 'Уведомления от бота включены' : 'Уведомления от бота выключены'));
   } catch (error) {
-    profileState.notifications_enabled = previous;
+    profileState[key] = previous;
     showToast(error?.message || 'Не удалось изменить уведомления');
   } finally {
     if (toggle) toggle.disabled = false;
     renderProfileState();
   }
 }
+
 
 function createSocialAvatar(person) {
   const avatar = document.createElement('span');
@@ -3790,31 +3802,42 @@ async function syncFinanceWithServerV15() {
       financeSyncInFlightV15 = false;
       return saveFinanceToServerV15();
     }
+
     const remote = normalizeFinanceDataV15(payload.state);
     if (remote.sync?.resetAt && compareIso(remote.sync.resetAt, financeData.sync?.updatedAt) >= 0) {
       financeData = remote;
       localStorage.setItem(STORAGE.finance, JSON.stringify(financeData));
       localStorage.removeItem(FINANCE_DIRTY_KEY_V15);
       financeSetSyncStatusV15('saved','Сохранено');
-    } else if (localDirty) {
-      financeData = mergeFinanceStatesV15(financeData, remote);
-      localStorage.setItem(STORAGE.finance, JSON.stringify(financeData));
-      financeSyncInFlightV15 = false;
-      return saveFinanceToServerV15();
-    } else if (compareIso(remote.sync?.updatedAt, financeData.sync?.updatedAt) >= 0) {
-      financeData = remote;
-      localStorage.setItem(STORAGE.finance, JSON.stringify(financeData));
-      financeSetSyncStatusV15('saved','Сохранено');
-    } else {
+      renderFinance(); renderHomeTrainingSummary();
+      return true;
+    }
+
+    // Always merge entity-by-entity. Shortcut writes update the server state directly;
+    // replacing the whole local state here could otherwise erase a locally configured
+    // monthly budget while keeping the newly added expense/income.
+    const merged = mergeFinanceStatesV15(financeData, remote);
+    const remoteSnapshot = JSON.stringify(remote);
+    const mergedSnapshot = JSON.stringify(merged);
+    financeData = merged;
+    localStorage.setItem(STORAGE.finance, mergedSnapshot);
+    renderFinance(); renderHomeTrainingSummary();
+
+    if (localDirty || mergedSnapshot !== remoteSnapshot) {
       financeSyncInFlightV15 = false;
       return saveFinanceToServerV15();
     }
-    renderFinance(); renderHomeTrainingSummary(); return true;
-  } catch (_) {
+
+    localStorage.removeItem(FINANCE_DIRTY_KEY_V15);
+    financeSetSyncStatusV15('saved','Сохранено');
+    return true;
+  } catch (error) {
+    console.warn('Finance sync failed', error);
     financeSetSyncStatusV15(navigator.onLine ? 'error' : 'offline', navigator.onLine ? 'Нет связи · повторим' : 'Офлайн · сохранено локально');
     return false;
   } finally { financeSyncInFlightV15 = false; }
 }
+
 
 function formatFinanceCompactV15(value) {
   const amount = Math.max(0, Number(value) || 0);
@@ -3867,7 +3890,15 @@ function renderFinance() {
     if (dayLimit) dayLimit.textContent = formatRubles(stats.dailyAllowance); if (dayContext) dayContext.textContent = 'Лимит на начало дня'; if (todaySpent) todaySpent.textContent = formatRubles(stats.todaySpent);
     if (todayStatus) { todayStatus.classList.toggle('is-over', stats.remainingToday < 0); todayStatus.classList.toggle('is-good', stats.remainingToday >= 0 && stats.todaySpent > 0); todayStatus.textContent = stats.remainingToday < 0 ? `Перерасход ${formatRubles(Math.abs(stats.remainingToday))}` : stats.todaySpent > 0 ? `Можно ещё ${formatRubles(stats.remainingToday)}` : 'В пределах лимита'; }
   } else {
-    if (left) left.textContent = 'Настрой бюджет'; if (pct) pct.textContent = '—'; if (bar) bar.style.width='0%'; if (caption) caption.textContent = 'Укажи месячный доход и обязательные расходы'; if (dayLimit) dayLimit.textContent='—'; if (dayContext) dayContext.textContent='Лимит появится после настройки'; if (todaySpent) todaySpent.textContent=formatRubles(stats.todaySpent); if (todayStatus) todayStatus.textContent=stats.todaySpent ? 'Бюджет пока не настроен' : 'Расходов пока нет';
+    const hasOperations = financeExpensesForMonthV15(viewDate).length > 0 || financeExtraIncomeForMonthV17(viewDate) > 0 || financeMandatoryForMonthV16(viewDate).length > 0;
+    if (left) left.textContent = hasOperations ? 'Бюджет не задан' : 'Настрой бюджет';
+    if (pct) pct.textContent = '—';
+    if (bar) bar.style.width='0%';
+    if (caption) caption.textContent = hasOperations ? 'Операции сохранены · укажи месячный доход, чтобы рассчитать лимит' : 'Укажи месячный доход и обязательные расходы';
+    if (dayLimit) dayLimit.textContent='—';
+    if (dayContext) dayContext.textContent=hasOperations ? 'Расходы уже учитываются' : 'Лимит появится после настройки';
+    if (todaySpent) todaySpent.textContent=formatRubles(stats.todaySpent);
+    if (todayStatus) todayStatus.textContent=stats.todaySpent ? `Сегодня потрачено ${formatRubles(stats.todaySpent)}` : 'Расходов пока нет';
   }
   const mandatoryItems = financeMandatoryForMonthV16(viewDate); const mandatoryTotal = document.getElementById('finance-mandatory-total'); const mandatoryCount = document.getElementById('finance-mandatory-count');
   if (mandatoryTotal) mandatoryTotal.textContent = formatRubles(stats.mandatory); if (mandatoryCount) mandatoryCount.textContent = mandatoryItems.length ? `${mandatoryItems.length} ${financePluralV15(mandatoryItems.length,'платёж','платежа','платежей')}` : 'Нет расходов';
@@ -3882,22 +3913,41 @@ function renderFinanceSpendChartV15() {
   const anchor = financeEffectiveViewDateV16();
   const days = Array.from({length:7},(_,i)=>{const d=new Date(anchor);d.setDate(anchor.getDate()-(6-i));return d;});
   const values = days.map(date => ({ date, spent:financeSpentForDateV15(date), allowance:financeMonthStatsV15(date).dailyAllowance }));
-  const spentSorted = values.map(item=>item.spent).filter(v=>v>0).sort((a,b)=>a-b);
-  const secondLargest = spentSorted.length > 1 ? spentSorted[spentSorted.length-2] : 0;
-  const allowanceMax = Math.max(0, ...values.map(item=>item.allowance));
-  const displayMax = Math.max(1, allowanceMax * 1.8, secondLargest * 1.25, spentSorted.length === 1 ? allowanceMax * 1.8 : 0);
-  const heightFor = value => value <= 0 ? 0 : Math.min(100, Math.max(4, Math.sqrt(value / displayMax) * 88));
-  root.replaceChildren(...values.map(item => {
-    const column = document.createElement('button'); column.type='button'; column.className='finance-spend-column';
-    const plot = document.createElement('span'); plot.className='finance-spend-plot';
-    const bar = document.createElement('span'); bar.className='finance-spend-bar'; bar.style.height=`${heightFor(item.spent)}%`;
-    const isOver = item.allowance > 0 && item.spent > item.allowance; bar.classList.toggle('is-over',isOver); bar.classList.toggle('is-clipped', item.spent > displayMax);
-    const limit = document.createElement('span'); limit.className='finance-spend-limit'; limit.style.bottom=`${heightFor(item.allowance)}%`; if (!item.allowance) limit.hidden=true;
-    plot.append(bar,limit); const day = document.createElement('small'); day.textContent=new Intl.DateTimeFormat('ru-RU',{weekday:'short'}).format(item.date).replace('.',''); column.append(plot,day);
-    column.addEventListener('click',()=>showToast(`${financeDateLabelV15(item.date)} · потрачено ${formatRubles(item.spent)}${item.allowance?` · лимит ${formatRubles(item.allowance)}`:''}`)); return column;
-  }));
-  const weekSpent = values.reduce((sum,item)=>sum+item.spent,0); const total = document.getElementById('finance-week-spent'); if (total) total.textContent=formatFinanceCompactV15(weekSpent); const caption = document.getElementById('finance-spend-chart-caption'); if (caption) caption.textContent = weekSpent ? `За 7 дней · ${formatRubles(weekSpent)}` : 'Расходов за 7 дней нет';
+  const maxRaw = Math.max(1, ...values.flatMap(item => [item.spent, item.allowance || 0]));
+  const magnitude = 10 ** Math.max(0, Math.floor(Math.log10(maxRaw)) - 1);
+  const scaleMax = Math.ceil((maxRaw * 1.15) / magnitude) * magnitude;
+  const width = 336, top = 18, bottom = 112, chartHeight = bottom - top;
+  const pointFor = (value, index) => ({
+    x: Number((index * (width / 6)).toFixed(1)),
+    y: Number((bottom - Math.max(0, Math.min(scaleMax, value)) / scaleMax * chartHeight).toFixed(1))
+  });
+  const spendPoints = values.map((item,index)=>pointFor(item.spent,index));
+  const limitPoints = values.map((item,index)=>pointFor(item.allowance || 0,index));
+  const spendPath = buildSmoothPath(spendPoints);
+  const limitPath = buildSmoothPath(limitPoints);
+
+  const wrap=document.createElement('div'); wrap.className='finance-spend-line-wrap';
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('viewBox','0 0 336 126'); svg.setAttribute('class','finance-spend-line-svg'); svg.setAttribute('role','img'); svg.setAttribute('aria-label','График расходов за последние семь дней');
+  const ns='http://www.w3.org/2000/svg';
+  [0,.5,1].forEach(level=>{const line=document.createElementNS(ns,'line');const y=bottom-chartHeight*level;line.setAttribute('x1','0');line.setAttribute('x2','336');line.setAttribute('y1',String(y));line.setAttribute('y2',String(y));line.setAttribute('class','finance-spend-gridline');svg.appendChild(line);});
+  const area=document.createElementNS(ns,'path'); area.setAttribute('d',`${spendPath} L336 ${bottom} L0 ${bottom} Z`); area.setAttribute('class','finance-spend-area'); svg.appendChild(area);
+  if (values.some(item=>item.allowance>0)) { const limit=document.createElementNS(ns,'path');limit.setAttribute('d',limitPath);limit.setAttribute('class','finance-spend-limit-line');svg.appendChild(limit); }
+  const line=document.createElementNS(ns,'path'); line.setAttribute('d',spendPath); line.setAttribute('class','finance-spend-line'); svg.appendChild(line);
+  const hits=document.createElementNS(ns,'g'); hits.setAttribute('class','finance-spend-points');
+  spendPoints.forEach((point,index)=>{
+    const group=document.createElementNS(ns,'g');group.setAttribute('role','button');group.setAttribute('tabindex','0');
+    const hit=document.createElementNS(ns,'circle');hit.setAttribute('cx',point.x);hit.setAttribute('cy',point.y);hit.setAttribute('r','14');hit.setAttribute('class','finance-spend-hit');
+    const dot=document.createElementNS(ns,'circle');dot.setAttribute('cx',point.x);dot.setAttribute('cy',point.y);dot.setAttribute('r',values[index].spent>0?'2.1':'1.5');dot.setAttribute('class',values[index].allowance>0&&values[index].spent>values[index].allowance?'finance-spend-dot is-over':'finance-spend-dot');
+    const announce=()=>showToast(`${financeDateLabelV15(values[index].date)} · потрачено ${formatRubles(values[index].spent)}${values[index].allowance?` · лимит ${formatRubles(values[index].allowance)}`:''}`);
+    group.addEventListener('click',announce);group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();announce();}});group.append(hit,dot);hits.appendChild(group);
+  });
+  svg.appendChild(hits);
+  const labels=document.createElement('div');labels.className='finance-spend-days';labels.replaceChildren(...days.map(date=>{const span=document.createElement('span');span.textContent=new Intl.DateTimeFormat('ru-RU',{weekday:'short'}).format(date).replace('.','');return span;}));
+  wrap.append(svg,labels); root.replaceChildren(wrap);
+  const weekSpent = values.reduce((sum,item)=>sum+item.spent,0); const total = document.getElementById('finance-week-spent'); if (total) total.textContent=formatFinanceCompactV15(weekSpent); const caption = document.getElementById('finance-spend-chart-caption'); if (caption) caption.textContent = values.some(item=>item.allowance>0) ? `За 7 дней · ${formatRubles(weekSpent)} · пунктир — лимит` : (weekSpent ? `За 7 дней · ${formatRubles(weekSpent)}` : 'Расходов за 7 дней нет');
 }
+
 function renderFinanceCategoryChartV15() {
   const root = document.getElementById('finance-category-chart'); if (!root) return;
   const monthExpenses = financeExpensesForMonthV15(financeEffectiveViewDateV16());
@@ -4016,14 +4066,24 @@ function renderHomeDomainCards(now = new Date()) {
 
 /* Profile polish */
 function renderProfileState() {
-  const count=document.getElementById('profile-friends-count');const blockedCount=document.getElementById('profile-blocked-count');const toggle=document.getElementById('profile-notifications-toggle');const status=document.getElementById('profile-drawer-status');const username=document.getElementById('profile-drawer-username');const title=document.getElementById('profile-drawer-title');
-  if(count)count.textContent=String(profileState.friends?.length||0);if(blockedCount)blockedCount.textContent=String(profileState.blocked?.length||0);if(toggle){toggle.checked=profileState.notifications_enabled!==false;toggle.disabled=!tg?.initData;}
+  const count=document.getElementById('profile-friends-count');
+  const blockedCount=document.getElementById('profile-blocked-count');
+  const friendToggle=document.getElementById('profile-friend-notifications-toggle');
+  const botToggle=document.getElementById('profile-bot-notifications-toggle');
+  const status=document.getElementById('profile-drawer-status');
+  const username=document.getElementById('profile-drawer-username');
+  const title=document.getElementById('profile-drawer-title');
+  if(count)count.textContent=String(profileState.friends?.length||0);
+  if(blockedCount)blockedCount.textContent=String(profileState.blocked?.length||0);
+  if(friendToggle){friendToggle.checked=profileState.friend_request_notifications_enabled!==false;friendToggle.disabled=!tg?.initData;}
+  if(botToggle){botToggle.checked=profileState.bot_notifications_enabled!==false;botToggle.disabled=!tg?.initData;}
   const user=window.SVG_TELEGRAM_USER;
   if(title)title.textContent=user?profileDisplayName(user):'SVGTracker';
   if(username){const hasUsername=Boolean(user?.username);username.textContent=hasUsername?`@${user.username}`:'Username не указан';username.disabled=!hasUsername;username.dataset.username=hasUsername?user.username:'';}
-  if(status){const incoming=profileState.incoming?.length||0;status.textContent=!tg?.initData?'Социальные функции доступны внутри Telegram':incoming?`${incoming} ${incoming===1?'новый запрос в друзья':'новых запроса в друзья'}`:'Профиль синхронизирован с Telegram';}
+  if(status){const incoming=profileState.incoming?.length||0;status.textContent=!tg?.initData?'Социальные функции доступны внутри Telegram':incoming?`${incoming} ${incoming===1?'новый запрос в друзья':'новых запроса в друзья'}`:'Настройки синхронизированы с Telegram';}
   renderFriendsSheet(); renderBlockedUsersSheet();
 }
+
 async function copyTextV15(text) {
   if (!text) return false;
   try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } } catch (_) {}
@@ -4043,5 +4103,5 @@ function renderHomeActivity(nowMs = Date.now()) {
 
 window.addEventListener('online',()=>syncFinanceWithServerV15());
 window.addEventListener('offline',()=>financeSetSyncStatusV15('offline','Офлайн · сохранено локально'));
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&localStorage.getItem(FINANCE_DIRTY_KEY_V15)==='1')syncFinanceWithServerV15();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&tg?.initData)syncFinanceWithServerV15();});
 document.addEventListener('DOMContentLoaded',()=>{financeData=normalizeFinanceDataV15(financeData);localStorage.setItem(STORAGE.finance,JSON.stringify(financeData));renderFinance();renderHomeTrainingSummary();if(tg?.initData)syncFinanceWithServerV15();});

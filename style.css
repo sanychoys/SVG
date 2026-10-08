@@ -4875,3 +4875,66 @@ body.profile-drawer-open{overflow:hidden}
   .sheet-panel .social-small-action{height:30px;min-height:30px;padding:0 7px;font-size:9px}
 }
 .finance-action-symbol.is-income{color:#73e6a3;background:rgba(115,230,163,.08)}
+
+/* === V18 finance stability & spacing ================================== */
+.finance-shell{
+  gap:17px;
+  padding-bottom:max(34px,env(safe-area-inset-bottom));
+}
+.finance-shell>.apple-widget,
+.finance-shell>.finance-quick-grid,
+.finance-shell>.finance-record-button{
+  margin-block:0;
+}
+.finance-overview-widget,
+.finance-spending-widget,
+.finance-category-widget{
+  padding:19px 18px;
+}
+.finance-today-grid{gap:10px;margin-top:18px}
+.finance-quick-grid{gap:11px}
+.finance-shell .finance-quick-card{padding:15px 14px}
+.finance-category-chart{margin-top:18px}
+.finance-record-button{margin-top:3px}
+
+/* Seven-day spending is a real line chart; category structure remains columns. */
+.finance-spend-chart{
+  display:block;
+  width:100%;
+  height:auto;
+  margin-top:14px;
+}
+.finance-spend-line-wrap{width:100%;min-width:0}
+.finance-spend-line-svg{display:block;width:100%;height:126px;overflow:visible}
+.finance-spend-gridline{stroke:rgba(255,255,255,.055);stroke-width:.8}
+.finance-spend-area{fill:rgba(255,255,255,.035)}
+.finance-spend-line{fill:none;stroke:rgba(255,255,255,.82);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.finance-spend-limit-line{fill:none;stroke:rgba(143,211,255,.48);stroke-width:1;stroke-dasharray:4 5;stroke-linecap:round;stroke-linejoin:round}
+.finance-spend-hit{fill:transparent;pointer-events:all}
+.finance-spend-dot{fill:#fff;stroke:rgba(8,10,13,.7);stroke-width:.65}
+.finance-spend-dot.is-over{fill:#ff7f8c}
+.finance-spend-days{display:grid;grid-template-columns:repeat(7,1fr);gap:0;margin-top:2px}
+.finance-spend-days span{text-align:center;color:rgba(255,255,255,.30);font-size:8px;text-transform:uppercase}
+.finance-chart-caption{margin-top:9px}
+
+.finance-category-chart>.finance-empty{
+  grid-column:1/-1;
+  width:100%;
+  align-self:center;
+  justify-self:stretch;
+  padding:30px 8px;
+  white-space:normal;
+  word-break:normal;
+  overflow-wrap:normal;
+  line-height:1.45;
+}
+
+.profile-action-copy small{line-height:1.25}
+.profile-drawer-panel .profile-action-row{min-height:58px}
+
+@media(max-width:350px){
+  .finance-shell{gap:14px}
+  .finance-overview-widget,.finance-spending-widget,.finance-category-widget{padding:17px 15px}
+  .finance-spend-line-svg{height:116px}
+  .finance-today-grid{gap:8px}
+}

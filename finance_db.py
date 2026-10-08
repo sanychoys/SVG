@@ -42,9 +42,10 @@ def utc_now():
 
 
 def connect():
-    db = sqlite3.connect(DB_PATH)
+    db = sqlite3.connect(DB_PATH, timeout=30)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
+    db.execute("PRAGMA busy_timeout = 5000")
     return db
 
 
@@ -97,6 +98,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS user_settings(
                 user_id INTEGER PRIMARY KEY,
                 bot_notifications INTEGER NOT NULL DEFAULT 1,
+                friend_request_notifications INTEGER NOT NULL DEFAULT 1,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
@@ -147,6 +149,15 @@ def init_db():
                 ON user_blocks(blocked_user_id);
             """
         )
+        db.execute("PRAGMA journal_mode = WAL")
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(user_settings)").fetchall()}
+        if "friend_request_notifications" not in columns:
+            db.execute(
+                "ALTER TABLE user_settings ADD COLUMN friend_request_notifications INTEGER NOT NULL DEFAULT 1"
+            )
+            db.execute(
+                "UPDATE user_settings SET friend_request_notifications=bot_notifications"
+            )
 
 
 def get_or_create_user(data):
@@ -168,7 +179,7 @@ def get_or_create_user(data):
                 ),
             )
             db.execute(
-                "INSERT OR IGNORE INTO user_settings(user_id, bot_notifications, updated_at) VALUES(?,1,?)",
+                "INSERT OR IGNORE INTO user_settings(user_id, bot_notifications, friend_request_notifications, updated_at) VALUES(?,1,1,?)",
                 (row["id"], now),
             )
             return row["id"]
@@ -185,7 +196,7 @@ def get_or_create_user(data):
         )
         user_id = cur.lastrowid
         db.execute(
-            "INSERT INTO user_settings(user_id, bot_notifications, updated_at) VALUES(?,1,?)",
+            "INSERT INTO user_settings(user_id, bot_notifications, friend_request_notifications, updated_at) VALUES(?,1,1,?)",
             (user_id, now),
         )
         return user_id
@@ -321,36 +332,42 @@ def get_user_by_shortcut_token(token):
 def get_user_settings(user_id):
     with connect() as db:
         row = db.execute(
-            "SELECT bot_notifications, updated_at FROM user_settings WHERE user_id=?",
+            "SELECT bot_notifications, friend_request_notifications, updated_at FROM user_settings WHERE user_id=?",
             (user_id,),
         ).fetchone()
         if not row:
             now = utc_now()
             db.execute(
-                "INSERT INTO user_settings(user_id, bot_notifications, updated_at) VALUES(?,1,?)",
+                "INSERT INTO user_settings(user_id, bot_notifications, friend_request_notifications, updated_at) VALUES(?,1,1,?)",
                 (user_id, now),
             )
-            return {"bot_notifications": True, "updated_at": now}
+            return {
+                "bot_notifications": True,
+                "friend_request_notifications": True,
+                "updated_at": now,
+            }
         return {
             "bot_notifications": bool(row["bot_notifications"]),
+            "friend_request_notifications": bool(row["friend_request_notifications"]),
             "updated_at": row["updated_at"],
         }
 
 
-def set_bot_notifications(user_id, enabled):
+def set_bot_notifications(user_id, enabled, kind="bot"):
     now = utc_now()
+    column = "friend_request_notifications" if kind == "friends" else "bot_notifications"
     with connect() as db:
         db.execute(
-            """
-            INSERT INTO user_settings(user_id, bot_notifications, updated_at)
-            VALUES(?,?,?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                bot_notifications=excluded.bot_notifications,
-                updated_at=excluded.updated_at
-            """,
-            (user_id, 1 if enabled else 0, now),
+            "INSERT OR IGNORE INTO user_settings(user_id, bot_notifications, friend_request_notifications, updated_at) VALUES(?,1,1,?)",
+            (user_id, now),
         )
-    return {"bot_notifications": bool(enabled), "updated_at": now}
+        db.execute(
+            f"UPDATE user_settings SET {column}=?, updated_at=? WHERE user_id=?",
+            (1 if enabled else 0, now, user_id),
+        )
+    settings = get_user_settings(user_id)
+    settings["updated_at"] = now
+    return settings
 
 
 def get_user_telegram_id(user_id):
@@ -403,8 +420,10 @@ def get_profile_data(user_id):
             (user_id,),
         ).fetchall()
     return {
-        # The setting currently controls one concrete notification class: friend requests.
+        # Keep notifications_enabled for older clients; new clients use explicit settings.
         "notifications_enabled": settings["bot_notifications"],
+        "bot_notifications_enabled": settings["bot_notifications"],
+        "friend_request_notifications_enabled": settings["friend_request_notifications"],
         "friends": [user_public_dict(row) for row in friends],
         "incoming": [dict(user_public_dict(row), request_id=row["request_id"], created_at=row["created_at"]) for row in incoming],
         "outgoing": [dict(user_public_dict(row), request_id=row["request_id"], created_at=row["created_at"]) for row in outgoing],
