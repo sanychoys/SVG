@@ -6,3 +6,5 @@ secrets.py
 
 # Production database
 svgtracker.db
+svgtracker.db-wal
+svgtracker.db-shm

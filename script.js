@@ -2360,20 +2360,7 @@ function getLocalDateKeyFromValue(value) {
   return Number.isNaN(parsed.getTime()) ? null : getDateKey(parsed);
 }
 
-function getFinanceEntriesForDate(date) {
-  const key = getDateKey(date);
-  const groups = [financeData.expenses, financeData.mandatoryExpenses, financeData.debts].filter(Array.isArray);
-  return groups.flat().filter(item => getLocalDateKeyFromValue(item?.date || item?.createdAt) === key);
-}
 
-function getTodaySpent(date = new Date()) {
-  const key = getDateKey(date);
-  return (financeData.expenses || []).reduce((sum, item) => {
-    if (getLocalDateKeyFromValue(item?.date || item?.createdAt) !== key) return sum;
-    const amount = Number(item?.amount);
-    return sum + (Number.isFinite(amount) && amount > 0 ? amount : 0);
-  }, 0);
-}
 
 function getScheduleEventDate(event) {
   if (!event || typeof event !== 'object') return null;
@@ -2419,27 +2406,6 @@ function getTrainingSecondsForDate(date, nowMs = Date.now()) {
   return seconds;
 }
 
-function getDashboardActivityBreakdown(date, nowMs = Date.now()) {
-  const trainingSeconds = getTrainingSecondsForDate(date, nowMs);
-  const financeEntries = getFinanceEntriesForDate(date);
-  const scheduleEvents = getScheduleEventsForDate(date);
-  const notes = getNotesForDate(date);
-  const completedEvents = scheduleEvents.filter(event => event?.completed || event?.status === 'completed').length;
-  const isFuture = startOfDay(date) > startOfDay(new Date(nowMs));
-  const training = isFuture ? 0 : Math.min(25, (trainingSeconds / (45 * 60)) * 25);
-  const finance = isFuture ? 0 : Math.min(25, (financeEntries.length / 3) * 25);
-  const schedule = isFuture ? 0 : (scheduleEvents.length ? Math.min(25, 10 + completedEvents * 10 + Math.min(5, Math.max(0, scheduleEvents.length - 1) * 2.5)) : 0);
-  const noteScore = isFuture ? 0 : Math.min(25, (notes.length / 2) * 25);
-  return {
-    training, finance, schedule, notes: noteScore,
-    score: Math.round(training + finance + schedule + noteScore),
-    trainingSeconds,
-    financeCount: financeEntries.length,
-    spent: getTodaySpent(date),
-    scheduleCount: scheduleEvents.length,
-    noteCount: notes.length
-  };
-}
 
 function getLastCompletedWorkout(before = new Date()) {
   const cutoff = before.getTime();
@@ -2455,110 +2421,7 @@ function formatRubles(value) {
   return `${amount.toLocaleString('ru-RU')} ₽`;
 }
 
-function renderHomeDomainCards(now = new Date()) {
-  const spent = getTodaySpent(now);
-  const financePrimary = document.getElementById('home-finance-primary');
-  const financeSecondary = document.getElementById('home-finance-secondary');
-  if (financePrimary) financePrimary.textContent = spent ? `−${formatRubles(spent)} сегодня` : '0 ₽ сегодня';
-  if (financeSecondary) {
-    const entries = getFinanceEntriesForDate(now).length;
-    financeSecondary.textContent = entries ? `${entries} ${entries === 1 ? 'операция' : entries < 5 ? 'операции' : 'операций'} за день` : 'Расходов пока нет';
-  }
 
-  const next = getNextScheduleEvent(now);
-  const schedulePrimary = document.getElementById('home-schedule-primary');
-  const scheduleSecondary = document.getElementById('home-schedule-secondary');
-  if (next) {
-    const isToday = getDateKey(next.date) === getDateKey(now);
-    if (schedulePrimary) schedulePrimary.textContent = String(next.event.title || next.event.name || 'Событие');
-    if (scheduleSecondary) scheduleSecondary.textContent = `${isToday ? 'Сегодня' : new Intl.DateTimeFormat('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' }).format(next.date)} · ${new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(next.date)}`;
-  } else {
-    if (schedulePrimary) schedulePrimary.textContent = 'Событий нет';
-    if (scheduleSecondary) scheduleSecondary.textContent = 'Расписание пока пустое';
-  }
-
-  const notes = notesData.filter(note => note?.archived !== true);
-  const notesPrimary = document.getElementById('home-notes-primary');
-  const notesSecondary = document.getElementById('home-notes-secondary');
-  if (notesPrimary) notesPrimary.textContent = notes.length ? `${notes.length} ${notes.length === 1 ? 'заметка' : notes.length < 5 ? 'заметки' : 'заметок'}` : 'Заметок нет';
-  if (notesSecondary) {
-    const last = [...notes].sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))[0];
-    notesSecondary.textContent = last ? String(last.title || last.text || 'Последняя запись').slice(0, 54) : 'Новые записи появятся здесь';
-  }
-}
-
-function renderHomeActivity(nowMs = Date.now()) {
-  const now = new Date(nowMs);
-  const monday = getWeekMonday(now);
-  const days = Array.from({ length: 7 }, (_, index) => {
-    const day = new Date(monday);
-    day.setDate(monday.getDate() + index);
-    return day;
-  });
-  const breakdowns = days.map(day => getDashboardActivityBreakdown(day, nowMs));
-  const todayIndex = Math.max(0, Math.min(6, Math.round((startOfDay(now) - startOfDay(monday)) / 86400000)));
-  const elapsed = breakdowns.slice(0, todayIndex + 1);
-  const weekScore = elapsed.length ? Math.round(elapsed.reduce((sum, item) => sum + item.score, 0) / elapsed.length) : 0;
-
-  const spentEl = document.getElementById('home-finance-spent');
-  const workoutEl = document.getElementById('home-last-workout');
-  const scheduleEl = document.getElementById('home-next-schedule');
-  const scheduleLabel = document.getElementById('home-next-schedule-label');
-  const progress = document.getElementById('home-activity-progress');
-  const line = document.getElementById('home-activity-line');
-  const area = document.getElementById('home-activity-area');
-  const points = document.getElementById('home-activity-points');
-
-  const todaySpent = getTodaySpent(now);
-  if (spentEl) spentEl.textContent = todaySpent ? `−${formatRubles(todaySpent)}` : '0 ₽';
-
-  const lastWorkout = getLastCompletedWorkout(now);
-  if (workoutEl) workoutEl.textContent = lastWorkout ? formatDashboardDuration(normalizeWorkoutSeconds(lastWorkout.duration)) : '—';
-
-  const next = getNextScheduleEvent(now);
-  if (scheduleEl) scheduleEl.textContent = next ? new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(next.date) : '—';
-  if (scheduleLabel) scheduleLabel.textContent = next ? String(next.event.title || next.event.name || 'Следующее').slice(0, 22) : 'Следующее';
-
-  if (progress) {
-    const value = progress.querySelector('b');
-    const label = progress.querySelector('small');
-    progress.classList.remove('is-live');
-    if (value) value.textContent = `${weekScore}%`;
-    if (label) label.textContent = 'общей активности';
-  }
-
-  if (!line || !area || !points) return;
-  const baselineY = 124;
-  const topY = 28;
-  const coords = breakdowns.map((item, index) => ({
-    x: Number((index * (336 / 6)).toFixed(1)),
-    y: Number((baselineY - Math.max(0, Math.min(100, item.score)) / 100 * (baselineY - topY)).toFixed(1))
-  }));
-  const path = buildSmoothPath(coords);
-  line.setAttribute('d', path);
-  area.setAttribute('d', `${path} L336 142 L0 142 Z`);
-  points.replaceChildren();
-  coords.forEach((point, index) => {
-    const day = days[index];
-    const data = breakdowns[index];
-    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    group.setAttribute('tabindex', '0');
-    group.setAttribute('role', 'button');
-    const hit = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    hit.setAttribute('cx', point.x); hit.setAttribute('cy', point.y); hit.setAttribute('r', '12'); hit.setAttribute('fill', 'transparent');
-    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    circle.setAttribute('cx', point.x); circle.setAttribute('cy', point.y);
-    circle.setAttribute('r', getDateKey(day) === getDateKey(now) ? '3.8' : '3.2');
-    const label = new Intl.DateTimeFormat('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' }).format(day);
-    const detail = `${data.score}% · тренировки ${formatDashboardDuration(data.trainingSeconds)} · финансы ${data.financeCount} · расписание ${data.scheduleCount} · заметки ${data.noteCount}`;
-    group.setAttribute('aria-label', `${label}: ${detail}`);
-    const announce = () => showToast(`${label} · ${detail}`);
-    group.addEventListener('click', announce);
-    group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); announce(); } });
-    group.append(hit, circle);
-    points.appendChild(group);
-  });
-}
 
 
 function renderHomeTrainingSummary(nowMs = Date.now()) {
@@ -3113,33 +2976,6 @@ function profileDisplayName(person) {
   return full || (person?.username ? `@${person.username}` : 'Пользователь SVGTracker');
 }
 
-function renderProfileState() {
-  const count = document.getElementById('profile-friends-count');
-  const friendToggle = document.getElementById('profile-friend-notifications-toggle');
-  const botToggle = document.getElementById('profile-bot-notifications-toggle');
-  const status = document.getElementById('profile-drawer-status');
-  const username = document.getElementById('profile-drawer-username');
-  if (count) count.textContent = String(profileState.friends?.length || 0);
-  if (friendToggle) {
-    friendToggle.checked = profileState.friend_request_notifications_enabled !== false;
-    friendToggle.disabled = !tg?.initData;
-  }
-  if (botToggle) {
-    botToggle.checked = profileState.bot_notifications_enabled !== false;
-    botToggle.disabled = !tg?.initData;
-  }
-  const user = window.SVG_TELEGRAM_USER;
-  if (username) username.textContent = user?.username ? `@${user.username}` : (user ? 'Аккаунт Telegram' : 'Открой SVGTracker в Telegram');
-  if (status) {
-    const incoming = profileState.incoming?.length || 0;
-    status.textContent = !tg?.initData
-      ? 'Социальные функции доступны внутри Telegram'
-      : incoming
-        ? `${incoming} ${incoming === 1 ? 'новый запрос в друзья' : 'новых запроса в друзья'}`
-        : 'Настройки синхронизированы с аккаунтом Telegram';
-  }
-  renderFriendsSheet();
-}
 
 
 async function loadProfileData(force = false) {
@@ -3908,37 +3744,56 @@ function renderFinance() {
   renderFinanceSpendChartV15(); renderFinanceCategoryChartV15(); renderFinanceMandatoryListV15(); renderFinanceDebtsListV15(); renderFinanceTransactionsV15(); renderFinanceCategoryListV15();
 }
 
+function buildFinanceSmoothPathV19(points) {
+  if (!points.length) return '';
+  if (points.length === 1) return `M${points[0].x} ${points[0].y}`;
+  let path = `M${points[0].x} ${points[0].y}`;
+  for (let index = 0; index < points.length - 1; index++) {
+    const from = points[index];
+    const to = points[index + 1];
+    const handle = (to.x - from.x) * .34;
+    // Horizontal handles keep every segment inside the vertical range of its
+    // endpoints. The old Catmull-Rom conversion could overshoot below zero.
+    path += ` C${(from.x + handle).toFixed(1)} ${from.y.toFixed(1)} ${(to.x - handle).toFixed(1)} ${to.y.toFixed(1)} ${to.x} ${to.y}`;
+  }
+  return path;
+}
+
 function renderFinanceSpendChartV15() {
   const root = document.getElementById('finance-spend-chart'); if (!root) return;
   const anchor = financeEffectiveViewDateV16();
   const days = Array.from({length:7},(_,i)=>{const d=new Date(anchor);d.setDate(anchor.getDate()-(6-i));return d;});
-  const values = days.map(date => ({ date, spent:financeSpentForDateV15(date), allowance:financeMonthStatsV15(date).dailyAllowance }));
-  const maxRaw = Math.max(1, ...values.flatMap(item => [item.spent, item.allowance || 0]));
+  const values = days.map(date => ({ date, spent:Math.max(0,financeSpentForDateV15(date)), allowance:Math.max(0,financeMonthStatsV15(date).dailyAllowance) }));
+  const maxRaw = Math.max(1, ...values.flatMap(item => [item.spent, item.allowance]));
   const magnitude = 10 ** Math.max(0, Math.floor(Math.log10(maxRaw)) - 1);
-  const scaleMax = Math.ceil((maxRaw * 1.15) / magnitude) * magnitude;
-  const width = 336, top = 18, bottom = 112, chartHeight = bottom - top;
+  const scaleMax = Math.max(1, Math.ceil((maxRaw * 1.12) / magnitude) * magnitude);
+  const width = 336, top = 12, bottom = 108, chartHeight = bottom - top;
   const pointFor = (value, index) => ({
     x: Number((index * (width / 6)).toFixed(1)),
-    y: Number((bottom - Math.max(0, Math.min(scaleMax, value)) / scaleMax * chartHeight).toFixed(1))
+    y: Number((bottom - Math.max(0, Math.min(scaleMax, Number(value)||0)) / scaleMax * chartHeight).toFixed(1))
   });
   const spendPoints = values.map((item,index)=>pointFor(item.spent,index));
-  const limitPoints = values.map((item,index)=>pointFor(item.allowance || 0,index));
-  const spendPath = buildSmoothPath(spendPoints);
-  const limitPath = buildSmoothPath(limitPoints);
+  const limitPoints = values.map((item,index)=>pointFor(item.allowance,index));
+  const spendPath = buildFinanceSmoothPathV19(spendPoints);
+  const limitPath = buildFinanceSmoothPathV19(limitPoints);
 
   const wrap=document.createElement('div'); wrap.className='finance-spend-line-wrap';
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
-  svg.setAttribute('viewBox','0 0 336 126'); svg.setAttribute('class','finance-spend-line-svg'); svg.setAttribute('role','img'); svg.setAttribute('aria-label','График расходов за последние семь дней');
+  svg.setAttribute('viewBox','0 0 336 118'); svg.setAttribute('class','finance-spend-line-svg'); svg.setAttribute('role','img'); svg.setAttribute('aria-label','График расходов за последние семь дней');
   const ns='http://www.w3.org/2000/svg';
-  [0,.5,1].forEach(level=>{const line=document.createElementNS(ns,'line');const y=bottom-chartHeight*level;line.setAttribute('x1','0');line.setAttribute('x2','336');line.setAttribute('y1',String(y));line.setAttribute('y2',String(y));line.setAttribute('class','finance-spend-gridline');svg.appendChild(line);});
-  const area=document.createElementNS(ns,'path'); area.setAttribute('d',`${spendPath} L336 ${bottom} L0 ${bottom} Z`); area.setAttribute('class','finance-spend-area'); svg.appendChild(area);
-  if (values.some(item=>item.allowance>0)) { const limit=document.createElementNS(ns,'path');limit.setAttribute('d',limitPath);limit.setAttribute('class','finance-spend-limit-line');svg.appendChild(limit); }
-  const line=document.createElementNS(ns,'path'); line.setAttribute('d',spendPath); line.setAttribute('class','finance-spend-line'); svg.appendChild(line);
+  const defs=document.createElementNS(ns,'defs');
+  const clip=document.createElementNS(ns,'clipPath');clip.setAttribute('id','finance-spend-clip-v19');
+  const clipRect=document.createElementNS(ns,'rect');clipRect.setAttribute('x','0');clipRect.setAttribute('y',String(top));clipRect.setAttribute('width',String(width));clipRect.setAttribute('height',String(chartHeight));clip.appendChild(clipRect);defs.appendChild(clip);svg.appendChild(defs);
+  [0,.5,1].forEach(level=>{const grid=document.createElementNS(ns,'line');const y=bottom-chartHeight*level;grid.setAttribute('x1','0');grid.setAttribute('x2',String(width));grid.setAttribute('y1',String(y));grid.setAttribute('y2',String(y));grid.setAttribute('class','finance-spend-gridline');svg.appendChild(grid);});
+  const plot=document.createElementNS(ns,'g');plot.setAttribute('clip-path','url(#finance-spend-clip-v19)');
+  const area=document.createElementNS(ns,'path'); area.setAttribute('d',`${spendPath} L${width} ${bottom} L0 ${bottom} Z`); area.setAttribute('class','finance-spend-area'); plot.appendChild(area);
+  if (values.some(item=>item.allowance>0)) { const limit=document.createElementNS(ns,'path');limit.setAttribute('d',limitPath);limit.setAttribute('class','finance-spend-limit-line');plot.appendChild(limit); }
+  const line=document.createElementNS(ns,'path'); line.setAttribute('d',spendPath); line.setAttribute('class','finance-spend-line'); plot.appendChild(line); svg.appendChild(plot);
   const hits=document.createElementNS(ns,'g'); hits.setAttribute('class','finance-spend-points');
   spendPoints.forEach((point,index)=>{
     const group=document.createElementNS(ns,'g');group.setAttribute('role','button');group.setAttribute('tabindex','0');
-    const hit=document.createElementNS(ns,'circle');hit.setAttribute('cx',point.x);hit.setAttribute('cy',point.y);hit.setAttribute('r','14');hit.setAttribute('class','finance-spend-hit');
-    const dot=document.createElementNS(ns,'circle');dot.setAttribute('cx',point.x);dot.setAttribute('cy',point.y);dot.setAttribute('r',values[index].spent>0?'2.1':'1.5');dot.setAttribute('class',values[index].allowance>0&&values[index].spent>values[index].allowance?'finance-spend-dot is-over':'finance-spend-dot');
+    const hit=document.createElementNS(ns,'circle');hit.setAttribute('cx',point.x);hit.setAttribute('cy',point.y);hit.setAttribute('r','13');hit.setAttribute('class','finance-spend-hit');
+    const dot=document.createElementNS(ns,'circle');dot.setAttribute('cx',point.x);dot.setAttribute('cy',point.y);dot.setAttribute('r',values[index].spent>0?'1.8':'1.25');dot.setAttribute('class',values[index].allowance>0&&values[index].spent>values[index].allowance?'finance-spend-dot is-over':'finance-spend-dot');
     const announce=()=>showToast(`${financeDateLabelV15(values[index].date)} · потрачено ${formatRubles(values[index].spent)}${values[index].allowance?` · лимит ${formatRubles(values[index].allowance)}`:''}`);
     group.addEventListener('click',announce);group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();announce();}});group.append(hit,dot);hits.appendChild(group);
   });
@@ -3951,14 +3806,15 @@ function renderFinanceSpendChartV15() {
 function renderFinanceCategoryChartV15() {
   const root = document.getElementById('finance-category-chart'); if (!root) return;
   const monthExpenses = financeExpensesForMonthV15(financeEffectiveViewDateV16());
-  const totals = new Map(); monthExpenses.forEach(item => totals.set(item.categoryId,(totals.get(item.categoryId)||0)+item.amount));
+  const totals = new Map(); monthExpenses.forEach(item => totals.set(item.categoryId,(totals.get(item.categoryId)||0)+Math.max(0,Number(item.amount)||0)));
   const sorted = [...totals.entries()].map(([categoryId,amount])=>({category:financeCategoryByIdV15(categoryId),amount})).sort((a,b)=>b.amount-a.amount);
   let rows = sorted.slice(0,5);
   if (sorted.length > 5) { const otherAmount = sorted.slice(5).reduce((sum,row)=>sum+row.amount,0); rows.push({ category:{id:'__other__',name:'Другое',color:'#7C818B'}, amount:otherAmount }); }
   const total = sorted.reduce((sum,row)=>sum+row.amount,0);
+  root.classList.toggle('is-empty', !rows.length);
   if (!rows.length) { const empty=document.createElement('p');empty.className='finance-empty';empty.textContent='Здесь появится структура расходов по категориям.';root.replaceChildren(empty);return; }
   const max = Math.max(...rows.map(row=>row.amount),1);
-  root.replaceChildren(...rows.map(row => { const button=document.createElement('button');button.type='button';button.className='finance-category-column';const amount=document.createElement('strong');amount.textContent=formatFinanceCompactV15(row.amount);const plot=document.createElement('span');plot.className='finance-category-plot';const bar=document.createElement('span');bar.className='finance-category-bar';bar.style.height=`${Math.max(8,row.amount/max*100)}%`;bar.style.setProperty('--finance-category-color',row.category.color);plot.appendChild(bar);const label=document.createElement('small');label.textContent=row.category.name;button.append(amount,plot,label);button.addEventListener('click',()=>showToast(`${row.category.name}: ${formatRubles(row.amount)} · ${Math.round(row.amount/Math.max(1,total)*100)}%`));return button; }));
+  root.replaceChildren(...rows.map(row => { const button=document.createElement('button');button.type='button';button.className='finance-category-column';const amount=document.createElement('strong');amount.textContent=formatFinanceCompactV15(row.amount);const plot=document.createElement('span');plot.className='finance-category-plot';const bar=document.createElement('span');bar.className='finance-category-bar';bar.style.height=`${Math.max(6,row.amount/max*100)}%`;bar.style.setProperty('--finance-category-color',row.category.color);plot.appendChild(bar);const label=document.createElement('small');label.textContent=row.category.name;button.append(amount,plot,label);button.addEventListener('click',()=>showToast(`${row.category.name}: ${formatRubles(row.amount)} · ${Math.round(row.amount/Math.max(1,total)*100)}%`));return button; }));
 }
 
 function openFinanceActionSheet(){ closeSheets(); const s=document.getElementById('finance-action-sheet'); if(s)s.hidden=false; }
@@ -4020,11 +3876,46 @@ function saveFinanceBudgetSettings() {
 function createFinanceListRowV15({title,meta,amount,color,onClick,status}) {
   const button=document.createElement('button');button.type='button';button.className='finance-list-row';if(onClick)button.addEventListener('click',onClick);
   const lead=document.createElement('span');lead.className='finance-list-lead';if(color){const dot=document.createElement('i');dot.style.background=color;lead.appendChild(dot);} const copy=document.createElement('span');const strong=document.createElement('strong');strong.textContent=title;const small=document.createElement('small');small.textContent=meta||'';copy.append(strong,small);lead.appendChild(copy);
-  const tail=document.createElement('span');tail.className='finance-list-tail';const value=document.createElement('strong');value.textContent=amount||'';tail.appendChild(value);if(status){const badge=document.createElement('small');badge.textContent=status;tail.appendChild(badge);}const chevron=document.createElement('b');chevron.textContent='›';tail.appendChild(chevron);button.append(lead,tail);return button;
+  const tail=document.createElement('span');tail.className='finance-list-tail';
+  if (amount) { const value=document.createElement('strong');value.textContent=amount;tail.appendChild(value); }
+  if(status){const badge=document.createElement('small');badge.textContent=status;tail.appendChild(badge);}const chevron=document.createElement('b');chevron.textContent='›';tail.appendChild(chevron);button.append(lead,tail);return button;
 }
 function renderFinanceMandatoryListV15(){const root=document.getElementById('finance-mandatory-list');if(!root)return;const items=financeMandatoryForMonthV16(financeEffectiveViewDateV16());if(!items.length){const e=document.createElement('p');e.className='finance-empty';e.textContent='В этом месяце обязательных расходов нет.';root.replaceChildren(e);return;}root.replaceChildren(...[...items].sort((a,b)=>b.amount-a.amount).map(item=>createFinanceListRowV15({title:item.title,meta:financeCategoryByIdV15(item.categoryId)?.name||'',amount:formatRubles(item.amount),color:financeCategoryByIdV15(item.categoryId)?.color,onClick:()=>openFinanceEntrySheet('mandatory',item.id)})));}
 function openFinanceMandatorySheet(){closeSheets();renderFinanceMandatoryListV15();const s=document.getElementById('finance-mandatory-sheet');if(s)s.hidden=false;}
-function renderFinanceTransactionsV15(){const root=document.getElementById('finance-transactions-list');if(!root)return;const view=financeEffectiveViewDateV16();const prefix=`${financeMonthKeyV15(view)}-`;const expenses=financeExpensesForMonthV15(view).map(item=>({...item,_kind:'expense'}));const incomes=(financeData.incomes||[]).filter(item=>String(item.date||'').startsWith(prefix)).map(item=>({...item,_kind:'income'}));const items=[...expenses,...incomes].sort((a,b)=>String(b.date).localeCompare(String(a.date))||compareIso(b.updatedAt,a.updatedAt));if(!items.length){const e=document.createElement('p');e.className='finance-empty';e.textContent='В этом месяце операций пока нет.';root.replaceChildren(e);return;}root.replaceChildren(...items.map(item=>item._kind==='income'?createFinanceListRowV15({title:item.title||'Доход',meta:`Доход · ${financeDateLabelV15(item.date)}`,amount:`+${formatRubles(item.amount)}`,color:'#30d158',onClick:()=>openFinanceEntrySheet('income',item.id)}):createFinanceListRowV15({title:item.title,meta:`${financeCategoryByIdV15(item.categoryId)?.name||''} · ${financeDateLabelV15(item.date)}`,amount:`−${formatRubles(item.amount)}`,color:financeCategoryByIdV15(item.categoryId)?.color,onClick:()=>openFinanceEntrySheet('expense',item.id)})));}
+function financeHistoryDayTitleV19(dateKey) {
+  const today = getDateKey(new Date());
+  const yesterdayDate = new Date(); yesterdayDate.setDate(yesterdayDate.getDate()-1);
+  const yesterday = getDateKey(yesterdayDate);
+  if (dateKey === today) return 'Сегодня';
+  if (dateKey === yesterday) return 'Вчера';
+  const parsed = new Date(`${dateKey}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? dateKey : new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'long'}).format(parsed);
+}
+function renderFinanceTransactionsV15(){
+  const root=document.getElementById('finance-transactions-list');if(!root)return;
+  const view=financeEffectiveViewDateV16();const prefix=`${financeMonthKeyV15(view)}-`;
+  const expenses=financeExpensesForMonthV15(view).map(item=>({...item,_kind:'expense'}));
+  const incomes=(financeData.incomes||[]).filter(item=>String(item.date||'').startsWith(prefix)).map(item=>({...item,_kind:'income'}));
+  const items=[...expenses,...incomes].sort((a,b)=>String(b.date).localeCompare(String(a.date))||compareIso(b.updatedAt,a.updatedAt));
+  if(!items.length){const e=document.createElement('p');e.className='finance-empty';e.textContent='В этом месяце операций пока нет.';root.replaceChildren(e);return;}
+  const grouped=new Map();
+  items.forEach(item=>{const key=String(item.date||'');if(!grouped.has(key))grouped.set(key,[]);grouped.get(key).push(item);});
+  const groups=[...grouped.entries()].map(([dateKey,dayItems])=>{
+    const section=document.createElement('section');section.className='finance-history-group';
+    const head=document.createElement('div');head.className='finance-history-head';
+    const label=document.createElement('strong');label.textContent=financeHistoryDayTitleV19(dateKey);
+    const spent=dayItems.filter(item=>item._kind==='expense').reduce((sum,item)=>sum+Number(item.amount||0),0);
+    const income=dayItems.filter(item=>item._kind==='income').reduce((sum,item)=>sum+Number(item.amount||0),0);
+    const summary=document.createElement('span');summary.textContent=[spent?`−${formatFinanceCompactV15(spent)}`:'',income?`+${formatFinanceCompactV15(income)}`:''].filter(Boolean).join(' · ');
+    head.append(label,summary);
+    const card=document.createElement('div');card.className='finance-history-card';
+    dayItems.forEach(item=>card.appendChild(item._kind==='income'
+      ? createFinanceListRowV15({title:item.title||'Доход',meta:'Доход',amount:`+${formatRubles(item.amount)}`,color:'#30d158',onClick:()=>openFinanceEntrySheet('income',item.id)})
+      : createFinanceListRowV15({title:item.title,meta:financeCategoryByIdV15(item.categoryId)?.name||'Без категории',amount:`−${formatRubles(item.amount)}`,color:financeCategoryByIdV15(item.categoryId)?.color,onClick:()=>openFinanceEntrySheet('expense',item.id)})));
+    section.append(head,card);return section;
+  });
+  root.replaceChildren(...groups);
+}
 function openFinanceTransactionsSheet(){closeSheets();renderFinanceTransactionsV15();const s=document.getElementById('finance-transactions-sheet');if(s)s.hidden=false;}
 
 function openFinanceDebtsSheet(){closeSheets();renderFinanceDebtsListV15();const s=document.getElementById('finance-debts-sheet');if(s)s.hidden=false;}
@@ -4035,7 +3926,7 @@ function closeFinanceDebt(){const id=String(document.getElementById('finance-deb
 function reopenFinanceDebt(){const id=String(document.getElementById('finance-debt-edit-id')?.value||'');const item=financeData.debts.find(x=>String(x.id)===id);if(!item)return;requestConfirm('Вернуть долг в открытые?',()=>{item.status='open';item.updatedAt=financeNowIsoV15();closeSheets();saveFinance();showToast('Долг снова открыт');});}
 function deleteFinanceDebt(){const id=String(document.getElementById('finance-debt-edit-id')?.value||'');if(!id)return;requestConfirm('Удалить долг?',()=>{financeData.debts=financeData.debts.filter(x=>String(x.id)!==id);financeMarkDeletedV15('debts',id);closeSheets();saveFinance();showToast('Долг удалён');});}
 
-function renderFinanceCategoryListV15(){const root=document.getElementById('finance-category-list');if(!root)return;root.replaceChildren(...financeData.categories.map(cat=>{const used=financeData.expenses.filter(x=>x.categoryId===cat.id).length+financeData.mandatoryExpenses.filter(x=>x.categoryId===cat.id).length;return createFinanceListRowV15({title:cat.name,meta:used?`${used} ${financePluralV15(used,'запись','записи','записей')}`:'Не используется',amount:'',color:cat.color,onClick:()=>openFinanceCategoryEditor(cat.id)});}));}
+function renderFinanceCategoryListV15(){const root=document.getElementById('finance-category-list');if(!root)return;const rows=[...financeData.categories].map(cat=>{const used=financeData.expenses.filter(x=>x.categoryId===cat.id).length+financeData.mandatoryExpenses.filter(x=>x.categoryId===cat.id).length;return{cat,used};}).sort((a,b)=>b.used-a.used||a.cat.name.localeCompare(b.cat.name,'ru'));root.replaceChildren(...rows.map(({cat,used})=>createFinanceListRowV15({title:cat.name,meta:used?`${used} ${financePluralV15(used,'операция','операции','операций')}`:'Пока без операций',amount:'',color:cat.color,onClick:()=>openFinanceCategoryEditor(cat.id)})));}
 function openFinanceCategoriesSheet(){closeSheets();renderFinanceCategoryListV15();const s=document.getElementById('finance-categories-sheet');if(s)s.hidden=false;}
 function renderFinanceCategoryColorPickerV15(){const root=document.getElementById('finance-category-color-picker');if(!root)return;root.replaceChildren(...FINANCE_COLORS_V15.map(color=>{const b=document.createElement('button');b.type='button';b.className='finance-color-choice';b.style.setProperty('--finance-choice-color',color);b.classList.toggle('is-selected',color.toLowerCase()===financeSelectedCategoryColorV15.toLowerCase());b.setAttribute('aria-label',`Выбрать цвет ${color}`);b.addEventListener('click',()=>{financeSelectedCategoryColorV15=color;renderFinanceCategoryColorPickerV15();});return b;}));}
 function openFinanceCategoryEditor(categoryId=null){closeSheets();const cat=categoryId?financeData.categories.find(x=>String(x.id)===String(categoryId)):null;document.getElementById('finance-category-edit-id').value=cat?.id||'';document.getElementById('finance-category-name').value=cat?.name||'';financeSelectedCategoryColorV15=cat?.color||FINANCE_COLORS_V15[financeData.categories.length%FINANCE_COLORS_V15.length];document.getElementById('finance-category-editor-title').textContent=cat?'Категория':'Новая категория';const used=cat?(financeData.expenses.filter(x=>String(x.categoryId)===String(cat.id)).length+financeData.mandatoryExpenses.filter(x=>String(x.categoryId)===String(cat.id)).length):0;const transferField=document.getElementById('finance-category-transfer-field');const transferSelect=document.getElementById('finance-category-transfer-target');if(transferField)transferField.hidden=!cat||!used;if(transferSelect){const targets=financeData.categories.filter(x=>!cat||String(x.id)!==String(cat.id));transferSelect.replaceChildren(...targets.map(target=>{const option=document.createElement('option');option.value=target.id;option.textContent=target.name;return option;}));}const del=document.getElementById('finance-category-delete-button');if(del){del.hidden=!cat;del.textContent=used?'Перенести записи и удалить':'Удалить категорию';}renderFinanceCategoryColorPickerV15();const sheet=document.getElementById('finance-category-edit-sheet');if(sheet)sheet.hidden=false;setTimeout(()=>document.getElementById('finance-category-name')?.focus(),100);}

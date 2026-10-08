@@ -4938,3 +4938,146 @@ body.profile-drawer-open{overflow:hidden}
   .finance-spend-line-svg{height:116px}
   .finance-today-grid{gap:8px}
 }
+
+/* === V19 finance visual pass =========================================== */
+/* More breathing room on the finance screen without changing the rest of the app. */
+.finance-shell{
+  gap:22px;
+  padding-bottom:max(40px,env(safe-area-inset-bottom));
+}
+.finance-overview-widget,
+.finance-spending-widget,
+.finance-category-widget{
+  padding:22px 20px;
+  border-color:rgba(255,255,255,.075);
+}
+.finance-overview-head{gap:16px}
+.finance-budget-track{margin:19px 0 9px}
+.finance-budget-caption{font-size:10.5px;line-height:1.45}
+.finance-today-grid{gap:12px;margin-top:21px}
+.finance-today-grid article{padding:14px 13px;border-radius:17px}
+.finance-today-grid strong{margin-top:6px}
+.finance-today-grid span{margin-top:6px;line-height:1.35}
+.finance-widget-head{gap:14px}
+.finance-head-actions{gap:10px}
+.finance-text-action{padding:6px 10px;border-radius:10px}
+.finance-quick-grid{gap:13px}
+.finance-shell .finance-quick-card{padding:16px 15px;min-height:76px;border-radius:19px}
+.finance-category-chart{margin-top:21px}
+.finance-record-button{height:52px;margin-top:1px;border-radius:18px}
+
+/* Seven-day chart: plot is clipped to zero/maximum so smoothing can never go below the baseline. */
+.finance-spend-line-svg{height:122px;overflow:hidden}
+.finance-spend-gridline{stroke:rgba(255,255,255,.05);stroke-width:.7}
+.finance-spend-area{fill:rgba(255,255,255,.025)}
+.finance-spend-line{stroke:rgba(255,255,255,.88);stroke-width:1.55}
+.finance-spend-limit-line{stroke:rgba(143,211,255,.44);stroke-width:.9;stroke-dasharray:3 5}
+.finance-spend-dot{stroke-width:.5}
+.finance-spend-days{margin-top:5px}
+.finance-spend-days span{font-size:8.5px;letter-spacing:.015em}
+.finance-chart-caption{margin-top:11px;line-height:1.4}
+
+/* Category structure stays a column chart, but the bars and labels align consistently. */
+.finance-category-chart{grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;min-height:132px;align-items:end}
+.finance-category-column{grid-template-rows:18px 86px 28px;gap:5px;align-items:end}
+.finance-category-column>strong{font-size:8.2px;line-height:1.1}
+.finance-category-plot{height:86px;border-radius:9px;background:rgba(255,255,255,.022)}
+.finance-category-bar{left:20%;right:20%;border-radius:6px 6px 2px 2px;opacity:.90}
+.finance-category-column small{font-size:7.8px;line-height:1.15;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;min-height:18px}
+.finance-category-chart.is-empty{display:flex;min-height:116px;align-items:center;justify-content:center}
+.finance-category-chart.is-empty>.finance-empty{
+  display:block;width:min(100%,290px);margin:0 auto;padding:18px 8px;
+  white-space:normal;word-break:normal;overflow-wrap:normal;text-align:center;
+  font-size:11px;line-height:1.5;
+}
+
+/* Finance sheets use inset groups rather than loose rows separated only by hairlines. */
+.finance-action-panel,.finance-form-panel,.finance-list-panel{
+  padding-left:18px;padding-right:18px;
+  max-height:min(84dvh,720px);
+}
+.finance-list-panel .sheet-heading-row,
+.finance-form-panel .sheet-heading-row{margin-bottom:20px}
+.finance-list,.finance-category-list{border-top:0;display:flex;flex-direction:column;gap:8px}
+.finance-list-row{
+  min-height:64px;padding:11px 12px;margin:0;border:1px solid rgba(255,255,255,.055);
+  border-radius:15px;background:rgba(255,255,255,.025);gap:12px;
+}
+.finance-list-row:active{background:rgba(255,255,255,.055)}
+.finance-list-lead{gap:11px}
+.finance-list-lead>i{width:11px;height:11px;flex-basis:11px;box-shadow:0 0 0 3px rgba(255,255,255,.025)}
+.finance-list-lead>span{gap:3px}
+.finance-list-lead strong{font-size:12px;line-height:1.2}
+.finance-list-lead small{font-size:9px;line-height:1.25}
+.finance-list-tail{align-items:flex-end;justify-content:center;min-height:34px;padding-right:15px}
+.finance-list-tail>strong{font-size:12px;line-height:1.2}
+.finance-list-tail>small{font-size:8.5px}
+.finance-list-tail>b{font-size:18px}
+
+/* Transaction history is grouped by day, which makes scanning much easier. */
+#finance-transactions-list{display:flex;flex-direction:column;gap:18px}
+.finance-history-group{display:block}
+.finance-history-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 2px 8px}
+.finance-history-head>strong{font-size:10px;color:rgba(255,255,255,.52);font-weight:600}
+.finance-history-head>span{font-size:9px;color:rgba(255,255,255,.28);font-variant-numeric:tabular-nums;white-space:nowrap}
+.finance-history-card{display:flex;flex-direction:column;gap:7px}
+
+/* Forms have deliberate vertical rhythm; controls no longer look stuck together. */
+.finance-form-panel .sheet-field{margin-top:0}
+.finance-form-panel .sheet-field + .sheet-field{margin-top:14px}
+.finance-form-panel .sheet-field>span{margin:0 2px 7px;font-size:10.5px}
+.finance-form-panel .sheet-field input,
+.finance-form-panel .sheet-field select,
+.finance-form-panel .finance-money-input{min-height:50px;border-radius:15px}
+.finance-form-panel .sheet-primary-action{margin-top:20px}
+.finance-form-panel .sheet-secondary-action,
+.finance-form-panel .sheet-danger-button{margin-top:10px}
+.finance-money-input>b{padding-right:15px}
+.finance-budget-preview{min-height:48px;padding:0 4px}
+
+/* Category editor: centered palette and aligned actions. */
+.finance-color-field{margin-top:17px;padding:15px 14px 14px;border:1px solid rgba(255,255,255,.055);border-radius:17px;background:rgba(255,255,255,.022)}
+.finance-color-field>span{margin:0 0 11px;text-align:center;font-size:10.5px}
+.finance-color-picker{grid-template-columns:repeat(4,1fr);gap:9px}
+.finance-color-choice{height:46px;min-height:46px;border-radius:13px;background:rgba(255,255,255,.035)}
+.finance-color-choice::before{inset:11px;border-radius:50%}
+.finance-color-choice.is-selected{box-shadow:inset 0 0 0 1px rgba(255,255,255,.52);background:rgba(255,255,255,.06)}
+.finance-color-choice.is-selected::after{right:7px;top:7px;width:6px;height:6px}
+#finance-category-transfer-field{margin-top:14px}
+#finance-category-delete-button{margin-top:10px}
+
+.finance-debt-summary{gap:10px;margin-bottom:16px}
+.finance-debt-summary>div{padding:14px;border-radius:16px}
+.finance-debt-summary strong{margin-top:6px}
+
+@media(max-width:350px){
+  .finance-shell{gap:18px}
+  .finance-overview-widget,.finance-spending-widget,.finance-category-widget{padding:19px 16px}
+  .finance-today-grid{gap:9px;margin-top:18px}
+  .finance-today-grid article{padding:12px 10px}
+  .finance-spend-line-svg{height:114px}
+  .finance-category-chart{gap:5px;min-height:122px}
+  .finance-category-column{grid-template-rows:17px 78px 27px}
+  .finance-category-plot{height:78px}
+  .finance-category-column small{font-size:7.3px}
+  .finance-action-panel,.finance-form-panel,.finance-list-panel{padding-left:15px;padding-right:15px}
+  .finance-color-picker{gap:7px}
+  .finance-color-choice{height:43px;min-height:43px}
+}
+
+/* V19 specificity fixes: finance shell is a real vertical stack, and generic
+   sheet button rules must not repaint finance rows/palette white. */
+.finance-shell{display:flex;flex-direction:column}
+.finance-shell>.finance-header{margin-bottom:0}
+.sheet-panel .finance-list-row{
+  width:100%;height:auto;min-height:64px;margin:0;padding:11px 12px;
+  border:1px solid rgba(255,255,255,.055);border-radius:15px;
+  background:rgba(255,255,255,.025);color:inherit;font-weight:400;text-align:left;
+}
+.sheet-panel .finance-list-row:active{background:rgba(255,255,255,.055)}
+.sheet-panel .finance-color-choice{
+  width:100%;height:46px;min-height:46px;margin:0;padding:0;
+  border:0;border-radius:13px;background:rgba(255,255,255,.035);color:inherit;font-weight:400;
+}
+.sheet-panel .finance-color-choice.is-selected{background:rgba(255,255,255,.06)}
+@media(max-width:350px){.sheet-panel .finance-color-choice{height:43px;min-height:43px}}
