@@ -3,16 +3,23 @@ import hashlib
 import hmac
 import json
 import logging
+import os
+import shutil
+import subprocess
+import sys
 import time
 import uuid
 import threading
+from pathlib import Path
 from datetime import datetime
 from urllib.parse import parse_qsl
+from urllib import request as urllib_request
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from fastapi import FastAPI, Header, HTTPException
+from aiogram.types import BotCommand, BotCommandScopeChat, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types.error_event import ErrorEvent
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 import uvicorn
 
@@ -21,6 +28,7 @@ from key import main_keyboard
 from finance_db import (
     block_user,
     create_friend_request,
+    cancel_friend_request,
     create_shortcut_token,
     get_or_create_user,
     get_profile_data,
@@ -43,6 +51,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
+APP_VERSION = "20"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -54,13 +63,204 @@ logger = logging.getLogger("svgtracker")
 FINANCE_WRITE_LOCK = threading.RLock()
 
 SHORTCUT_DEFAULT_CATEGORIES = [
-    {"id": "cat_food", "name": "Еда", "color": "#ff9f0a"},
-    {"id": "cat_home", "name": "Дом", "color": "#64d2ff"},
-    {"id": "cat_transport", "name": "Транспорт", "color": "#0a84ff"},
-    {"id": "cat_fun", "name": "Развлечения", "color": "#bf5af2"},
-    {"id": "cat_health", "name": "Здоровье", "color": "#30d158"},
-    {"id": "cat_other", "name": "Другое", "color": "#8e8e93"},
+    {"id": "cat_food", "name": "Еда", "color": "#ff9f0a", "order": 0},
+    {"id": "cat_home", "name": "Дом", "color": "#64d2ff", "order": 1},
+    {"id": "cat_transport", "name": "Транспорт", "color": "#0a84ff", "order": 2},
+    {"id": "cat_fun", "name": "Развлечения", "color": "#bf5af2", "order": 3},
+    {"id": "cat_health", "name": "Здоровье", "color": "#30d158", "order": 4},
+    {"id": "cat_other", "name": "Другое", "color": "#8e8e93", "order": 5},
 ]
+
+
+ADMIN_TELEGRAM_ID = int(os.environ.get("SVGTRACKER_ADMIN_ID", "382257126"))
+ADMIN_STATE_DIR = Path(os.environ.get("SVGTRACKER_ADMIN_STATE_DIR", "/var/lib/svgtracker-admin"))
+ADMIN_BACKUP_DIR = Path(os.environ.get("SVGTRACKER_BACKUP_DIR", "/var/backups/svgtracker"))
+ADMIN_DEPLOY_HELPER = Path(__file__).parent / "deploy" / "admin_deploy.py"
+ADMIN_PENDING_DEPLOYS: dict[str, dict] = {}
+ADMIN_ERROR_COOLDOWN: dict[str, float] = {}
+ADMIN_MAX_ZIP_BYTES = 20 * 1024 * 1024
+
+
+def is_admin_telegram_id(value) -> bool:
+    try:
+        return int(value) == ADMIN_TELEGRAM_ID
+    except (TypeError, ValueError):
+        return False
+
+
+def is_admin_message(message: Message) -> bool:
+    return bool(message.from_user and is_admin_telegram_id(message.from_user.id))
+
+
+async def setup_bot_commands() -> None:
+    common = [
+        BotCommand(command="start", description="Открыть SVGTracker"),
+        BotCommand(command="shortcut", description="Токен для iPhone Action Button"),
+        BotCommand(command="shortcut_revoke", description="Отключить Action Button"),
+        BotCommand(command="resetdata", description="Очистить мои тестовые данные"),
+    ]
+    admin = common + [
+        BotCommand(command="admin", description="Админ-панель"),
+        BotCommand(command="deploy", description="Обновить production ZIP-файлом"),
+        BotCommand(command="deploy_status", description="Статус последнего deploy"),
+        BotCommand(command="server_status", description="Состояние VPS и API"),
+        BotCommand(command="backup", description="Создать backup"),
+        BotCommand(command="backups", description="Список backup"),
+        BotCommand(command="rollback", description="Откатить код"),
+        BotCommand(command="errors", description="Ошибки сервера"),
+        BotCommand(command="logs", description="Последние логи"),
+        BotCommand(command="restart", description="Перезапустить SVGTracker"),
+    ]
+    try:
+        await bot.set_my_commands(common)
+        await bot.set_my_commands(admin, scope=BotCommandScopeChat(chat_id=ADMIN_TELEGRAM_ID))
+    except Exception:
+        logger.exception("Failed to configure Telegram bot commands")
+
+
+def admin_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Статус", callback_data="admin:status"),
+            InlineKeyboardButton(text="Ошибки", callback_data="admin:errors"),
+        ],
+        [
+            InlineKeyboardButton(text="Deploy ZIP", callback_data="admin:deploy"),
+            InlineKeyboardButton(text="Backup", callback_data="admin:backup"),
+        ],
+        [
+            InlineKeyboardButton(text="Backups", callback_data="admin:backups"),
+            InlineKeyboardButton(text="Rollback", callback_data="admin:rollback"),
+        ],
+        [
+            InlineKeyboardButton(text="Логи", callback_data="admin:logs"),
+            InlineKeyboardButton(text="Restart", callback_data="admin:restart"),
+        ],
+    ])
+
+
+def admin_state_dirs() -> None:
+    (ADMIN_STATE_DIR / "incoming").mkdir(parents=True, exist_ok=True)
+    ADMIN_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def admin_trim(text: str, limit: int = 3600) -> str:
+    clean = str(text or "").replace(BOT_TOKEN, "***")
+    if len(clean) <= limit:
+        return clean
+    return "…" + clean[-limit:]
+
+
+def admin_journal(lines: int = 40, errors_only: bool = False) -> str:
+    try:
+        proc = subprocess.run(
+            [
+                "journalctl",
+                "-u", "svgtracker.service",
+                "-u", "svgtracker-watchdog.service",
+                "-n", str(max(1, min(lines, 250))),
+                "--no-pager",
+                "--output=short-iso",
+            ],
+            capture_output=True, text=True, timeout=8,
+        )
+        output = proc.stdout or proc.stderr or "Логи пусты"
+        if errors_only:
+            keywords = (" error", "exception", "traceback", "failed", "critical", "warning", " 400 ", " 401 ", " 403 ", " 404 ", " 409 ", " 422 ", " 429 ", " 500 ", " 502 ", " 503 ")
+            filtered = [line for line in output.splitlines() if any(key in line.lower() for key in keywords)]
+            output = "\n".join(filtered[-45:]) or "За последние записи явных ошибок не найдено."
+        return admin_trim(output)
+    except Exception as exc:
+        return f"Не удалось прочитать journald: {exc}"
+
+
+def admin_latest_status() -> dict:
+    path = ADMIN_STATE_DIR / "deploy_status.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except Exception:
+        return {}
+
+
+def admin_list_backups(limit: int = 8) -> list[Path]:
+    admin_state_dirs()
+    return sorted(ADMIN_BACKUP_DIR.glob("*.tar.gz"), key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
+
+
+def admin_git_state() -> str:
+    try:
+        head = subprocess.run(["git", "-C", str(Path(__file__).parent), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=4).stdout.strip()
+        dirty = subprocess.run(["git", "-C", str(Path(__file__).parent), "status", "--porcelain"], capture_output=True, text=True, timeout=4).stdout.strip()
+        return f"{head or '—'}{' · local changes' if dirty else ' · clean'}"
+    except Exception:
+        return "—"
+
+
+def admin_server_status_text() -> str:
+    active = subprocess.run(["systemctl", "is-active", "svgtracker"], capture_output=True, text=True).stdout.strip() or "unknown"
+    try:
+        with urllib_request.urlopen("http://127.0.0.1:8000/api/test", timeout=2.5) as response:
+            api = "OK" if response.status == 200 else f"HTTP {response.status}"
+    except Exception as exc:
+        api = f"FAIL · {type(exc).__name__}"
+    disk = shutil.disk_usage(Path(__file__).parent)
+    db_path = Path(__file__).parent / "svgtracker.db"
+    db_size = db_path.stat().st_size if db_path.exists() else 0
+    mem_available = "—"
+    try:
+        info = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, value = line.split(":", 1)
+            info[key] = int(value.strip().split()[0])
+        mem_available = f"{info.get('MemAvailable', 0) // 1024} MB"
+    except Exception:
+        pass
+    latest = admin_latest_status()
+    deploy_line = latest.get("status") or "—"
+    watchdog = subprocess.run(["systemctl", "is-active", "svgtracker-watchdog.timer"], capture_output=True, text=True).stdout.strip() or "unknown"
+    return (
+        "SVGTracker · server status\n\n"
+        f"Version: {APP_VERSION}\n"
+        f"Service: {active}\n"
+        f"API: {api}\n"
+        f"Watchdog: {watchdog}\n"
+        f"Git: {admin_git_state()}\n"
+        f"DB: {db_size / 1024:.1f} KB\n"
+        f"RAM available: {mem_available}\n"
+        f"Disk free: {disk.free / (1024**3):.1f} GB\n"
+        f"Last deploy: {deploy_line}"
+    )
+
+
+async def notify_admin_error(title: str, detail: str) -> None:
+    fingerprint = hashlib.sha1(f"{title}|{detail[:500]}".encode("utf-8", "ignore")).hexdigest()
+    now = time.time()
+    if now - ADMIN_ERROR_COOLDOWN.get(fingerprint, 0) < 300:
+        return
+    ADMIN_ERROR_COOLDOWN[fingerprint] = now
+    try:
+        await bot.send_message(
+            ADMIN_TELEGRAM_ID,
+            admin_trim(f"⚠️ SVGTracker\n{title}\n\n{detail}", 3800),
+        )
+    except Exception:
+        logger.exception("Failed to notify admin about %s", title)
+
+
+def admin_launch_transient(args: list[str], prefix: str) -> str:
+    if not ADMIN_DEPLOY_HELPER.is_file():
+        raise RuntimeError("deploy/admin_deploy.py not found")
+    unit = f"svgtracker-{prefix}-{int(time.time())}"
+    python_bin = Path(__file__).parent / "venv" / "bin" / "python"
+    python_cmd = str(python_bin) if python_bin.is_file() else (shutil.which("python3") or "python3")
+    command = [
+        "systemd-run", "--unit", unit, "--collect", "--property=Type=oneshot",
+        python_cmd, str(ADMIN_DEPLOY_HELPER), *args,
+    ]
+    proc = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "systemd-run failed").strip())
+    return unit
 
 
 def shortcut_user(authorization: str | None):
@@ -134,9 +334,22 @@ def authenticated_user(x_telegram_init_data: str | None):
     return user, user_id
 
 
+@app.middleware("http")
+async def monitor_http_errors(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        logger.exception("Unhandled API error %s %s", request.method, request.url.path)
+        await notify_admin_error(
+            "Ошибка API",
+            f"{request.method} {request.url.path}\n{type(exc).__name__}: {exc}",
+        )
+        raise
+
+
 @app.get("/api/test")
 def api_test():
-    return {"status": "ok", "service": "SVGTracker API"}
+    return {"status": "ok", "service": "SVGTracker API", "version": APP_VERSION}
 
 
 @app.post("/api/user")
@@ -211,17 +424,23 @@ def api_shortcut_finance_options(authorization: str | None = Header(default=None
     user = shortcut_user(authorization)
     state = finance_state_for_shortcut(user["user_id"])
     categories = []
-    for item in state.get("categories", []):
+    for index, item in enumerate(state.get("categories", [])):
         if not isinstance(item, dict):
             continue
         category_id = str(item.get("id") or "").strip()
         name = str(item.get("name") or "").strip()
         if category_id and name:
+            try:
+                order = int(item.get("order", index))
+            except (TypeError, ValueError):
+                order = index
             categories.append({
                 "id": category_id,
                 "name": name[:32],
                 "color": str(item.get("color") or "#8e8e93"),
+                "order": order,
             })
+    categories.sort(key=lambda item: (item.get("order", 0), item.get("name", "").casefold()))
     return {
         "status": "ok",
         "currency": "RUB",
@@ -404,6 +623,14 @@ def api_friend_reject(request_id: int, x_telegram_init_data: str | None = Header
     return {"status": "ok"}
 
 
+@app.delete("/api/friends/requests/{request_id}")
+def api_friend_cancel(request_id: int, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(x_telegram_init_data)
+    if not cancel_friend_request(user_id, request_id):
+        raise HTTPException(status_code=404, detail="Исходящий запрос не найден")
+    return {"status": "ok"}
+
+
 @app.delete("/api/friends/{friend_user_id}")
 def api_friend_remove(friend_user_id: int, x_telegram_init_data: str | None = Header(default=None)):
     _, user_id = authenticated_user(x_telegram_init_data)
@@ -536,6 +763,315 @@ async def shortcut_revoke(message: Message):
     )
 
 
+@dp.message(Command("admin"))
+async def admin_panel(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer(
+        "SVGTracker Admin\n\n"
+        "Production управляется отсюда. ZIP-deploy делает backup, проверяет файлы, "
+        "перезапускает сервис и автоматически откатывается, если API не поднимается.\n\n"
+        "Команды: /deploy /deploy_status /server_status /backup /backups /rollback /logs /errors /restart",
+        reply_markup=admin_keyboard(),
+    )
+
+
+@dp.message(Command("deploy"))
+async def admin_deploy_help(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer(
+        "Пришли ZIP проекта прямо в этот чат. Я покажу имя/размер и попрошу подтверждение.\n\n"
+        "Production config.py, SQLite, WAL/SHM, .env, venv, .git, uploads и логи ZIP-deploy не перезаписывает."
+    )
+
+
+@dp.message(Command("deploy_status"))
+async def admin_deploy_status(message: Message):
+    if not is_admin_message(message):
+        return
+    status = admin_latest_status()
+    if not status:
+        await message.answer("Deploy-истории пока нет.")
+        return
+    await message.answer(admin_trim(
+        f"Deploy status: {status.get('status', '—')}\n"
+        f"Обновлено: {status.get('updated_at', '—')}\n\n"
+        f"{status.get('message', '')}"
+    ))
+
+
+@dp.message(Command("server_status", "health"))
+async def admin_server_status(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer(admin_server_status_text())
+
+
+async def create_manual_backup_for_admin() -> str:
+    admin_state_dirs()
+    proc = await asyncio.to_thread(
+        subprocess.run,
+        [sys.executable, str(ADMIN_DEPLOY_HELPER), "backup"],
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "backup failed").strip())
+    payload = json.loads((proc.stdout or "{}").strip().splitlines()[-1])
+    return payload.get("name") or Path(payload.get("path") or "").name
+
+
+@dp.message(Command("backup"))
+async def admin_backup(message: Message):
+    if not is_admin_message(message):
+        return
+    try:
+        name = await create_manual_backup_for_admin()
+        await message.answer(f"Backup создан: {name}\nКод + безопасный snapshot SQLite сохранены на VPS.")
+    except Exception as exc:
+        logger.exception("Admin backup failed")
+        await message.answer(admin_trim(f"Backup error: {exc}"))
+
+
+@dp.message(Command("backups"))
+async def admin_backups(message: Message):
+    if not is_admin_message(message):
+        return
+    backups = admin_list_backups()
+    if not backups:
+        await message.answer("Backups пока нет.")
+        return
+    lines = ["Последние backups:"]
+    for index, path in enumerate(backups, 1):
+        stamp = datetime.fromtimestamp(path.stat().st_mtime).strftime("%d.%m %H:%M")
+        lines.append(f"{index}. {path.name} · {stamp} · {path.stat().st_size / 1024:.0f} KB")
+    lines.append("\n/rollback откатывает код к последнему backup. БД при rollback не откатывается, чтобы не потерять новые данные.")
+    await message.answer("\n".join(lines))
+
+
+@dp.message(Command("rollback"))
+async def admin_rollback(message: Message):
+    if not is_admin_message(message):
+        return
+    backups = admin_list_backups(1)
+    if not backups:
+        await message.answer("Нет backup для rollback.")
+        return
+    backup = backups[0]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Откатить", callback_data="admin:rollback_confirm")],
+        [InlineKeyboardButton(text="Отмена", callback_data="admin:cancel")],
+    ])
+    await message.answer(
+        f"Откатить production к {backup.name}?\n\nБаза данных останется текущей.",
+        reply_markup=keyboard,
+    )
+
+
+@dp.message(Command("logs"))
+async def admin_logs(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer("Последние логи:\n\n" + admin_journal(45))
+
+
+@dp.message(Command("errors"))
+async def admin_errors(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer("Ошибки/предупреждения:\n\n" + admin_journal(180, errors_only=True))
+
+
+@dp.message(Command("restart"))
+async def admin_restart(message: Message):
+    if not is_admin_message(message):
+        return
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Перезапустить", callback_data="admin:restart_confirm")],
+        [InlineKeyboardButton(text="Отмена", callback_data="admin:cancel")],
+    ])
+    await message.answer("Перезапустить SVGTracker? systemd поднимет API и бота автоматически.", reply_markup=keyboard)
+
+
+@dp.message(F.document)
+async def admin_zip_upload(message: Message):
+    if not is_admin_message(message) or not message.document:
+        return
+    name = str(message.document.file_name or "update.zip")
+    if not name.lower().endswith(".zip"):
+        return
+    size = int(message.document.file_size or 0)
+    if size <= 0 or size > ADMIN_MAX_ZIP_BYTES:
+        await message.answer("ZIP слишком большой. Лимит admin-deploy: 20 MB.")
+        return
+    admin_state_dirs()
+    token = uuid.uuid4().hex[:10]
+    target = ADMIN_STATE_DIR / "incoming" / f"{int(time.time())}-{token}.zip"
+    try:
+        await bot.download(message.document, destination=target)
+    except Exception as exc:
+        logger.exception("Failed to download admin deploy ZIP")
+        await message.answer(f"Не удалось скачать ZIP: {exc}")
+        return
+    ADMIN_PENDING_DEPLOYS[token] = {
+        "path": str(target), "name": name, "size": size, "created_at": time.time()
+    }
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Проверить и обновить", callback_data=f"admin:deploy_confirm:{token}")],
+        [InlineKeyboardButton(text="Отмена", callback_data=f"admin:deploy_cancel:{token}")],
+    ])
+    await message.answer(
+        f"ZIP получен: {name}\nРазмер: {size / 1024:.0f} KB\n\n"
+        "Перед заменой будет backup. config.py и production-БД защищены. При провале health-check сработает rollback.",
+        reply_markup=keyboard,
+    )
+
+
+@dp.callback_query(F.data.startswith("admin:"))
+async def admin_callback(callback: CallbackQuery):
+    if not callback.from_user or not is_admin_telegram_id(callback.from_user.id) or not callback.data:
+        await callback.answer("Недоступно", show_alert=True)
+        return
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    if action == "cancel":
+        await callback.answer("Отменено")
+        if callback.message:
+            await callback.message.edit_text("Действие отменено.")
+        return
+    if action == "status":
+        await callback.answer()
+        if callback.message:
+            await callback.message.answer(admin_server_status_text())
+        return
+    if action == "errors":
+        await callback.answer()
+        if callback.message:
+            await callback.message.answer("Ошибки/предупреждения:\n\n" + admin_journal(180, errors_only=True))
+        return
+    if action == "logs":
+        await callback.answer()
+        if callback.message:
+            await callback.message.answer("Последние логи:\n\n" + admin_journal(45))
+        return
+    if action == "deploy":
+        await callback.answer()
+        if callback.message:
+            await callback.message.answer("Пришли ZIP проекта в этот чат. После загрузки появится подтверждение deploy.")
+        return
+    if action == "backup":
+        await callback.answer("Создаю backup…")
+        try:
+            name = await create_manual_backup_for_admin()
+            if callback.message:
+                await callback.message.answer(f"Backup создан: {name}")
+        except Exception as exc:
+            if callback.message:
+                await callback.message.answer(admin_trim(f"Backup error: {exc}"))
+        return
+    if action == "backups":
+        await callback.answer()
+        backups = admin_list_backups()
+        text = "Backups пока нет." if not backups else "Последние backups:\n" + "\n".join(
+            f"{i}. {path.name}" for i, path in enumerate(backups, 1)
+        )
+        if callback.message:
+            await callback.message.answer(text)
+        return
+    if action == "rollback":
+        await callback.answer()
+        backups = admin_list_backups(1)
+        if not backups:
+            if callback.message:
+                await callback.message.answer("Нет backup для rollback.")
+            return
+        backup = backups[0]
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Откатить", callback_data="admin:rollback_confirm")],
+            [InlineKeyboardButton(text="Отмена", callback_data="admin:cancel")],
+        ])
+        if callback.message:
+            await callback.message.answer(f"Rollback к {backup.name}? БД останется текущей.", reply_markup=keyboard)
+        return
+    if action == "rollback_confirm":
+        backups = admin_list_backups(1)
+        if not backups:
+            await callback.answer("Backup не найден", show_alert=True)
+            return
+        path = backups[0].resolve()
+        try:
+            unit = admin_launch_transient(["rollback", str(path), "--admin-chat", str(ADMIN_TELEGRAM_ID)], "rollback")
+            await callback.answer("Rollback запущен")
+            if callback.message:
+                await callback.message.edit_text(f"Rollback запущен ({unit}). Итог придёт отдельным сообщением.")
+        except Exception as exc:
+            await callback.answer("Ошибка запуска", show_alert=True)
+            if callback.message:
+                await callback.message.answer(admin_trim(str(exc)))
+        return
+    if action == "restart_confirm":
+        try:
+            unit = f"svgtracker-restart-{int(time.time())}"
+            proc = subprocess.run(
+                ["systemd-run", "--unit", unit, "--collect", "--on-active=2s", "systemctl", "restart", "svgtracker"],
+                capture_output=True, text=True, timeout=8,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError((proc.stderr or proc.stdout).strip())
+            await callback.answer("Перезапуск запланирован")
+            if callback.message:
+                await callback.message.edit_text("Перезапуск запланирован. systemd автоматически поднимет сервис.")
+        except Exception as exc:
+            await callback.answer("Ошибка", show_alert=True)
+            if callback.message:
+                await callback.message.answer(admin_trim(str(exc)))
+        return
+    if action == "deploy_cancel" and len(parts) >= 3:
+        token = parts[2]
+        pending = ADMIN_PENDING_DEPLOYS.pop(token, None)
+        if pending:
+            try:
+                Path(pending["path"]).unlink(missing_ok=True)
+            except Exception:
+                pass
+        await callback.answer("Deploy отменён")
+        if callback.message:
+            await callback.message.edit_text("Deploy отменён.")
+        return
+    if action == "deploy_confirm" and len(parts) >= 3:
+        token = parts[2]
+        pending = ADMIN_PENDING_DEPLOYS.pop(token, None)
+        if not pending or time.time() - pending.get("created_at", 0) > 1800:
+            await callback.answer("ZIP устарел. Отправь его снова.", show_alert=True)
+            return
+        path = Path(pending["path"])
+        if not path.is_file():
+            await callback.answer("ZIP не найден", show_alert=True)
+            return
+        try:
+            unit = admin_launch_transient(["deploy", str(path), "--admin-chat", str(ADMIN_TELEGRAM_ID)], "deploy")
+            await callback.answer("Deploy запущен")
+            if callback.message:
+                await callback.message.edit_text(
+                    f"Deploy запущен ({unit}). Проверка, backup, restart и health-check выполняются автоматически. Итог придёт отдельным сообщением."
+                )
+        except Exception as exc:
+            await callback.answer("Ошибка запуска", show_alert=True)
+            if callback.message:
+                await callback.message.answer(admin_trim(str(exc)))
+        return
+    await callback.answer("Команда не распознана", show_alert=True)
+
+
+@dp.errors()
+async def telegram_error_handler(event: ErrorEvent):
+    logger.error("Unhandled Telegram update error", exc_info=(type(event.exception), event.exception, event.exception.__traceback__))
+    await notify_admin_error("Ошибка Telegram bot", f"{type(event.exception).__name__}: {event.exception}")
+    return True
+
+
 @dp.message(Command("resetdata", "resetdb"))
 async def reset_data_request(message: Message):
     if not message.from_user:
@@ -585,6 +1121,7 @@ async def reset_data_cancel(callback: CallbackQuery):
 async def main():
     init_db()
     logger.info("SVGTracker starting")
+    await setup_bot_commands()
 
     api_config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
     api_server = uvicorn.Server(api_config)
@@ -601,11 +1138,19 @@ async def main():
         error = task.exception()
         if error:
             logger.error("SVGTracker component %s stopped with an error", task.get_name(), exc_info=(type(error), error, error.__traceback__))
+            await notify_admin_error(
+                "Компонент SVGTracker остановился",
+                f"{task.get_name()}\n{type(error).__name__}: {error}\nSystemd попытается перезапустить сервис.",
+            )
             for pending_task in pending:
                 pending_task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
             raise error
         logger.warning("SVGTracker component %s stopped; terminating process so systemd can restart it", task.get_name())
+        await notify_admin_error(
+            "Компонент SVGTracker неожиданно завершился",
+            f"{task.get_name()} завершился без исключения. Процесс остановится, systemd поднимет его заново.",
+        )
 
     for pending_task in pending:
         pending_task.cancel()

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>SVGTracker</title>
-<link rel="stylesheet" href="style.css?v=19">
+<link rel="stylesheet" href="style.css?v=20">
 </head>
 <body>
 <div class="ambient-layer">
@@ -183,6 +183,7 @@
   <button type="button" class="profile-drawer-backdrop" onclick="closeProfileDrawer()" aria-label="Закрыть профиль"></button>
   <aside class="profile-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="profile-drawer-title">
     <header class="profile-drawer-header">
+      <div id="profile-drawer-avatar" class="profile-drawer-avatar" aria-hidden="true">S</div>
       <div class="profile-drawer-copy">
         <span class="section-label">Профиль</span>
         <h2 id="profile-drawer-title">Пользователь</h2>
@@ -192,34 +193,44 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>
       </button>
     </header>
-    <div class="profile-action-list">
-      <button type="button" class="profile-action-row" onclick="openFriendsSheet()">
-        <span>Мои друзья</span>
-        <span class="profile-action-meta"><b id="profile-friends-count">0</b><span>›</span></span>
-      </button>
-      <button type="button" class="profile-action-row" onclick="openAddFriendSheet()">
-        <span>Добавить в друзья</span>
-        <span class="profile-action-meta">@username <span>›</span></span>
-      </button>
-      <button type="button" class="profile-action-row" onclick="openBlockedUsersSheet()">
-        <span>Заблокированные</span>
-        <span class="profile-action-meta"><b id="profile-blocked-count">0</b><span>›</span></span>
-      </button>
-      <label class="profile-action-row profile-toggle-row">
-        <span class="profile-action-copy"><strong>Запросы в друзья</strong><small>Сообщать о новых запросах</small></span>
-        <span class="ios-switch">
-          <input id="profile-friend-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked, 'friends')">
-          <span class="ios-switch-track" aria-hidden="true"></span>
-        </span>
-      </label>
-      <label class="profile-action-row profile-toggle-row">
-        <span class="profile-action-copy"><strong>Уведомления от бота</strong><small>Напоминания и полезные сообщения SVGTracker</small></span>
-        <span class="ios-switch">
-          <input id="profile-bot-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked, 'bot')">
-          <span class="ios-switch-track" aria-hidden="true"></span>
-        </span>
-      </label>
-    </div>
+
+    <section class="profile-group" aria-label="Люди">
+      <p class="profile-group-title">Люди</p>
+      <div class="profile-action-list">
+        <button type="button" class="profile-action-row" onclick="openFriendsSheet()">
+          <span class="profile-action-copy"><strong>Мои друзья</strong><small id="profile-friends-summary">Нет новых запросов</small></span>
+          <span class="profile-action-meta"><b id="profile-friends-count">0</b><span>›</span></span>
+        </button>
+        <button type="button" class="profile-action-row" onclick="openAddFriendSheet()">
+          <span class="profile-action-copy"><strong>Добавить в друзья</strong><small>По Telegram username</small></span>
+          <span class="profile-action-meta"><span>›</span></span>
+        </button>
+        <button type="button" class="profile-action-row" onclick="openBlockedUsersSheet()">
+          <span class="profile-action-copy"><strong>Заблокированные</strong><small>Управление ограничениями</small></span>
+          <span class="profile-action-meta"><b id="profile-blocked-count">0</b><span>›</span></span>
+        </button>
+      </div>
+    </section>
+
+    <section class="profile-group" aria-label="Уведомления">
+      <p class="profile-group-title">Уведомления</p>
+      <div class="profile-action-list">
+        <label class="profile-action-row profile-toggle-row">
+          <span class="profile-action-copy"><strong>Запросы в друзья</strong><small>Сообщать о новых запросах</small></span>
+          <span class="ios-switch">
+            <input id="profile-friend-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked, 'friends')">
+            <span class="ios-switch-track" aria-hidden="true"></span>
+          </span>
+        </label>
+        <label class="profile-action-row profile-toggle-row">
+          <span class="profile-action-copy"><strong>Уведомления от бота</strong><small>Напоминания и сообщения SVGTracker</small></span>
+          <span class="ios-switch">
+            <input id="profile-bot-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked, 'bot')">
+            <span class="ios-switch-track" aria-hidden="true"></span>
+          </span>
+        </label>
+      </div>
+    </section>
     <p class="profile-drawer-status" id="profile-drawer-status">Настройки синхронизируются с аккаунтом Telegram</p>
   </aside>
 </div>
@@ -713,6 +724,7 @@
   <div class="sheet-panel finance-list-panel" data-sheet-panel>
     <div class="sheet-handle"></div>
     <div class="sheet-heading-row"><div><span class="section-label">Финансы</span><h3>Категории</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
+    <p class="finance-category-order-hint">Порядок здесь — тот же порядок категорий в Action Button.</p>
     <div id="finance-category-list" class="finance-category-list"></div>
     <button type="button" class="sheet-primary-action" onclick="openFinanceCategoryEditor()">Новая категория</button>
   </div>
@@ -734,6 +746,6 @@
 </main>
 
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="script.js?v=19"></script>
+<script src="script.js?v=20"></script>
 </body>
 </html>

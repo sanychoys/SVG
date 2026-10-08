@@ -543,6 +543,21 @@ def create_friend_request(user_id, username):
         }
 
 
+
+def cancel_friend_request(user_id, request_id):
+    """Cancel one pending outgoing friend request owned by the sender."""
+    now = utc_now()
+    with connect() as db:
+        cur = db.execute(
+            """
+            UPDATE friend_requests
+            SET status='cancelled', updated_at=?
+            WHERE id=? AND sender_user_id=? AND status='pending'
+            """,
+            (now, request_id, user_id),
+        )
+        return cur.rowcount > 0
+
 def resolve_friend_request(user_id, request_id, accept):
     now = utc_now()
     with connect() as db:

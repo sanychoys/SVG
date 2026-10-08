@@ -1,0 +1,10 @@
+[Unit]
+Description=SVGTracker external health watchdog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/var/www/SVG
+ExecStart=/var/www/SVG/venv/bin/python /var/www/SVG/deploy/admin_watchdog.py

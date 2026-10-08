@@ -2998,6 +2998,10 @@ async function loadProfileData(force = false) {
     };
     profileLoaded = true;
     renderProfileState();
+    const friendsSheet=document.getElementById('friends-sheet');
+    const blockedSheet=document.getElementById('blocked-users-sheet');
+    if(friendsSheet && !friendsSheet.hidden) renderFriendsSheet();
+    if(blockedSheet && !blockedSheet.hidden) renderBlockedUsersSheet();
     return profileState;
   } catch (error) {
     const status = document.getElementById('profile-drawer-status');
@@ -3135,8 +3139,22 @@ function renderFriendsSheet() {
   outgoingList.replaceChildren(...outgoing.map(person => {
     const row = document.createElement('div'); row.className = 'social-person-row';
     row.append(createSocialAvatar(person), createSocialPersonCopy(person, 'Запрос отправлен'));
+    const cancel=document.createElement('button');cancel.type='button';cancel.className='social-small-action is-muted';cancel.textContent='Отменить';
+    cancel.addEventListener('click',()=>cancelOutgoingFriendRequest(person.request_id));
+    row.appendChild(cancel);
     return row;
   }));
+}
+
+async function cancelOutgoingFriendRequest(requestId){
+  if(!tg?.initData)return;
+  try{
+    const response=await fetch(`/api/friends/requests/${encodeURIComponent(requestId)}`,{method:'DELETE',headers:telegramApiHeaders(false)});
+    const payload=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(getApiErrorMessage(payload,'Не удалось отменить запрос'));
+    showToast('Запрос отменён');
+    await loadProfileData(true);
+  }catch(error){showToast(error?.message||'Не удалось отменить запрос');}
 }
 
 function openFriendsSheet() {
@@ -3322,10 +3340,12 @@ function normalizeFinanceDataV15(raw) {
     const key = financeCategoryNameKeyV15(name);
     const existing = byName.get(key);
     if (existing) return existing;
+    const rawOrder = Number(candidate?.order);
     const category = {
       id: String(candidate?.id || `cat_${hashGoalIdentity(name)}`),
       name: name.slice(0,32),
       color: /^#[0-9a-f]{6}$/i.test(String(candidate?.color || '')) ? candidate.color : FINANCE_COLORS_V15[fallbackIndex % FINANCE_COLORS_V15.length],
+      order: Number.isFinite(rawOrder) ? rawOrder : fallbackIndex,
       updatedAt: candidate?.updatedAt || source?.sync?.updatedAt || '1970-01-01T00:00:00.000Z'
     };
     categories.push(category); byName.set(key, category); return category;
@@ -3387,6 +3407,9 @@ function normalizeFinanceDataV15(raw) {
       ? { income: financeSafeAmountV15(value.income), updatedAt: value.updatedAt || now }
       : { income: financeSafeAmountV15(value), updatedAt: now };
   });
+
+  categories.sort((a,b) => (Number(a.order)||0) - (Number(b.order)||0) || String(a.name||'').localeCompare(String(b.name||''),'ru'));
+  categories.forEach((category,index) => { category.order = index; });
 
   const tombstones = source?.sync?.tombstones && typeof source.sync.tombstones === 'object' ? source.sync.tombstones : {};
   return {
@@ -3926,11 +3949,41 @@ function closeFinanceDebt(){const id=String(document.getElementById('finance-deb
 function reopenFinanceDebt(){const id=String(document.getElementById('finance-debt-edit-id')?.value||'');const item=financeData.debts.find(x=>String(x.id)===id);if(!item)return;requestConfirm('Вернуть долг в открытые?',()=>{item.status='open';item.updatedAt=financeNowIsoV15();closeSheets();saveFinance();showToast('Долг снова открыт');});}
 function deleteFinanceDebt(){const id=String(document.getElementById('finance-debt-edit-id')?.value||'');if(!id)return;requestConfirm('Удалить долг?',()=>{financeData.debts=financeData.debts.filter(x=>String(x.id)!==id);financeMarkDeletedV15('debts',id);closeSheets();saveFinance();showToast('Долг удалён');});}
 
-function renderFinanceCategoryListV15(){const root=document.getElementById('finance-category-list');if(!root)return;const rows=[...financeData.categories].map(cat=>{const used=financeData.expenses.filter(x=>x.categoryId===cat.id).length+financeData.mandatoryExpenses.filter(x=>x.categoryId===cat.id).length;return{cat,used};}).sort((a,b)=>b.used-a.used||a.cat.name.localeCompare(b.cat.name,'ru'));root.replaceChildren(...rows.map(({cat,used})=>createFinanceListRowV15({title:cat.name,meta:used?`${used} ${financePluralV15(used,'операция','операции','операций')}`:'Пока без операций',amount:'',color:cat.color,onClick:()=>openFinanceCategoryEditor(cat.id)})));}
+function financeMoveCategoryV20(categoryId, delta) {
+  const categories=[...financeData.categories].sort((a,b)=>(Number(a.order)||0)-(Number(b.order)||0));
+  const index=categories.findIndex(cat=>String(cat.id)===String(categoryId));
+  const target=index+Number(delta||0);
+  if(index<0||target<0||target>=categories.length)return;
+  [categories[index],categories[target]]=[categories[target],categories[index]];
+  const now=financeNowIsoV15();
+  categories.forEach((cat,order)=>{cat.order=order;cat.updatedAt=now;});
+  financeData.categories=categories;
+  saveFinance();
+  renderFinanceCategoryListV15();
+  showToast('Порядок категорий обновлён');
+}
+function renderFinanceCategoryListV15(){
+  const root=document.getElementById('finance-category-list');if(!root)return;
+  const categories=[...financeData.categories].sort((a,b)=>(Number(a.order)||0)-(Number(b.order)||0));
+  root.replaceChildren(...categories.map((cat,index)=>{
+    const used=financeData.expenses.filter(x=>String(x.categoryId)===String(cat.id)).length+financeData.mandatoryExpenses.filter(x=>String(x.categoryId)===String(cat.id)).length;
+    const row=document.createElement('div');row.className='finance-category-order-row';
+    const edit=document.createElement('button');edit.type='button';edit.className='finance-category-order-main';edit.addEventListener('click',()=>openFinanceCategoryEditor(cat.id));
+    const dot=document.createElement('i');dot.className='finance-category-order-dot';dot.style.background=cat.color;
+    const copy=document.createElement('span');copy.className='finance-category-order-copy';
+    const title=document.createElement('strong');title.textContent=cat.name;
+    const meta=document.createElement('small');meta.textContent=used?`${used} ${financePluralV15(used,'операция','операции','операций')}`:'Пока без операций';
+    copy.append(title,meta);edit.append(dot,copy);
+    const controls=document.createElement('span');controls.className='finance-category-order-controls';
+    const up=document.createElement('button');up.type='button';up.className='finance-category-order-button';up.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 14l6-6 6 6"/></svg>';up.disabled=index===0;up.setAttribute('aria-label',`Переместить ${cat.name} выше`);up.addEventListener('click',()=>financeMoveCategoryV20(cat.id,-1));
+    const down=document.createElement('button');down.type='button';down.className='finance-category-order-button';down.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 10l6 6 6-6"/></svg>';down.disabled=index===categories.length-1;down.setAttribute('aria-label',`Переместить ${cat.name} ниже`);down.addEventListener('click',()=>financeMoveCategoryV20(cat.id,1));
+    controls.append(up,down);row.append(edit,controls);return row;
+  }));
+}
 function openFinanceCategoriesSheet(){closeSheets();renderFinanceCategoryListV15();const s=document.getElementById('finance-categories-sheet');if(s)s.hidden=false;}
 function renderFinanceCategoryColorPickerV15(){const root=document.getElementById('finance-category-color-picker');if(!root)return;root.replaceChildren(...FINANCE_COLORS_V15.map(color=>{const b=document.createElement('button');b.type='button';b.className='finance-color-choice';b.style.setProperty('--finance-choice-color',color);b.classList.toggle('is-selected',color.toLowerCase()===financeSelectedCategoryColorV15.toLowerCase());b.setAttribute('aria-label',`Выбрать цвет ${color}`);b.addEventListener('click',()=>{financeSelectedCategoryColorV15=color;renderFinanceCategoryColorPickerV15();});return b;}));}
 function openFinanceCategoryEditor(categoryId=null){closeSheets();const cat=categoryId?financeData.categories.find(x=>String(x.id)===String(categoryId)):null;document.getElementById('finance-category-edit-id').value=cat?.id||'';document.getElementById('finance-category-name').value=cat?.name||'';financeSelectedCategoryColorV15=cat?.color||FINANCE_COLORS_V15[financeData.categories.length%FINANCE_COLORS_V15.length];document.getElementById('finance-category-editor-title').textContent=cat?'Категория':'Новая категория';const used=cat?(financeData.expenses.filter(x=>String(x.categoryId)===String(cat.id)).length+financeData.mandatoryExpenses.filter(x=>String(x.categoryId)===String(cat.id)).length):0;const transferField=document.getElementById('finance-category-transfer-field');const transferSelect=document.getElementById('finance-category-transfer-target');if(transferField)transferField.hidden=!cat||!used;if(transferSelect){const targets=financeData.categories.filter(x=>!cat||String(x.id)!==String(cat.id));transferSelect.replaceChildren(...targets.map(target=>{const option=document.createElement('option');option.value=target.id;option.textContent=target.name;return option;}));}const del=document.getElementById('finance-category-delete-button');if(del){del.hidden=!cat;del.textContent=used?'Перенести записи и удалить':'Удалить категорию';}renderFinanceCategoryColorPickerV15();const sheet=document.getElementById('finance-category-edit-sheet');if(sheet)sheet.hidden=false;setTimeout(()=>document.getElementById('finance-category-name')?.focus(),100);}
-function saveFinanceCategory(){const id=String(document.getElementById('finance-category-edit-id')?.value||'');const name=String(document.getElementById('finance-category-name')?.value||'').trim();if(!name){showToast('Укажи название');return;}const duplicate=financeData.categories.find(cat=>financeCategoryNameKeyV15(cat.name)===financeCategoryNameKeyV15(name)&&String(cat.id)!==id);if(duplicate){showToast('Такая категория уже есть');return;}const existing=id?financeData.categories.find(x=>String(x.id)===id):null;const item={id:existing?.id||financeIdV15('cat'),name:name.slice(0,32),color:financeSelectedCategoryColorV15,updatedAt:financeNowIsoV15()};if(existing)financeData.categories=financeData.categories.map(x=>String(x.id)===id?item:x);else financeData.categories.push(item);closeSheets();saveFinance();showToast('Категория сохранена');}
+function saveFinanceCategory(){const id=String(document.getElementById('finance-category-edit-id')?.value||'');const name=String(document.getElementById('finance-category-name')?.value||'').trim();if(!name){showToast('Укажи название');return;}const duplicate=financeData.categories.find(cat=>financeCategoryNameKeyV15(cat.name)===financeCategoryNameKeyV15(name)&&String(cat.id)!==id);if(duplicate){showToast('Такая категория уже есть');return;}const existing=id?financeData.categories.find(x=>String(x.id)===id):null;const item={id:existing?.id||financeIdV15('cat'),name:name.slice(0,32),color:financeSelectedCategoryColorV15,order:existing?.order??financeData.categories.length,updatedAt:financeNowIsoV15()};if(existing)financeData.categories=financeData.categories.map(x=>String(x.id)===id?item:x);else financeData.categories.push(item);closeSheets();saveFinance();showToast('Категория сохранена');}
 function deleteFinanceCategory(){const id=String(document.getElementById('finance-category-edit-id')?.value||'');if(!id)return;if(financeData.categories.length<=1){showToast('Нужна хотя бы одна категория');return;}const usedExpenses=financeData.expenses.filter(x=>String(x.categoryId)===id);const usedMandatory=financeData.mandatoryExpenses.filter(x=>String(x.categoryId)===id);const used=usedExpenses.length+usedMandatory.length;const targetId=String(document.getElementById('finance-category-transfer-target')?.value||'');if(used&&!targetId){showToast('Выбери категорию для переноса');return;}const message=used?`Перенести ${used} ${financePluralV15(used,'запись','записи','записей')} и удалить категорию?`:'Удалить категорию?';requestConfirm(message,()=>{const now=financeNowIsoV15();if(used){financeData.expenses.forEach(item=>{if(String(item.categoryId)===id){item.categoryId=targetId;item.updatedAt=now;}});financeData.mandatoryExpenses.forEach(item=>{if(String(item.categoryId)===id){item.categoryId=targetId;item.updatedAt=now;}});}financeData.categories=financeData.categories.filter(x=>String(x.id)!==id);financeMarkDeletedV15('categories',id);closeSheets();saveFinance();showToast(used?'Записи перенесены, категория удалена':'Категория удалена');});}
 
 /* Dashboard finance contribution is based on budget discipline, not the
@@ -3959,20 +4012,29 @@ function renderHomeDomainCards(now = new Date()) {
 function renderProfileState() {
   const count=document.getElementById('profile-friends-count');
   const blockedCount=document.getElementById('profile-blocked-count');
+  const friendSummary=document.getElementById('profile-friends-summary');
   const friendToggle=document.getElementById('profile-friend-notifications-toggle');
   const botToggle=document.getElementById('profile-bot-notifications-toggle');
   const status=document.getElementById('profile-drawer-status');
   const username=document.getElementById('profile-drawer-username');
   const title=document.getElementById('profile-drawer-title');
-  if(count)count.textContent=String(profileState.friends?.length||0);
+  const avatar=document.getElementById('profile-drawer-avatar');
+  const friendsCount=profileState.friends?.length||0;
+  const incoming=profileState.incoming?.length||0;
+  if(count)count.textContent=String(friendsCount);
   if(blockedCount)blockedCount.textContent=String(profileState.blocked?.length||0);
+  if(friendSummary)friendSummary.textContent=incoming?`${incoming} ${incoming===1?'новый запрос':'новых запроса'}`:(friendsCount?`${friendsCount} ${friendsCount===1?'друг':'друзей'}`:'Друзей пока нет');
   if(friendToggle){friendToggle.checked=profileState.friend_request_notifications_enabled!==false;friendToggle.disabled=!tg?.initData;}
   if(botToggle){botToggle.checked=profileState.bot_notifications_enabled!==false;botToggle.disabled=!tg?.initData;}
   const user=window.SVG_TELEGRAM_USER;
   if(title)title.textContent=user?profileDisplayName(user):'SVGTracker';
   if(username){const hasUsername=Boolean(user?.username);username.textContent=hasUsername?`@${user.username}`:'Username не указан';username.disabled=!hasUsername;username.dataset.username=hasUsername?user.username:'';}
-  if(status){const incoming=profileState.incoming?.length||0;status.textContent=!tg?.initData?'Социальные функции доступны внутри Telegram':incoming?`${incoming} ${incoming===1?'новый запрос в друзья':'новых запроса в друзья'}`:'Настройки синхронизированы с Telegram';}
-  renderFriendsSheet(); renderBlockedUsersSheet();
+  if(avatar){
+    const letter=String(user?.first_name||user?.username||'S').trim().charAt(0).toUpperCase()||'S';
+    avatar.replaceChildren();avatar.textContent=letter;
+    if(user?.photo_url){const image=document.createElement('img');image.src=user.photo_url;image.alt='';image.onerror=()=>{image.remove();avatar.textContent=letter;};avatar.replaceChildren(image);}
+  }
+  if(status)status.textContent=!tg?.initData?'Социальные функции доступны внутри Telegram':incoming?`${incoming} ${incoming===1?'запрос ждёт ответа':'запроса ждут ответа'}`:'Профиль синхронизирован с Telegram';
 }
 
 async function copyTextV15(text) {

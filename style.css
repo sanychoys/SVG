@@ -5081,3 +5081,97 @@ body.profile-drawer-open{overflow:hidden}
 }
 .sheet-panel .finance-color-choice.is-selected{background:rgba(255,255,255,.06)}
 @media(max-width:350px){.sheet-panel .finance-color-choice{height:43px;min-height:43px}}
+
+/* === V20 profile + category ordering =================================== */
+/* Apple-like grouped settings: compact floating sheet, clear hierarchy. */
+.profile-drawer-panel{
+  top:max(68px,env(safe-area-inset-top));
+  right:12px;
+  bottom:14px;
+  width:min(356px,calc(100vw - 24px));
+  padding:16px;
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:28px;
+  background:rgba(18,20,24,.94);
+  box-shadow:0 24px 70px rgba(0,0,0,.52);
+  backdrop-filter:blur(26px) saturate(135%);
+  -webkit-backdrop-filter:blur(26px) saturate(135%);
+  transform:translateX(calc(100% + 26px));
+  overflow-y:auto;
+}
+.profile-drawer.is-open .profile-drawer-panel{transform:translateX(0)}
+.profile-drawer-backdrop{background:rgba(0,0,0,.34);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}
+.profile-drawer-header{
+  display:grid;
+  grid-template-columns:48px minmax(0,1fr) 34px;
+  align-items:center;
+  gap:11px;
+  margin:0 0 20px;
+}
+.profile-drawer-avatar{
+  display:grid;place-items:center;width:48px;height:48px;border-radius:50%;overflow:hidden;
+  background:linear-gradient(145deg,rgba(255,255,255,.14),rgba(255,255,255,.055));
+  border:1px solid rgba(255,255,255,.10);font-size:17px;font-weight:700;color:#fff;
+}
+.profile-drawer-avatar img{width:100%;height:100%;object-fit:cover}
+.profile-drawer-copy{min-width:0;padding:0}
+.profile-drawer-copy .section-label{font-size:9px;letter-spacing:.08em;color:rgba(255,255,255,.34)}
+.profile-drawer-header h2{margin:3px 0 2px;font-size:22px;line-height:1.08;letter-spacing:-.04em}
+.profile-username-copy{padding:2px 0;font-size:11.5px;color:rgba(255,255,255,.50)}
+.profile-username-copy:not(:disabled)::after{content:none!important}
+.profile-username-copy:not(:disabled):active{color:rgba(255,255,255,.85)}
+.profile-group{margin-top:16px}
+.profile-group:first-of-type{margin-top:0}
+.profile-group-title{margin:0 4px 7px;color:rgba(255,255,255,.34);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase}
+.profile-action-list{border:0;border-radius:18px;background:rgba(255,255,255,.045);box-shadow:inset 0 0 0 1px rgba(255,255,255,.055)}
+.profile-action-row{min-height:58px;padding:9px 13px;border-bottom-color:rgba(255,255,255,.065)}
+.profile-action-copy{gap:3px}
+.profile-action-copy strong{font-size:13.5px;font-weight:520}
+.profile-action-copy small{font-size:9.5px;color:rgba(255,255,255,.34)}
+.profile-action-meta{gap:7px;font-size:13px;color:rgba(255,255,255,.28)}
+.profile-action-meta b{min-width:20px;text-align:right;font-size:12px;color:rgba(255,255,255,.58);font-weight:550}
+.profile-close{width:32px;height:32px;flex-basis:32px;border:0;background:rgba(255,255,255,.075)}
+.profile-close:active{background:rgba(255,255,255,.13)}
+.profile-drawer-status{margin:13px 4px 2px;font-size:9.5px;color:rgba(255,255,255,.28)}
+.ios-switch{width:44px;height:26px;flex-basis:44px}
+.ios-switch-track::after{width:20px;height:20px}
+.ios-switch input:checked + .ios-switch-track::after{transform:translateX(18px)}
+
+/* Social sheets remain consistent after live refreshes. */
+.social-sheet-panel{padding-bottom:max(22px,env(safe-area-inset-bottom))}
+.social-person-row{min-height:62px;padding:10px 2px}
+.social-inline-actions{max-width:150px}
+
+/* Category order is the same order exposed to iPhone Action Button. */
+.finance-category-order-hint{
+  margin:-2px 1px 12px;color:rgba(255,255,255,.36);font-size:10px;line-height:1.42;
+}
+.finance-category-list{display:flex;flex-direction:column;gap:8px}
+.finance-category-order-row{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;
+  min-height:62px;padding:7px 8px 7px 12px;border:1px solid rgba(255,255,255,.055);
+  border-radius:16px;background:rgba(255,255,255,.025);
+}
+.finance-category-order-main{
+  appearance:none;-webkit-appearance:none;display:flex;align-items:center;gap:11px;min-width:0;width:100%;
+  margin:0;padding:4px 0;border:0;background:transparent;color:inherit;text-align:left;font:inherit;
+}
+.finance-category-order-main:active{opacity:.72}
+.finance-category-order-dot{width:11px;height:11px;flex:0 0 11px;border-radius:50%;box-shadow:0 0 0 3px rgba(255,255,255,.025)}
+.finance-category-order-copy{display:flex;min-width:0;flex-direction:column;gap:3px}
+.finance-category-order-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:600}
+.finance-category-order-copy small{font-size:9px;color:rgba(255,255,255,.34)}
+.finance-category-order-controls{display:flex;gap:5px}
+.sheet-panel .finance-category-order-button{
+  display:grid;place-items:center;width:32px;height:32px;min-height:32px;margin:0;padding:0;border:0;
+  border-radius:10px;background:rgba(255,255,255,.065);color:rgba(255,255,255,.72);
+}
+.sheet-panel .finance-category-order-button:disabled{opacity:.22}
+.sheet-panel .finance-category-order-button svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+@media(max-width:390px){
+  .profile-drawer-panel{right:10px;width:calc(100vw - 20px);bottom:10px;border-radius:26px}
+  .profile-drawer-header{grid-template-columns:44px minmax(0,1fr) 32px}
+  .profile-drawer-avatar{width:44px;height:44px}
+  .profile-drawer-header h2{font-size:21px}
+}
