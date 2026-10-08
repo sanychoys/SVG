@@ -44,6 +44,10 @@ MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
 MAX_EXPANDED_BYTES = 80 * 1024 * 1024
 MAX_FILES = 800
 HEALTH_URL = "http://127.0.0.1:8000/api/test"
+GITHUB_KEY_PATH = Path(os.environ.get("SVGTRACKER_GITHUB_KEY", "/root/.ssh/svgtracker_github"))
+GITHUB_STATE_FILE = STATE_DIR / "github.json"
+GIT_AUTHOR_NAME = os.environ.get("SVGTRACKER_GIT_AUTHOR_NAME", "SVGTracker Deploy Bot")
+GIT_AUTHOR_EMAIL = os.environ.get("SVGTRACKER_GIT_AUTHOR_EMAIL", "deploy@svgtracker.local")
 
 PROTECTED_NAMES = {
     "config.py", ".env", "svgtracker.db", "svgtracker.db-wal", "svgtracker.db-shm",
@@ -487,6 +491,262 @@ def telegram_notify(chat_id: str | int | None, text: str) -> None:
         pass
 
 
+
+def run_git(args: list[str], *, check: bool = True, timeout: int = 30, env: dict | None = None) -> subprocess.CompletedProcess:
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    proc = subprocess.run(
+        ["git", "-C", str(PROJECT_ROOT), *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=merged_env,
+    )
+    if check and proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or f"git {' '.join(args)} failed").strip())
+    return proc
+
+
+def current_branch() -> str:
+    branch = run_git(["branch", "--show-current"]).stdout.strip()
+    if not branch:
+        raise RuntimeError("Git repository is not on a named branch")
+    return branch
+
+
+def github_repo_slug() -> str:
+    remote = run_git(["remote", "get-url", "origin"]).stdout.strip()
+    patterns = (
+        r"^https://github\.com/([^/]+/[^/]+?)(?:\.git)?$",
+        r"^git@github\.com:([^/]+/[^/]+?)(?:\.git)?$",
+        r"^ssh://git@github\.com/([^/]+/[^/]+?)(?:\.git)?$",
+    )
+    for pattern in patterns:
+        match = re.match(pattern, remote)
+        if match:
+            return match.group(1)
+    raise RuntimeError(f"origin is not a supported GitHub remote: {remote}")
+
+
+def github_ssh_url() -> str:
+    return f"git@github.com:{github_repo_slug()}.git"
+
+
+def github_ssh_command() -> str:
+    return (
+        f"ssh -i {GITHUB_KEY_PATH} -o IdentitiesOnly=yes "
+        "-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
+    )
+
+
+def github_env() -> dict:
+    return {"GIT_SSH_COMMAND": github_ssh_command()}
+
+
+def configure_git_identity() -> None:
+    run_git(["config", "user.name", GIT_AUTHOR_NAME])
+    run_git(["config", "user.email", GIT_AUTHOR_EMAIL])
+
+
+
+def ensure_ssh_tools() -> None:
+    if shutil.which("ssh") and shutil.which("ssh-keygen"):
+        return
+    apt = shutil.which("apt-get")
+    if not apt:
+        raise RuntimeError("OpenSSH client is missing. Install openssh-client on the VPS.")
+    # /github_setup is admin-only and the bot runs as root on this VPS. Installing
+    # this single system dependency keeps the entire GitHub bootstrap phone-only.
+    update = subprocess.run([apt, "update"], capture_output=True, text=True, timeout=180)
+    if update.returncode != 0:
+        raise RuntimeError((update.stderr or update.stdout or "apt-get update failed").strip())
+    install = subprocess.run([apt, "install", "-y", "openssh-client"], capture_output=True, text=True, timeout=180)
+    if install.returncode != 0:
+        raise RuntimeError((install.stderr or install.stdout or "openssh-client install failed").strip())
+    if not shutil.which("ssh") or not shutil.which("ssh-keygen"):
+        raise RuntimeError("openssh-client was installed but ssh/ssh-keygen are still unavailable")
+
+
+def ensure_github_key() -> str:
+    GITHUB_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(GITHUB_KEY_PATH.parent, 0o700)
+    except OSError:
+        pass
+    pub = Path(str(GITHUB_KEY_PATH) + ".pub")
+    if not GITHUB_KEY_PATH.is_file() or not pub.is_file():
+        ensure_ssh_tools()
+        if GITHUB_KEY_PATH.exists():
+            GITHUB_KEY_PATH.unlink(missing_ok=True)
+        pub.unlink(missing_ok=True)
+        proc = subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-C", "SVGTracker Deploy", "-f", str(GITHUB_KEY_PATH), "-N", ""],
+            capture_output=True, text=True, timeout=20,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError((proc.stderr or proc.stdout or "ssh-keygen failed").strip())
+    os.chmod(GITHUB_KEY_PATH, 0o600)
+    try:
+        os.chmod(pub, 0o644)
+    except OSError:
+        pass
+    configure_git_identity()
+    return pub.read_text(encoding="utf-8").strip()
+
+
+def github_write_test(*, persist: bool = True) -> dict:
+    ensure_ssh_tools()
+    if not GITHUB_KEY_PATH.is_file():
+        raise RuntimeError("GitHub Deploy Key is not generated. Run /github_setup first.")
+    branch = current_branch()
+    ssh_url = github_ssh_url()
+    # A dry-run push verifies repository write permission without changing GitHub.
+    proc = run_git(
+        ["push", "--dry-run", ssh_url, f"HEAD:refs/heads/{branch}"],
+        check=False, timeout=35, env=github_env(),
+    )
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "GitHub write test failed").strip())
+    if persist:
+        run_git(["remote", "set-url", "origin", ssh_url])
+        run_git(["config", "core.sshCommand", github_ssh_command()])
+        configure_git_identity()
+        atomic_json(GITHUB_STATE_FILE, {
+            "configured": True,
+            "repository": github_repo_slug(),
+            "branch": branch,
+            "configured_at": utc_now(),
+            "key_path": str(GITHUB_KEY_PATH),
+        })
+    return {"repository": github_repo_slug(), "branch": branch, "remote": ssh_url}
+
+
+def github_configured() -> bool:
+    try:
+        state = json.loads(GITHUB_STATE_FILE.read_text(encoding="utf-8")) if GITHUB_STATE_FILE.is_file() else {}
+        return bool(state.get("configured") and GITHUB_KEY_PATH.is_file())
+    except Exception:
+        return False
+
+
+def github_status_payload() -> dict:
+    payload = {
+        "configured": github_configured(),
+        "key_exists": GITHUB_KEY_PATH.is_file(),
+        "repository": None,
+        "branch": None,
+        "head": None,
+        "origin_head": None,
+        "clean": False,
+        "remote": None,
+        "sync": "unknown",
+    }
+    try:
+        payload["repository"] = github_repo_slug()
+        payload["branch"] = current_branch()
+        payload["remote"] = run_git(["remote", "get-url", "origin"]).stdout.strip()
+        payload["head"] = run_git(["rev-parse", "--short", "HEAD"]).stdout.strip()
+        payload["clean"] = not bool(run_git(["status", "--porcelain", "--untracked-files=normal"]).stdout.strip())
+        fetch = run_git(["fetch", "origin"], check=False, timeout=35, env=github_env() if GITHUB_KEY_PATH.is_file() else None)
+        if fetch.returncode == 0:
+            ref = f"origin/{payload['branch']}"
+            payload["origin_head"] = run_git(["rev-parse", "--short", ref]).stdout.strip()
+            local_full = run_git(["rev-parse", "HEAD"]).stdout.strip()
+            remote_full = run_git(["rev-parse", ref]).stdout.strip()
+            if local_full == remote_full:
+                payload["sync"] = "synced"
+            else:
+                local_is_ancestor = run_git(["merge-base", "--is-ancestor", "HEAD", ref], check=False).returncode == 0
+                remote_is_ancestor = run_git(["merge-base", "--is-ancestor", ref, "HEAD"], check=False).returncode == 0
+                payload["sync"] = "behind" if local_is_ancestor else ("ahead" if remote_is_ancestor else "diverged")
+        else:
+            payload["sync"] = "fetch_failed"
+    except Exception as exc:
+        payload["error"] = str(exc)
+    return payload
+
+
+def github_preflight_for_deploy() -> dict:
+    if not github_configured():
+        raise RuntimeError("GitHub auto-sync is not configured. Run /github_setup, add the Deploy Key on GitHub, then /github_test.")
+    github_write_test(persist=True)
+    branch = current_branch()
+    run_git(["fetch", "origin"], timeout=35, env=github_env())
+    dirty = run_git(["status", "--porcelain", "--untracked-files=normal"]).stdout.strip()
+    if dirty:
+        raise RuntimeError("Git working tree has local changes. Run /github_status and synchronize before ZIP deploy.")
+    head = run_git(["rev-parse", "HEAD"]).stdout.strip()
+    origin_head = run_git(["rev-parse", f"origin/{branch}"]).stdout.strip()
+    if head != origin_head:
+        raise RuntimeError("VPS and GitHub are not synchronized. ZIP deploy was stopped to avoid overwriting another version.")
+    return {"branch": branch, "head": head, "origin_head": origin_head}
+
+
+def git_commit_and_push(relpaths: list[Path], deployment_id: str, branch: str) -> str:
+    project_paths = sorted({rel.as_posix() for rel in relpaths if (PROJECT_ROOT / rel).exists()})
+    if project_paths:
+        run_git(["add", "--", *project_paths])
+    # Deleted files are not part of ZIP deploy today, but -u captures tracked changes made by the release safely.
+    run_git(["add", "-u"])
+    staged = run_git(["diff", "--cached", "--name-only"]).stdout.strip()
+    if not staged:
+        return run_git(["rev-parse", "--short", "HEAD"]).stdout.strip()
+    message = f"Deploy {deployment_id} via SVGTracker bot"
+    run_git(["commit", "-m", message], timeout=40)
+    commit = run_git(["rev-parse", "--short", "HEAD"]).stdout.strip()
+    run_git(["push", "origin", f"HEAD:refs/heads/{branch}"], timeout=60, env=github_env())
+    return commit
+
+
+def git_reset_to(commit: str) -> None:
+    run_git(["reset", "--hard", commit], timeout=30)
+
+
+def safe_dirty_paths() -> list[str]:
+    names = set()
+    for args in (["diff", "--name-only"], ["diff", "--cached", "--name-only"], ["ls-files", "--others", "--exclude-standard"]):
+        out = run_git(list(args)).stdout
+        for raw in out.splitlines():
+            raw = raw.strip()
+            if raw:
+                names.add(raw)
+    safe = []
+    rejected = []
+    for raw in sorted(names):
+        try:
+            rel = safe_rel_path(raw)
+        except ValueError:
+            rel = None
+        if rel is None:
+            rejected.append(raw)
+        else:
+            safe.append(rel.as_posix())
+    if rejected:
+        raise RuntimeError("Unsafe/unmanaged local changes: " + ", ".join(rejected[:12]))
+    return safe
+
+
+def github_sync_current() -> dict:
+    if not github_configured():
+        raise RuntimeError("GitHub is not configured. Run /github_setup and /github_test first.")
+    github_write_test(persist=True)
+    branch = current_branch()
+    run_git(["fetch", "origin"], timeout=35, env=github_env())
+    local = run_git(["rev-parse", "HEAD"]).stdout.strip()
+    remote = run_git(["rev-parse", f"origin/{branch}"]).stdout.strip()
+    if local != remote:
+        remote_is_ancestor = run_git(["merge-base", "--is-ancestor", f"origin/{branch}", "HEAD"], check=False).returncode == 0
+        if not remote_is_ancestor:
+            raise RuntimeError("GitHub contains commits that are not in VPS. Automatic sync stopped; resolve/update from GitHub first.")
+    paths = safe_dirty_paths()
+    if paths:
+        run_git(["add", "--", *paths])
+        run_git(["commit", "-m", f"Sync production {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} via SVGTracker bot"], timeout=40)
+    commit = run_git(["rev-parse", "--short", "HEAD"]).stdout.strip()
+    run_git(["push", "origin", f"HEAD:refs/heads/{branch}"], timeout=60, env=github_env())
+    return {"commit": commit, "branch": branch, "files": paths, "repository": github_repo_slug()}
+
 def git_summary() -> str:
     try:
         head = subprocess.run(["git", "-C", str(PROJECT_ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -500,8 +760,13 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
     ensure_dirs()
     deployment_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     DEPLOY_LOCK.write_text(json.dumps({"deployment_id": deployment_id, "started_at": utc_now()}), encoding="utf-8")
-    write_status("validating", "Проверяю ZIP", deployment_id=deployment_id, archive=zip_path.name)
+    write_status("validating", "Проверяю ZIP и GitHub", deployment_id=deployment_id, archive=zip_path.name)
+    git_context = None
+    backup = None
+    changed = []
     try:
+        # GitHub is the source of truth. Refuse to deploy over an unsynchronized production tree.
+        git_context = github_preflight_for_deploy()
         with tempfile.TemporaryDirectory(prefix="svgdeploy-") as td:
             extracted = Path(td) / "release"
             extracted.mkdir()
@@ -509,7 +774,7 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
             notes = validate_release(extracted, relpaths)
             changed_targets = [rel for rel in relpaths if not (PROJECT_ROOT / rel).is_file() or (PROJECT_ROOT / rel).read_bytes() != (extracted / rel).read_bytes()]
             if not changed_targets:
-                message = "ZIP проверен: изменений относительно production нет."
+                message = "ZIP проверен: изменений относительно production нет. GitHub и VPS остаются без изменений."
                 write_status("no_changes", message, deployment_id=deployment_id, archive=zip_path.name)
                 telegram_notify(admin_chat, "SVGTracker deploy\n\n" + message)
                 return 0
@@ -520,11 +785,12 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
             )
             changed = apply_release(extracted, relpaths)
             service_restart()
-            ok, health_detail = wait_health()
+            ok, health_detail = wait_health(timeout=35.0)
             if not ok:
                 restore_backup(backup)
+                git_reset_to(git_context["head"])
                 service_restart()
-                rollback_ok, rollback_detail = wait_health()
+                rollback_ok, rollback_detail = wait_health(timeout=35.0)
                 message = (
                     "Обновление не прошло health-check и было автоматически откатано.\n"
                     f"Причина: {health_detail[:600]}\n"
@@ -536,13 +802,43 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
                 )
                 telegram_notify(admin_chat, "⚠️ SVGTracker deploy\n\n" + message)
                 return 2
+
+            write_status(
+                "publishing", "Production работает. Создаю commit и отправляю GitHub", deployment_id=deployment_id,
+                archive=zip_path.name, backup=backup.name, files=changed,
+            )
+            try:
+                commit = git_commit_and_push(changed_targets, deployment_id, git_context["branch"])
+            except Exception as push_exc:
+                # Keep GitHub and production atomic: if publish fails, restore the exact previous release.
+                try:
+                    restore_backup(backup)
+                    git_reset_to(git_context["head"])
+                    service_restart()
+                    rollback_ok, rollback_detail = wait_health(timeout=35.0)
+                except Exception as rollback_exc:
+                    rollback_ok, rollback_detail = False, str(rollback_exc)
+                message = (
+                    "Production прошёл health-check, но GitHub publish не удался. Обновление откатано, чтобы VPS и GitHub не разошлись.\n"
+                    f"GitHub: {str(push_exc)[:900]}\n"
+                    f"Rollback: {'OK' if rollback_ok else rollback_detail[:500]}"
+                )
+                write_status(
+                    "github_rollback", message, deployment_id=deployment_id, archive=zip_path.name,
+                    backup=backup.name, files=changed,
+                )
+                telegram_notify(admin_chat, "❌ SVGTracker deploy\n\n" + message)
+                return 3
+
             message = (
                 f"Обновление успешно. Изменено файлов: {len(changed)}.\n"
-                f"Backup: {backup.name}\nGit: {git_summary()}\nAPI: OK"
+                f"Backup: {backup.name}\n"
+                f"GitHub: {github_repo_slug()} · {git_context['branch']} · {commit}\n"
+                "VPS: OK\nAPI: OK\nGitHub push: OK"
             )
             write_status(
                 "success", message, deployment_id=deployment_id, archive=zip_path.name,
-                backup=backup.name, files=changed, health="ok", notes=notes,
+                backup=backup.name, files=changed, health="ok", notes=notes, github_commit=commit,
             )
             telegram_notify(admin_chat, "✅ SVGTracker deploy\n\n" + message)
             return 0
@@ -609,6 +905,10 @@ def main() -> int:
     rollback_parser = sub.add_parser("rollback")
     rollback_parser.add_argument("backup")
     rollback_parser.add_argument("--admin-chat")
+    sub.add_parser("github-setup")
+    sub.add_parser("github-test")
+    sub.add_parser("github-status")
+    sub.add_parser("github-sync")
     args = parser.parse_args()
     if args.command == "deploy":
         return deploy(Path(args.zip_path), args.admin_chat)
@@ -616,6 +916,20 @@ def main() -> int:
         return manual_backup(include_db=not args.no_db)
     if args.command == "rollback":
         return rollback(Path(args.backup), args.admin_chat)
+    if args.command == "github-setup":
+        key = ensure_github_key()
+        print(json.dumps({"public_key": key, "repository": github_repo_slug(), "branch": current_branch()}, ensure_ascii=False))
+        return 0
+    if args.command == "github-test":
+        payload = github_write_test(persist=True)
+        print(json.dumps({"ok": True, **payload}, ensure_ascii=False))
+        return 0
+    if args.command == "github-status":
+        print(json.dumps(github_status_payload(), ensure_ascii=False))
+        return 0
+    if args.command == "github-sync":
+        print(json.dumps({"ok": True, **github_sync_current()}, ensure_ascii=False))
+        return 0
     return 1
 
 

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""External SVGTracker watchdog. Runs outside svgtracker.service via systemd timer."""
+"""External SVGTracker watchdog. Runs outside svgtracker.service via systemd timer.
+
+The watchdog deliberately uses several health attempts before and after a restart.
+SVGTracker normally needs a few seconds to import dependencies, initialize SQLite,
+start Telegram polling and bind Uvicorn, so a single early probe must never create
+an outage alert.
+"""
 from __future__ import annotations
 import json
 import os
@@ -18,6 +24,10 @@ HEALTH_URL = "http://127.0.0.1:8000/api/test"
 STATE_FILE = STATE_DIR / "watchdog.json"
 DEPLOY_LOCK = STATE_DIR / "deploy.lock"
 COOLDOWN = 15 * 60
+INITIAL_ATTEMPTS = 3
+INITIAL_DELAY = 2.0
+RESTART_TIMEOUT = 35.0
+RESTART_DELAY = 2.0
 
 
 def now_iso():
@@ -33,6 +43,15 @@ def healthy():
         return False
 
 
+def wait_healthy(timeout: float, delay: float = 2.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if healthy():
+            return True
+        time.sleep(delay)
+    return healthy()
+
+
 def bot_token():
     sys.path.insert(0, str(PROJECT_ROOT))
     try:
@@ -40,6 +59,11 @@ def bot_token():
         return str(BOT_TOKEN or "").strip()
     except Exception:
         return ""
+    finally:
+        try:
+            sys.path.remove(str(PROJECT_ROOT))
+        except ValueError:
+            pass
 
 
 def notify(text):
@@ -68,26 +92,38 @@ def write_state(data):
     os.replace(tmp, STATE_FILE)
 
 
+def deploy_in_progress() -> bool:
+    if not DEPLOY_LOCK.exists():
+        return False
+    try:
+        if time.time() - DEPLOY_LOCK.stat().st_mtime < 20 * 60:
+            return True
+        DEPLOY_LOCK.unlink(missing_ok=True)
+    except OSError:
+        return True
+    return False
+
+
 def main():
-    if DEPLOY_LOCK.exists():
-        try:
-            if time.time() - DEPLOY_LOCK.stat().st_mtime < 20 * 60:
-                return 0
-            DEPLOY_LOCK.unlink(missing_ok=True)
-        except OSError:
-            return 0
-    if healthy():
-        state = read_state()
-        if state.get("down"):
-            state.update({"down": False, "recovered_at": now_iso()})
-            write_state(state)
+    if deploy_in_progress():
         return 0
+
+    # Avoid reacting to a tiny startup/reload gap.
+    for attempt in range(INITIAL_ATTEMPTS):
+        if healthy():
+            state = read_state()
+            if state.get("down"):
+                state.update({"down": False, "recovered_at": now_iso(), "last_check": now_iso()})
+                write_state(state)
+                notify("✅ SVGTracker watchdog\nAPI снова доступен.")
+            return 0
+        if attempt + 1 < INITIAL_ATTEMPTS:
+            time.sleep(INITIAL_DELAY)
 
     state = read_state()
     before = time.time()
     proc = subprocess.run(["systemctl", "restart", "svgtracker"], capture_output=True, text=True)
-    time.sleep(5)
-    recovered = healthy()
+    recovered = proc.returncode == 0 and wait_healthy(RESTART_TIMEOUT, RESTART_DELAY)
     last_notice = float(state.get("last_notice_epoch") or 0)
     state.update({
         "down": not recovered,
@@ -98,12 +134,16 @@ def main():
     if before - last_notice >= COOLDOWN:
         state["last_notice_epoch"] = before
         if recovered:
-            notify("⚠️ SVGTracker watchdog\nAPI перестал отвечать. Watchdog перезапустил сервис, API снова работает.")
+            notify("⚠️ SVGTracker watchdog\nAPI действительно перестал отвечать. Сервис перезапущен и снова работает.")
         else:
             detail = (proc.stderr or proc.stdout or "restart completed but API is still unavailable").strip()
-            notify(f"🚨 SVGTracker watchdog\nAPI недоступен даже после restart.\n\n{detail[:1800]}")
+            notify(
+                "🚨 SVGTracker watchdog\n"
+                f"API недоступен после restart и {int(RESTART_TIMEOUT)} секунд ожидания.\n\n{detail[:1800]}"
+            )
     write_state(state)
-    return 0 if recovered else 1
+    # Keep the timer unit healthy; the outage itself is recorded in state and Telegram.
+    return 0
 
 
 if __name__ == "__main__":

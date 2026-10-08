@@ -51,7 +51,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "20"
+APP_VERSION = "21"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -110,6 +110,12 @@ async def setup_bot_commands() -> None:
         BotCommand(command="errors", description="Ошибки сервера"),
         BotCommand(command="logs", description="Последние логи"),
         BotCommand(command="restart", description="Перезапустить SVGTracker"),
+        BotCommand(command="github_setup", description="Подключить GitHub Deploy Key"),
+        BotCommand(command="github_test", description="Проверить запись в GitHub"),
+        BotCommand(command="github_status", description="Статус синхронизации GitHub"),
+        BotCommand(command="github_sync", description="Синхронизировать production → GitHub"),
+        BotCommand(command="watchdog_on", description="Включить watchdog"),
+        BotCommand(command="watchdog_off", description="Выключить watchdog"),
     ]
     try:
         await bot.set_my_commands(common)
@@ -135,6 +141,9 @@ def admin_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="Логи", callback_data="admin:logs"),
             InlineKeyboardButton(text="Restart", callback_data="admin:restart"),
+        ],
+        [
+            InlineKeyboardButton(text="GitHub", callback_data="admin:github"),
         ],
     ])
 
@@ -262,6 +271,53 @@ def admin_launch_transient(args: list[str], prefix: str) -> str:
         raise RuntimeError((proc.stderr or proc.stdout or "systemd-run failed").strip())
     return unit
 
+
+
+async def admin_helper_json(command: str, timeout: int = 70) -> dict:
+    if not ADMIN_DEPLOY_HELPER.is_file():
+        raise RuntimeError("deploy/admin_deploy.py not found")
+    python_bin = Path(__file__).parent / "venv" / "bin" / "python"
+    python_cmd = str(python_bin) if python_bin.is_file() else (shutil.which("python3") or "python3")
+    proc = await asyncio.to_thread(
+        subprocess.run,
+        [python_cmd, str(ADMIN_DEPLOY_HELPER), command],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or f"{command} failed").strip())
+    lines = [line for line in (proc.stdout or "").splitlines() if line.strip()]
+    if not lines:
+        return {}
+    try:
+        return json.loads(lines[-1])
+    except Exception as exc:
+        raise RuntimeError(f"Invalid helper response: {lines[-1][:800]}") from exc
+
+
+def github_status_text(payload: dict) -> str:
+    sync_labels = {
+        "synced": "синхронизирован",
+        "ahead": "VPS впереди GitHub",
+        "behind": "GitHub впереди VPS",
+        "diverged": "ветки разошлись",
+        "fetch_failed": "не удалось проверить remote",
+        "unknown": "неизвестно",
+    }
+    configured = "да" if payload.get("configured") else "нет"
+    clean = "да" if payload.get("clean") else "нет"
+    return (
+        "GitHub sync\n\n"
+        f"Repository: {payload.get('repository') or '—'}\n"
+        f"Branch: {payload.get('branch') or '—'}\n"
+        f"Deploy Key: {configured}\n"
+        f"Working tree clean: {clean}\n"
+        f"HEAD: {payload.get('head') or '—'}\n"
+        f"origin: {payload.get('origin_head') or '—'}\n"
+        f"State: {sync_labels.get(payload.get('sync'), payload.get('sync') or '—')}"
+        + (f"\nError: {payload.get('error')}" if payload.get("error") else "")
+    )
 
 def shortcut_user(authorization: str | None):
     prefix = "Bearer "
@@ -771,9 +827,125 @@ async def admin_panel(message: Message):
         "SVGTracker Admin\n\n"
         "Production управляется отсюда. ZIP-deploy делает backup, проверяет файлы, "
         "перезапускает сервис и автоматически откатывается, если API не поднимается.\n\n"
-        "Команды: /deploy /deploy_status /server_status /backup /backups /rollback /logs /errors /restart",
+        "После настройки GitHub успешный ZIP-deploy автоматически делает commit + push в origin/main.\n\n"
+        "Команды: /deploy /deploy_status /server_status /backup /backups /rollback /logs /errors /restart "
+        "/github_setup /github_test /github_status /github_sync",
         reply_markup=admin_keyboard(),
     )
+
+
+
+
+@dp.message(Command("watchdog_on"))
+async def admin_watchdog_on(message: Message):
+    if not is_admin_message(message):
+        return
+    proc = await asyncio.to_thread(
+        subprocess.run,
+        ["systemctl", "enable", "--now", "svgtracker-watchdog.timer"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    if proc.returncode == 0:
+        await message.answer("Watchdog включён. V21 ждёт несколько health-check попыток и больше не должен тревожить во время обычного запуска сервиса.")
+    else:
+        await message.answer(admin_trim(f"Watchdog error: {proc.stderr or proc.stdout}"))
+
+
+@dp.message(Command("watchdog_off"))
+async def admin_watchdog_off(message: Message):
+    if not is_admin_message(message):
+        return
+    proc = await asyncio.to_thread(
+        subprocess.run,
+        ["systemctl", "disable", "--now", "svgtracker-watchdog.timer"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    if proc.returncode == 0:
+        await message.answer("Watchdog выключен. Основной svgtracker.service продолжает работать и автоматически перезапускается systemd.")
+    else:
+        await message.answer(admin_trim(f"Watchdog error: {proc.stderr or proc.stdout}"))
+
+
+@dp.message(Command("github_setup"))
+async def admin_github_setup(message: Message):
+    if not is_admin_message(message):
+        return
+    try:
+        payload = await admin_helper_json("github-setup", timeout=35)
+        public_key = str(payload.get("public_key") or "").strip()
+        repo = payload.get("repository") or "sanychoys/SVG"
+        if not public_key:
+            raise RuntimeError("Public key was not generated")
+        await message.answer(
+            "GitHub Deploy Key создан на VPS. Приватный ключ остаётся только на сервере.\n\n"
+            f"Repository: {repo}\n\n"
+            "1. Открой GitHub → SVG → Settings → Deploy keys → Add deploy key.\n"
+            "2. Title: SVGTracker VPS\n"
+            "3. Вставь ключ из следующего сообщения.\n"
+            "4. Обязательно включи Allow write access.\n"
+            "5. Нажми Add key.\n"
+            "6. Вернись сюда и отправь /github_test.\n\n"
+            f"Прямая страница: https://github.com/{repo}/settings/keys"
+        )
+        await message.answer(public_key)
+    except Exception as exc:
+        logger.exception("GitHub setup failed")
+        await message.answer(admin_trim(f"GitHub setup error: {exc}"))
+
+
+@dp.message(Command("github_test"))
+async def admin_github_test(message: Message):
+    if not is_admin_message(message):
+        return
+    try:
+        payload = await admin_helper_json("github-test", timeout=55)
+        await message.answer(
+            "GitHub write access: OK\n"
+            f"Repository: {payload.get('repository', '—')}\n"
+            f"Branch: {payload.get('branch', '—')}\n\n"
+            "Если V21 был установлен ZIP-ботом поверх старой Git-версии, теперь отправь /github_sync один раз. "
+            "После этого будущие ZIP-deploy будут автоматически push'иться в GitHub."
+        )
+    except Exception as exc:
+        await message.answer(
+            admin_trim(
+                "GitHub test failed. Проверь, что публичный ключ добавлен именно в Deploy keys этого репозитория и включён Allow write access.\n\n"
+                f"{exc}"
+            )
+        )
+
+
+@dp.message(Command("github_status"))
+async def admin_github_status(message: Message):
+    if not is_admin_message(message):
+        return
+    try:
+        payload = await admin_helper_json("github-status", timeout=55)
+        await message.answer(admin_trim(github_status_text(payload)))
+    except Exception as exc:
+        await message.answer(admin_trim(f"GitHub status error: {exc}"))
+
+
+@dp.message(Command("github_sync"))
+async def admin_github_sync(message: Message):
+    if not is_admin_message(message):
+        return
+    try:
+        payload = await admin_helper_json("github-sync", timeout=90)
+        files = payload.get("files") or []
+        await message.answer(
+            "GitHub синхронизирован.\n"
+            f"Repository: {payload.get('repository', '—')}\n"
+            f"Branch: {payload.get('branch', '—')}\n"
+            f"Commit: {payload.get('commit', '—')}\n"
+            f"Зафиксировано файлов: {len(files)}"
+        )
+    except Exception as exc:
+        await message.answer(admin_trim(f"GitHub sync остановлен: {exc}"))
 
 
 @dp.message(Command("deploy"))
@@ -782,7 +954,8 @@ async def admin_deploy_help(message: Message):
         return
     await message.answer(
         "Пришли ZIP проекта прямо в этот чат. Я покажу имя/размер и попрошу подтверждение.\n\n"
-        "Production config.py, SQLite, WAL/SHM, .env, venv, .git, uploads и логи ZIP-deploy не перезаписывает."
+        "Production config.py, SQLite, WAL/SHM, .env, venv, .git, uploads и логи ZIP-deploy не перезаписывает.\n\n"
+        "V21+: deploy запускается только когда VPS синхронизирован с GitHub. После health-check бот автоматически создаёт commit и push."
     )
 
 
@@ -924,7 +1097,8 @@ async def admin_zip_upload(message: Message):
     ])
     await message.answer(
         f"ZIP получен: {name}\nРазмер: {size / 1024:.0f} KB\n\n"
-        "Перед заменой будет backup. config.py и production-БД защищены. При провале health-check сработает rollback.",
+        "Перед заменой будет backup. config.py и production-БД защищены. При провале health-check или GitHub push сработает rollback. "
+        "После успешной проверки изменения автоматически попадут в GitHub.",
         reply_markup=keyboard,
     )
 
@@ -955,6 +1129,18 @@ async def admin_callback(callback: CallbackQuery):
         await callback.answer()
         if callback.message:
             await callback.message.answer("Последние логи:\n\n" + admin_journal(45))
+        return
+    if action == "github":
+        await callback.answer()
+        if callback.message:
+            try:
+                payload = await admin_helper_json("github-status", timeout=55)
+                await callback.message.answer(
+                    admin_trim(github_status_text(payload))
+                    + "\n\nНастройка: /github_setup → добавить Deploy Key на GitHub → /github_test → /github_sync"
+                )
+            except Exception as exc:
+                await callback.message.answer(admin_trim(f"GitHub status error: {exc}"))
         return
     if action == "deploy":
         await callback.answer()
@@ -1055,7 +1241,7 @@ async def admin_callback(callback: CallbackQuery):
             await callback.answer("Deploy запущен")
             if callback.message:
                 await callback.message.edit_text(
-                    f"Deploy запущен ({unit}). Проверка, backup, restart и health-check выполняются автоматически. Итог придёт отдельным сообщением."
+                    f"Deploy запущен ({unit}). Проверка, backup, restart, health-check, commit и GitHub push выполняются автоматически. Итог придёт отдельным сообщением."
                 )
         except Exception as exc:
             await callback.answer("Ошибка запуска", show_alert=True)

@@ -14,11 +14,36 @@ Admin Telegram ID is read from `SVGTRACKER_ADMIN_ID` and defaults to the project
 - `/errors` — recent errors/warnings from journald
 - `/logs` — recent service logs
 - `/restart` — safe systemd restart
+- `/github_setup` — generate the repository-scoped GitHub Deploy Key and show its public half
+- `/github_test` — verify GitHub write access and switch `origin` to SSH
+- `/github_status` — compare production with `origin/main`
+- `/github_sync` — one-time/bootstrap commit + push of the current production tree
 
-## ZIP deploy safety
+## One-time GitHub setup from a phone
 
-The deploy worker rejects unsafe archive paths and symlinks, limits archive size, checks Python and JavaScript syntax, checks duplicate HTML IDs and inline handler references, creates a backup, applies only deployable project files, restarts the service, performs an API health check, and automatically rolls back code if health fails.
+1. Run `/github_setup` in Telegram.
+2. Copy the public key returned by the bot.
+3. Open the repository in GitHub → Settings → Deploy keys → Add deploy key.
+4. Paste the public key and enable **Allow write access**.
+5. Run `/github_test`.
+6. Run `/github_sync` once if this release was installed by the older direct ZIP deployer.
+
+The private key is generated on the VPS at `/root/.ssh/svgtracker_github` and is never sent to Telegram or stored in the repository.
+
+## Transactional ZIP deploy
+
+V21+ treats GitHub as the source of truth. Before a ZIP is applied, the worker verifies that the VPS working tree is clean and that `HEAD` exactly matches `origin/<branch>`.
+
+The deployment transaction is:
+
+1. Validate ZIP and Git/GitHub state.
+2. Create a production backup.
+3. Apply only permitted project files.
+4. Restart SVGTracker and wait for the API health check.
+5. Commit the applied project files.
+6. Push the commit to GitHub.
+7. Report success to Telegram.
+
+If the API health check fails, production is restored from backup. If GitHub commit/push fails, production is also restored and Git is reset to the pre-deploy commit, so GitHub and the VPS do not silently diverge.
 
 Protected production data is never overwritten by ZIP deploy: `config.py`, `.env`, `svgtracker.db`, SQLite WAL/SHM, `.git`, `venv`, uploads and logs.
-
-A ZIP deploy updates production directly and does not push to GitHub. `/server_status` shows whether the production Git working tree has local changes.
