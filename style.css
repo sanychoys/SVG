@@ -4874,3 +4874,4 @@ body.profile-drawer-open{overflow:hidden}
   .social-inline-actions{max-width:116px;gap:4px}
   .sheet-panel .social-small-action{height:30px;min-height:30px;padding:0 7px;font-size:9px}
 }
+.finance-action-symbol.is-income{color:#73e6a3;background:rgba(115,230,163,.08)}

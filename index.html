@@ -623,6 +623,7 @@
     <div class="sheet-heading-row"><div><span class="section-label">Финансы</span><h3>Что записать?</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
     <div class="finance-action-list">
       <button type="button" onclick="openFinanceEntrySheet('expense')"><span class="finance-action-symbol is-expense">−</span><span><strong>Расход</strong><small>Покупка или ежедневная трата</small></span><b>›</b></button>
+      <button type="button" onclick="openFinanceEntrySheet('income')"><span class="finance-action-symbol is-income">+</span><span><strong>Доход</strong><small>Поступление сверх месячного плана</small></span><b>›</b></button>
       <button type="button" onclick="openFinanceEntrySheet('mandatory')"><span class="finance-action-symbol is-mandatory">•</span><span><strong>Обязательный расход</strong><small>Регулярный платёж этого месяца</small></span><b>›</b></button>
       <button type="button" onclick="openFinanceDebtEditor()"><span class="finance-action-symbol is-debt">↔</span><span><strong>Долг</strong><small>Я взял или дал деньги</small></span><b>›</b></button>
       <button type="button" onclick="openFinanceBudgetSheet()"><span class="finance-action-symbol">₽</span><span><strong>Настроить бюджет</strong><small>Месячный доход</small></span><b>›</b></button>
@@ -637,7 +638,7 @@
     <input id="finance-entry-type" type="hidden"><input id="finance-edit-id" type="hidden">
     <label class="sheet-field"><span>Название</span><input id="finance-entry-title" autocomplete="off" maxlength="80" placeholder="Например, продукты"></label>
     <label class="sheet-field"><span>Сумма</span><div class="finance-money-input"><input id="finance-entry-amount" inputmode="decimal" autocomplete="off" placeholder="0"><b>₽</b></div></label>
-    <label class="sheet-field"><span>Категория</span><select id="finance-entry-category" aria-label="Категория расхода"></select></label>
+    <label id="finance-entry-category-field" class="sheet-field"><span>Категория</span><select id="finance-entry-category" aria-label="Категория расхода"></select></label>
     <label class="sheet-field"><span>Дата</span><input id="finance-entry-date" type="date"></label>
     <button type="button" class="sheet-primary-action" onclick="saveFinanceEntryV15()">Сохранить</button>
     <button type="button" id="finance-entry-delete-button" class="sheet-danger-button" onclick="deleteFinanceEntryV15()" hidden>Удалить</button>
@@ -660,7 +661,7 @@
 <div id="finance-transactions-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
   <div class="sheet-panel finance-list-panel" data-sheet-panel>
     <div class="sheet-handle"></div>
-    <div class="sheet-heading-row"><div><span class="section-label">Финансы</span><h3>История расходов</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Финансы</span><h3>История операций</h3></div><button type="button" class="sheet-close" onclick="closeSheets()">×</button></div>
     <div id="finance-transactions-list" class="finance-list"></div>
     <button type="button" class="sheet-primary-action" onclick="openFinanceEntrySheet('expense')">Добавить расход</button>
   </div>

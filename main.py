@@ -4,6 +4,8 @@ import hmac
 import json
 import logging
 import time
+import uuid
+from datetime import datetime
 from urllib.parse import parse_qsl
 
 from aiogram import Bot, Dispatcher, F
@@ -18,13 +20,16 @@ from key import main_keyboard
 from finance_db import (
     block_user,
     create_friend_request,
+    create_shortcut_token,
     get_or_create_user,
     get_profile_data,
+    get_user_by_shortcut_token,
     get_training_state,
     get_finance_state,
     get_user_settings,
     init_db,
     remove_friend,
+    revoke_shortcut_tokens,
     reset_user_data,
     resolve_friend_request,
     save_training_state,
@@ -41,6 +46,47 @@ MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
 logger = logging.getLogger("svgtracker")
+
+SHORTCUT_DEFAULT_CATEGORIES = [
+    {"id": "cat_food", "name": "Еда", "color": "#ff9f0a"},
+    {"id": "cat_home", "name": "Дом", "color": "#64d2ff"},
+    {"id": "cat_transport", "name": "Транспорт", "color": "#0a84ff"},
+    {"id": "cat_fun", "name": "Развлечения", "color": "#bf5af2"},
+    {"id": "cat_health", "name": "Здоровье", "color": "#30d158"},
+    {"id": "cat_other", "name": "Другое", "color": "#8e8e93"},
+]
+
+
+def shortcut_user(authorization: str | None):
+    prefix = "Bearer "
+    if not authorization or not authorization.startswith(prefix):
+        raise HTTPException(status_code=401, detail="Shortcut token is required")
+    record = get_user_by_shortcut_token(authorization[len(prefix):].strip())
+    if not record:
+        raise HTTPException(status_code=401, detail="Shortcut token is invalid or revoked")
+    return record
+
+
+def finance_state_for_shortcut(user_id):
+    record = get_finance_state(user_id)
+    state = dict(record["state"]) if record and isinstance(record.get("state"), dict) else {}
+    categories = state.get("categories") if isinstance(state.get("categories"), list) else []
+    if not categories:
+        now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        categories = [dict(item, updatedAt=now) for item in SHORTCUT_DEFAULT_CATEGORIES]
+        state["categories"] = categories
+    state.setdefault("version", 5)
+    state.setdefault("monthlyIncome", 0)
+    state.setdefault("monthlyBudgets", {})
+    state.setdefault("mandatoryExpenses", [])
+    state.setdefault("expenses", [])
+    state.setdefault("incomes", [])
+    state.setdefault("debts", [])
+    sync = state.setdefault("sync", {})
+    sync.setdefault("tombstones", {})
+    for key in ("expenses", "incomes", "mandatoryExpenses", "debts", "categories"):
+        sync["tombstones"].setdefault(key, {})
+    return state
 
 
 def verify_telegram_init_data(init_data: str):
@@ -146,11 +192,126 @@ def api_save_finance_state(
 
     allowed = {
         "version", "monthlyIncome", "monthlyBudgets", "categories",
-        "mandatoryExpenses", "expenses", "debts", "sync"
+        "mandatoryExpenses", "expenses", "incomes", "debts", "sync"
     }
     clean_state = {key: state.get(key) for key in allowed if key in state}
     updated_at = save_finance_state(user_id, clean_state)
     return {"status": "ok", "updated_at": updated_at}
+
+
+@app.get("/api/shortcut/finance/options")
+def api_shortcut_finance_options(authorization: str | None = Header(default=None)):
+    user = shortcut_user(authorization)
+    state = finance_state_for_shortcut(user["user_id"])
+    categories = []
+    for item in state.get("categories", []):
+        if not isinstance(item, dict):
+            continue
+        category_id = str(item.get("id") or "").strip()
+        name = str(item.get("name") or "").strip()
+        if category_id and name:
+            categories.append({
+                "id": category_id,
+                "name": name[:32],
+                "color": str(item.get("color") or "#8e8e93"),
+            })
+    return {
+        "status": "ok",
+        "currency": "RUB",
+        "types": [
+            {"id": "expense", "name": "Расход"},
+            {"id": "income", "name": "Доход"},
+        ],
+        "categories": categories,
+        # Shortcuts can display a plain list much more cleanly than a list of dictionaries.
+        "category_names": [item["name"] for item in categories],
+    }
+
+
+@app.post("/api/shortcut/finance/transaction")
+async def api_shortcut_finance_transaction(
+    payload: dict,
+    authorization: str | None = Header(default=None),
+):
+    user = shortcut_user(authorization)
+    kind = str(payload.get("type") or "").strip().lower()
+    if kind not in {"expense", "income"}:
+        raise HTTPException(status_code=422, detail="type must be expense or income")
+    try:
+        amount = round(float(payload.get("amount")), 2)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Укажи корректную сумму")
+    if not (0 < amount <= 100_000_000):
+        raise HTTPException(status_code=422, detail="Сумма должна быть больше нуля")
+
+    date_value = str(payload.get("date") or "").strip()
+    try:
+        datetime.strptime(date_value, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
+
+    state = finance_state_for_shortcut(user["user_id"])
+    now = datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+    entry_id = f"shortcut_{kind}_{uuid.uuid4().hex}"
+
+    if kind == "expense":
+        category_id = str(payload.get("category_id") or "").strip()
+        category_name = str(payload.get("category_name") or "").strip().casefold()
+        category = next(
+            (item for item in state["categories"] if category_id and str(item.get("id")) == category_id),
+            None,
+        )
+        if not category and category_name:
+            category = next(
+                (item for item in state["categories"] if str(item.get("name") or "").strip().casefold() == category_name),
+                None,
+            )
+        if not category:
+            raise HTTPException(status_code=422, detail="Категория не найдена. Обнови список в Shortcut.")
+        category_id = str(category.get("id"))
+        title = str(payload.get("title") or category.get("name") or "Расход").strip()[:80]
+        entry = {
+            "id": entry_id,
+            "title": title or "Расход",
+            "amount": amount,
+            "categoryId": category_id,
+            "date": date_value,
+            "updatedAt": now,
+        }
+        state["expenses"].append(entry)
+        confirmation = f"Расход записан: {amount:g} ₽ · {category.get('name', 'Другое')}"
+    else:
+        title = str(payload.get("title") or "Доход").strip()[:80] or "Доход"
+        entry = {
+            "id": entry_id,
+            "title": title,
+            "amount": amount,
+            "date": date_value,
+            "updatedAt": now,
+        }
+        state["incomes"].append(entry)
+        confirmation = f"Доход записан: +{amount:g} ₽"
+
+    state["version"] = max(int(state.get("version") or 0), 5)
+    state.setdefault("sync", {})["updatedAt"] = now
+    updated_at = save_finance_state(user["user_id"], state)
+
+    try:
+        await bot.send_message(
+            chat_id=user["telegram_id"],
+            text=confirmation,
+            reply_markup=main_keyboard(),
+        )
+    except Exception:
+        logger.exception("Failed to send Shortcut confirmation to Telegram user %s", user["telegram_id"])
+
+    return {
+        "status": "ok",
+        "type": kind,
+        "amount": amount,
+        "message": confirmation,
+        "updated_at": updated_at,
+    }
 
 
 @app.get("/api/profile")
@@ -314,6 +475,46 @@ async def start(message: Message):
 """,
         reply_markup=main_keyboard(),
         parse_mode="HTML",
+    )
+
+
+@dp.message(Command("shortcut"))
+async def shortcut_setup(message: Message):
+    if not message.from_user:
+        return
+    data = {
+        "id": message.from_user.id,
+        "username": message.from_user.username,
+        "first_name": message.from_user.first_name,
+        "last_name": message.from_user.last_name,
+        "photo_url": None,
+    }
+    user_id = get_or_create_user(data)
+    token = create_shortcut_token(user_id)
+    await message.answer(
+        "Токен для iPhone Action Button создан.\n\n"
+        f"{token}\n\n"
+        "Скопируй токен в свою команду Shortcuts. Никому его не отправляй. "
+        "Повторная команда /shortcut автоматически отключит предыдущий токен. "
+        "Для отключения используй /shortcut_revoke."
+    )
+
+
+@dp.message(Command("shortcut_revoke"))
+async def shortcut_revoke(message: Message):
+    if not message.from_user:
+        return
+    data = {
+        "id": message.from_user.id,
+        "username": message.from_user.username,
+        "first_name": message.from_user.first_name,
+        "last_name": message.from_user.last_name,
+        "photo_url": None,
+    }
+    user_id = get_or_create_user(data)
+    revoked = revoke_shortcut_tokens(user_id)
+    await message.answer(
+        "Доступ iPhone Shortcut отключён." if revoked else "Активного Shortcut-токена нет."
     )
 
 

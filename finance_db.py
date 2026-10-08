@@ -1,4 +1,6 @@
+import hashlib
 import json
+import secrets
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,12 +25,13 @@ EMPTY_FINANCE_STATE = {
     "categories": [],
     "mandatoryExpenses": [],
     "expenses": [],
+    "incomes": [],
     "debts": [],
     "sync": {
         "updatedAt": None,
         "resetAt": None,
         "budgetUpdatedAt": None,
-        "tombstones": {"expenses": {}, "mandatoryExpenses": {}, "debts": {}, "categories": {}},
+        "tombstones": {"expenses": {}, "incomes": {}, "mandatoryExpenses": {}, "debts": {}, "categories": {}},
     },
 }
 
@@ -97,6 +100,17 @@ def init_db():
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS shortcut_tokens(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                token_hash TEXT UNIQUE NOT NULL,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT,
+                revoked_at TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_shortcut_tokens_user
+                ON shortcut_tokens(user_id, revoked_at);
             CREATE TABLE IF NOT EXISTS friend_requests(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sender_user_id INTEGER NOT NULL,
@@ -249,6 +263,59 @@ def user_public_dict(row):
         "last_name": row["last_name"],
         "photo_url": row["photo_url"],
     }
+
+
+def create_shortcut_token(user_id):
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now = utc_now()
+    with connect() as db:
+        # Keep one active Action Button token per user. Issuing a new one revokes the old one.
+        db.execute(
+            "UPDATE shortcut_tokens SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL",
+            (now, user_id),
+        )
+        db.execute(
+            "INSERT INTO shortcut_tokens(user_id, token_hash, created_at) VALUES(?,?,?)",
+            (user_id, token_hash, now),
+        )
+    return token
+
+
+def revoke_shortcut_tokens(user_id):
+    now = utc_now()
+    with connect() as db:
+        cur = db.execute(
+            "UPDATE shortcut_tokens SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL",
+            (now, user_id),
+        )
+    return cur.rowcount
+
+
+def get_user_by_shortcut_token(token):
+    clean = str(token or "").strip()
+    if not clean or len(clean) > 200:
+        return None
+    token_hash = hashlib.sha256(clean.encode("utf-8")).hexdigest()
+    now = utc_now()
+    with connect() as db:
+        row = db.execute(
+            """
+            SELECT st.user_id, u.telegram_id, u.username, u.first_name, u.last_name
+            FROM shortcut_tokens st
+            JOIN users u ON u.id=st.user_id
+            WHERE st.token_hash=? AND st.revoked_at IS NULL
+            LIMIT 1
+            """,
+            (token_hash,),
+        ).fetchone()
+        if not row:
+            return None
+        db.execute(
+            "UPDATE shortcut_tokens SET last_used_at=? WHERE token_hash=?",
+            (now, token_hash),
+        )
+        return dict(row)
 
 
 def get_user_settings(user_id):
@@ -511,7 +578,7 @@ def reset_user_data(telegram_id):
             "updatedAt": now,
             "resetAt": now,
             "budgetUpdatedAt": None,
-            "tombstones": {"expenses": {}, "mandatoryExpenses": {}, "debts": {}, "categories": {}},
+            "tombstones": {"expenses": {}, "incomes": {}, "mandatoryExpenses": {}, "debts": {}, "categories": {}},
         }
         empty_finance_payload = json.dumps(reset_finance, ensure_ascii=False, separators=(",", ":"))
         db.execute(

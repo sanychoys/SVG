@@ -71,6 +71,7 @@ let financeData = readJSON(STORAGE.finance, null) || {
   monthlyIncome:0,
   mandatoryExpenses:[],
   expenses:[],
+  incomes:[],
   debts:[],
   categories:{},
   budgetHistory:[]
@@ -3505,6 +3506,13 @@ function normalizeFinanceDataV15(raw) {
   };
 
   const expenses = (Array.isArray(source.expenses) ? source.expenses : []).map((item,i) => normalizeEntry(item,'expense',i)).filter(item => item.amount > 0);
+  const incomes = (Array.isArray(source.incomes) ? source.incomes : []).map((item,i) => ({
+    id: String(item?.id || `income_${i}_${hashGoalIdentity(`${item?.title || ''}|${item?.amount || ''}|${item?.date || item?.createdAt || ''}`)}`),
+    title: String(item?.title || item?.name || 'Доход').trim().slice(0,80) || 'Доход',
+    amount: financeSafeAmountV15(item?.amount),
+    date: financeCleanDateV15(item?.date || item?.createdAt),
+    updatedAt: item?.updatedAt || item?.date || item?.createdAt || source?.sync?.updatedAt || now
+  })).filter(item => item.amount > 0);
   const mandatoryExpenses = (Array.isArray(source.mandatoryExpenses) ? source.mandatoryExpenses : []).map((item,i) => normalizeEntry(item,'mandatory',i)).filter(item => item.amount > 0);
   const debts = (Array.isArray(source.debts) ? source.debts : []).map((item,i) => ({
     id: String(item?.id || `debt_${i}_${hashGoalIdentity(`${item?.person || item?.title || ''}|${item?.amount || ''}|${item?.date || ''}`)}`),
@@ -3534,12 +3542,13 @@ function normalizeFinanceDataV15(raw) {
 
   const tombstones = source?.sync?.tombstones && typeof source.sync.tombstones === 'object' ? source.sync.tombstones : {};
   return {
-    version: 4,
+    version: 5,
     monthlyIncome: financeSafeAmountV15(monthlyBudgets[currentMonth]?.income || source.monthlyIncome),
     monthlyBudgets,
     categories,
     mandatoryExpenses,
     expenses,
+    incomes,
     debts,
     sync: {
       updatedAt: source?.sync?.updatedAt || now,
@@ -3547,6 +3556,7 @@ function normalizeFinanceDataV15(raw) {
       budgetUpdatedAt: source?.sync?.budgetUpdatedAt || monthlyBudgets[currentMonth]?.updatedAt || null,
       tombstones: {
         expenses: { ...(tombstones.expenses || {}) },
+        incomes: { ...(tombstones.incomes || {}) },
         mandatoryExpenses: { ...(tombstones.mandatoryExpenses || {}) },
         debts: { ...(tombstones.debts || {}) },
         categories: { ...(tombstones.categories || {}) }
@@ -3564,8 +3574,15 @@ localStorage.setItem(STORAGE.finance, JSON.stringify(financeData));
 function financeCategoryByIdV15(id) {
   return financeData.categories.find(cat => String(cat.id) === String(id)) || financeData.categories.find(cat => cat.name === 'Другое') || financeData.categories[0];
 }
-function financeIncomeForDateV15(date = new Date()) {
+function financeExtraIncomeForMonthV17(date = new Date()) {
+  const prefix = `${financeMonthKeyV15(date)}-`;
+  return (financeData.incomes || []).reduce((sum,item) => String(item.date || '').startsWith(prefix) ? sum + financeSafeAmountV15(item.amount) : sum, 0);
+}
+function financePlannedIncomeForDateV17(date = new Date()) {
   return financeSafeAmountV15(financeData.monthlyBudgets?.[financeMonthKeyV15(date)]?.income || 0);
+}
+function financeIncomeForDateV15(date = new Date()) {
+  return financePlannedIncomeForDateV17(date) + financeExtraIncomeForMonthV17(date);
 }
 function financeExpensesForMonthV15(date = new Date()) {
   const prefix = `${financeMonthKeyV15(date)}-`;
@@ -3590,7 +3607,7 @@ function financeDateForMonthKeyV16(key, day = 1) {
 function financePreviousMonthV16(date) { return new Date(date.getFullYear(), date.getMonth() - 1, 1, 12); }
 function financeHasMonthDataV16(date) {
   const key = financeMonthKeyV15(date);
-  return Boolean(financeData.monthlyBudgets?.[key]) || financeExpensesForMonthV15(date).length > 0 || financeMandatoryForMonthV16(date).length > 0;
+  return Boolean(financeData.monthlyBudgets?.[key]) || financeExpensesForMonthV15(date).length > 0 || (financeData.incomes || []).some(item => String(item.date || '').startsWith(`${key}-`)) || financeMandatoryForMonthV16(date).length > 0;
 }
 function financeCarryoverForMonthV16(date = new Date(), depth = 0) {
   if (depth > 36) return 0;
@@ -3657,7 +3674,7 @@ function financeTouchV15({ budget = false } = {}) {
   financeData.sync = financeData.sync || { tombstones:{} };
   financeData.sync.updatedAt = now;
   if (budget) financeData.sync.budgetUpdatedAt = now;
-  financeData.sync.tombstones ||= { expenses:{}, mandatoryExpenses:{}, debts:{}, categories:{} };
+  financeData.sync.tombstones ||= { expenses:{}, incomes:{}, mandatoryExpenses:{}, debts:{}, categories:{} };
   return now;
 }
 function financeSetSyncStatusV15(status, text) {
@@ -3680,13 +3697,13 @@ function scheduleFinanceSyncV15() {
 }
 function financeMarkDeletedV15(collection, id) {
   financeData.sync ||= {};
-  financeData.sync.tombstones ||= { expenses:{}, mandatoryExpenses:{}, debts:{}, categories:{} };
+  financeData.sync.tombstones ||= { expenses:{}, incomes:{}, mandatoryExpenses:{}, debts:{}, categories:{} };
   financeData.sync.tombstones[collection] ||= {};
   financeData.sync.tombstones[collection][String(id)] = financeNowIsoV15();
 }
 function financeMergeTombstonesV15(local = {}, remote = {}) {
   const result = {};
-  for (const key of ['expenses','mandatoryExpenses','debts','categories']) {
+  for (const key of ['expenses','incomes','mandatoryExpenses','debts','categories']) {
     result[key] = { ...(remote[key] || {}) };
     Object.entries(local[key] || {}).forEach(([id,stamp]) => {
       if (!result[key][id] || compareIso(stamp, result[key][id]) >= 0) result[key][id] = stamp;
@@ -3712,6 +3729,7 @@ function mergeFinanceStatesV15(localRaw, remoteRaw) {
   const merged = normalizeFinanceDataV15({});
   merged.categories = financeMergeCollectionV15(local.categories, remote.categories, tombstones, 'categories');
   merged.expenses = financeMergeCollectionV15(local.expenses, remote.expenses, tombstones, 'expenses');
+  merged.incomes = financeMergeCollectionV15(local.incomes, remote.incomes, tombstones, 'incomes');
   merged.mandatoryExpenses = financeMergeCollectionV15(local.mandatoryExpenses, remote.mandatoryExpenses, tombstones, 'mandatoryExpenses');
   merged.debts = financeMergeCollectionV15(local.debts, remote.debts, tombstones, 'debts');
   const budgets = { ...(remote.monthlyBudgets || {}) };
@@ -3901,15 +3919,20 @@ function fillFinanceCategorySelectV15(selectedId) {
 function openFinanceEntrySheet(type='expense', editId=null) {
   closeSheets();
   const sheet=document.getElementById('finance-entry-sheet'); if(!sheet)return;
-  const collection=type==='mandatory'?financeData.mandatoryExpenses:financeData.expenses;
+  const collectionKey=type==='mandatory'?'mandatoryExpenses':type==='income'?'incomes':'expenses';
+  const collection=financeData[collectionKey] || [];
   const item=editId?collection.find(x=>String(x.id)===String(editId)):null;
   document.getElementById('finance-entry-type').value=type;
   document.getElementById('finance-edit-id').value=item?.id||'';
   document.getElementById('finance-entry-title').value=item?.title||'';
+  document.getElementById('finance-entry-title').placeholder=type==='income'?'Например, подработка':'Например, продукты';
   document.getElementById('finance-entry-amount').value=item?.amount||'';
   document.getElementById('finance-entry-date').value=item?.date||getDateKey(financeEffectiveViewDateV16());
-  fillFinanceCategorySelectV15(item?.categoryId || financeData.categories[0]?.id);
-  const title=document.getElementById('finance-entry-sheet-title'); if(title)title.textContent=item?(type==='mandatory'?'Обязательный расход':'Расход'):(type==='mandatory'?'Новый обязательный':'Новый расход');
+  const categoryField=document.getElementById('finance-entry-category-field');
+  if(categoryField)categoryField.hidden=type==='income';
+  if(type!=='income')fillFinanceCategorySelectV15(item?.categoryId || financeData.categories[0]?.id);
+  const title=document.getElementById('finance-entry-sheet-title');
+  if(title)title.textContent=item?(type==='mandatory'?'Обязательный расход':type==='income'?'Доход':'Расход'):(type==='mandatory'?'Новый обязательный':type==='income'?'Новый доход':'Новый расход');
   const del=document.getElementById('finance-entry-delete-button'); if(del)del.hidden=!item;
   sheet.hidden=false;
   setTimeout(()=>document.getElementById('finance-entry-title')?.focus(),100);
@@ -3921,23 +3944,23 @@ function saveFinanceEntryV15() {
   const amount=financeSafeAmountV15(document.getElementById('finance-entry-amount')?.value);
   const categoryId=document.getElementById('finance-entry-category')?.value || financeData.categories[0]?.id;
   const date=financeCleanDateV15(document.getElementById('finance-entry-date')?.value);
-  if(!title){showToast('Укажи название');return;} if(!(amount>0)){showToast('Укажи сумму');return;}
-  const collectionKey=type==='mandatory'?'mandatoryExpenses':'expenses';
-  const collection=financeData[collectionKey]; const existing=id?collection.find(x=>String(x.id)===id):null;
-  const item={ id:existing?.id||financeIdV15(type), title:title.slice(0,80), amount, categoryId, date, ...(type==='mandatory'?{monthKey:financeMonthKeyV15(new Date(`${date}T12:00:00`))}:{}), updatedAt:financeNowIsoV15() };
+  if(!title){showToast(type==='income'?'Укажи источник дохода':'Укажи название');return;} if(!(amount>0)){showToast('Укажи сумму');return;}
+  const collectionKey=type==='mandatory'?'mandatoryExpenses':type==='income'?'incomes':'expenses';
+  const collection=financeData[collectionKey] || []; const existing=id?collection.find(x=>String(x.id)===id):null;
+  const item={ id:existing?.id||financeIdV15(type), title:title.slice(0,80), amount, ...(type==='income'?{}:{categoryId}), date, ...(type==='mandatory'?{monthKey:financeMonthKeyV15(new Date(`${date}T12:00:00`))}:{}), updatedAt:financeNowIsoV15() };
   if(existing) financeData[collectionKey]=collection.map(x=>String(x.id)===id?item:x); else financeData[collectionKey].push(item);
-  closeSheets(); saveFinance(); showToast(type==='mandatory'?'Обязательный расход сохранён':'Расход записан');
+  closeSheets(); saveFinance(); showToast(type==='mandatory'?'Обязательный расход сохранён':type==='income'?'Доход записан':'Расход записан');
 }
 function deleteFinanceEntryV15() {
   const type=document.getElementById('finance-entry-type')?.value||'expense'; const id=String(document.getElementById('finance-edit-id')?.value||''); if(!id)return;
-  requestConfirm('Удалить эту запись?',()=>{const key=type==='mandatory'?'mandatoryExpenses':'expenses';financeData[key]=financeData[key].filter(x=>String(x.id)!==id);financeMarkDeletedV15(key,id);closeSheets();saveFinance();showToast('Запись удалена');});
+  requestConfirm('Удалить эту запись?',()=>{const key=type==='mandatory'?'mandatoryExpenses':type==='income'?'incomes':'expenses';financeData[key]=financeData[key].filter(x=>String(x.id)!==id);financeMarkDeletedV15(key,id);closeSheets();saveFinance();showToast('Запись удалена');});
 }
 
 function openFinanceBudgetSheet() {
   closeSheets(); const sheet=document.getElementById('finance-budget-sheet'); if(!sheet)return;
   const viewDate=financeEffectiveViewDateV16(); const stats=financeMonthStatsV15(viewDate); const mandatory=financeMandatoryTotalV15(viewDate);
-  document.getElementById('finance-monthly-income-input').value=stats.income||''; document.getElementById('finance-budget-sheet-carryover').textContent=formatSignedRublesV16(stats.carryover); document.getElementById('finance-budget-sheet-mandatory').textContent=formatRubles(mandatory); document.getElementById('finance-budget-sheet-free').textContent=formatSignedRublesV16(stats.income+stats.carryover-mandatory);
-  sheet.hidden=false; const input=document.getElementById('finance-monthly-income-input'); input.oninput=()=>{const income=financeSafeAmountV15(input.value);document.getElementById('finance-budget-sheet-free').textContent=formatSignedRublesV16(income+stats.carryover-mandatory);};
+  document.getElementById('finance-monthly-income-input').value=financePlannedIncomeForDateV17(viewDate)||''; document.getElementById('finance-budget-sheet-carryover').textContent=formatSignedRublesV16(stats.carryover); document.getElementById('finance-budget-sheet-mandatory').textContent=formatRubles(mandatory); document.getElementById('finance-budget-sheet-free').textContent=formatSignedRublesV16(stats.income+stats.carryover-mandatory);
+  sheet.hidden=false; const input=document.getElementById('finance-monthly-income-input'); input.oninput=()=>{const income=financeSafeAmountV15(input.value)+financeExtraIncomeForMonthV17(viewDate);document.getElementById('finance-budget-sheet-free').textContent=formatSignedRublesV16(income+stats.carryover-mandatory);};
 }
 function saveFinanceBudgetSettings() {
   const income=financeSafeAmountV15(document.getElementById('finance-monthly-income-input')?.value); if(!(income>0)){showToast('Укажи доход на месяц');return;}
@@ -3951,7 +3974,7 @@ function createFinanceListRowV15({title,meta,amount,color,onClick,status}) {
 }
 function renderFinanceMandatoryListV15(){const root=document.getElementById('finance-mandatory-list');if(!root)return;const items=financeMandatoryForMonthV16(financeEffectiveViewDateV16());if(!items.length){const e=document.createElement('p');e.className='finance-empty';e.textContent='В этом месяце обязательных расходов нет.';root.replaceChildren(e);return;}root.replaceChildren(...[...items].sort((a,b)=>b.amount-a.amount).map(item=>createFinanceListRowV15({title:item.title,meta:financeCategoryByIdV15(item.categoryId)?.name||'',amount:formatRubles(item.amount),color:financeCategoryByIdV15(item.categoryId)?.color,onClick:()=>openFinanceEntrySheet('mandatory',item.id)})));}
 function openFinanceMandatorySheet(){closeSheets();renderFinanceMandatoryListV15();const s=document.getElementById('finance-mandatory-sheet');if(s)s.hidden=false;}
-function renderFinanceTransactionsV15(){const root=document.getElementById('finance-transactions-list');if(!root)return;const items=[...financeExpensesForMonthV15(financeEffectiveViewDateV16())].sort((a,b)=>String(b.date).localeCompare(String(a.date))||compareIso(b.updatedAt,a.updatedAt));if(!items.length){const e=document.createElement('p');e.className='finance-empty';e.textContent='В этом месяце расходов пока нет.';root.replaceChildren(e);return;}root.replaceChildren(...items.map(item=>createFinanceListRowV15({title:item.title,meta:`${financeCategoryByIdV15(item.categoryId)?.name||''} · ${financeDateLabelV15(item.date)}`,amount:`−${formatRubles(item.amount)}`,color:financeCategoryByIdV15(item.categoryId)?.color,onClick:()=>openFinanceEntrySheet('expense',item.id)})));}
+function renderFinanceTransactionsV15(){const root=document.getElementById('finance-transactions-list');if(!root)return;const view=financeEffectiveViewDateV16();const prefix=`${financeMonthKeyV15(view)}-`;const expenses=financeExpensesForMonthV15(view).map(item=>({...item,_kind:'expense'}));const incomes=(financeData.incomes||[]).filter(item=>String(item.date||'').startsWith(prefix)).map(item=>({...item,_kind:'income'}));const items=[...expenses,...incomes].sort((a,b)=>String(b.date).localeCompare(String(a.date))||compareIso(b.updatedAt,a.updatedAt));if(!items.length){const e=document.createElement('p');e.className='finance-empty';e.textContent='В этом месяце операций пока нет.';root.replaceChildren(e);return;}root.replaceChildren(...items.map(item=>item._kind==='income'?createFinanceListRowV15({title:item.title||'Доход',meta:`Доход · ${financeDateLabelV15(item.date)}`,amount:`+${formatRubles(item.amount)}`,color:'#30d158',onClick:()=>openFinanceEntrySheet('income',item.id)}):createFinanceListRowV15({title:item.title,meta:`${financeCategoryByIdV15(item.categoryId)?.name||''} · ${financeDateLabelV15(item.date)}`,amount:`−${formatRubles(item.amount)}`,color:financeCategoryByIdV15(item.categoryId)?.color,onClick:()=>openFinanceEntrySheet('expense',item.id)})));}
 function openFinanceTransactionsSheet(){closeSheets();renderFinanceTransactionsV15();const s=document.getElementById('finance-transactions-sheet');if(s)s.hidden=false;}
 
 function openFinanceDebtsSheet(){closeSheets();renderFinanceDebtsListV15();const s=document.getElementById('finance-debts-sheet');if(s)s.hidden=false;}
