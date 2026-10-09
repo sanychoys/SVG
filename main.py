@@ -1,4 +1,7 @@
 import asyncio
+import ctypes
+import gc
+import resource
 import hashlib
 import hmac
 import json
@@ -11,6 +14,7 @@ import sys
 import time
 import uuid
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -56,7 +60,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "24"
+APP_VERSION = "25"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -89,6 +93,10 @@ ADMIN_LOG_DIR = ADMIN_STATE_DIR / "logs"
 FRONTEND_LOG_FILE = ADMIN_LOG_DIR / "frontend.log"
 FRONTEND_RATE_WINDOW_SECONDS = 60
 FRONTEND_RATE_LIMIT = 60
+FRONTEND_RATE_MAX_HOSTS = 256
+FRONTEND_DIAGNOSTICS_MAX_BODY = 64 * 1024
+RUNTIME_MAINTENANCE_INTERVAL = 10 * 60
+PROCESS_TRIM_THRESHOLD_BYTES = 220 * 1024 * 1024
 FRONTEND_RATE: dict[str, deque[float]] = {}
 FRONTEND_LOG_LOCK = threading.RLock()
 ADMIN_TIMEZONE_FILE = ADMIN_STATE_DIR / "timezone.json"
@@ -137,6 +145,8 @@ async def setup_bot_commands() -> None:
         BotCommand(command="watchdog_on", description="Включить watchdog"),
         BotCommand(command="watchdog_off", description="Выключить watchdog"),
         BotCommand(command="timezone", description="Часовой пояс логов"),
+        BotCommand(command="memory", description="Использование оперативной памяти"),
+        BotCommand(command="memory_gc", description="Освободить неиспользуемую память"),
     ]
     try:
         await bot.set_my_commands(common)
@@ -330,12 +340,30 @@ def append_json_log(path: Path, payload: dict, max_bytes: int = 2_000_000) -> No
             handle.write(line)
 
 
+def _tail_file_lines(path: Path, lines: int, max_bytes: int = 192 * 1024) -> list[str]:
+    """Read only the tail of a log file so diagnostics cannot inflate RSS."""
+    wanted = max(1, int(lines))
+    if not path.is_file():
+        return []
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - max_bytes), os.SEEK_SET)
+        raw = handle.read(max_bytes)
+    text = raw.decode("utf-8", "replace")
+    rows = text.splitlines()
+    # The first line may be partial when we seek into the middle of the file.
+    if size > max_bytes and rows:
+        rows = rows[1:]
+    return rows[-wanted:]
+
+
 def tail_text_file(path: Path, lines: int = 60) -> str:
     try:
         if not path.is_file():
             return "Лог пока пуст."
-        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        return admin_trim("\n".join(content[-max(1, min(lines, 120)):]))
+        content = _tail_file_lines(path, max(1, min(lines, 120)))
+        return admin_trim("\n".join(content) or "Лог пока пуст.")
     except Exception as exc:
         return f"Не удалось прочитать {path.name}: {exc}"
 
@@ -344,7 +372,7 @@ def tail_json_log_pretty(path: Path, lines: int = 40) -> str:
     try:
         if not path.is_file():
             return "Лог пока пуст."
-        raw = path.read_text(encoding="utf-8", errors="replace").splitlines()[-max(1, min(lines, 80)):]
+        raw = _tail_file_lines(path, max(1, min(lines, 80)))
         rows = []
         for line in raw:
             try:
@@ -385,27 +413,28 @@ def frontend_log_summary() -> str:
     if not FRONTEND_LOG_FILE.is_file():
         return "нет событий"
     try:
-        rows = FRONTEND_LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+        rows = _tail_file_lines(FRONTEND_LOG_FILE, 80, max_bytes=96 * 1024)
         if not rows:
             return "нет событий"
         last = json.loads(rows[-1])
         stage = last.get("stage") or last.get("kind") or last.get("message") or "event"
-        return f"{len(rows)} events · last: {str(stage)[:46]}"
+        size_kb = FRONTEND_LOG_FILE.stat().st_size / 1024
+        return f"log {size_kb:.0f}KB · last: {str(stage)[:46]}"
     except Exception:
         return "лог есть, формат повреждён"
 
 
 def admin_public_web_diagnostics() -> str:
     checks = [
-        ("index", f"{PUBLIC_BASE_URL}/", "script.js?v=24"),
-        ("script", f"{PUBLIC_BASE_URL}/script.js?v=24", "SVGTRACKER_BOOT_STAGE"),
-        ("style", f"{PUBLIC_BASE_URL}/style.css?v=24", ":root"),
+        ("index", f"{PUBLIC_BASE_URL}/", "script.js?v=25"),
+        ("script", f"{PUBLIC_BASE_URL}/script.js?v=25", "SVGTRACKER_BOOT_STAGE"),
+        ("style", f"{PUBLIC_BASE_URL}/style.css?v=25", ":root"),
     ]
     rows = []
     for name, url, expected in checks:
         started = time.monotonic()
         try:
-            req = urllib_request.Request(url, headers={"User-Agent": "SVGTracker-Diagnostics/24", "Cache-Control": "no-cache"})
+            req = urllib_request.Request(url, headers={"User-Agent": "SVGTracker-Diagnostics/25", "Cache-Control": "no-cache"})
             with urllib_request.urlopen(req, timeout=4) as response:
                 body = response.read(512_000).decode("utf-8", "replace")
                 elapsed = int((time.monotonic() - started) * 1000)
@@ -520,11 +549,208 @@ def admin_frontend_status() -> str:
         return "FAIL · " + ", ".join(missing)
     try:
         html = (root / "index.html").read_text(encoding="utf-8", errors="replace")
-        if "/script.js?v=24" not in html or "/style.css?v=24" not in html:
+        if "/script.js?v=25" not in html or "/style.css?v=25" not in html:
             return "WARN · asset version mismatch"
     except Exception:
         return "FAIL · index unreadable"
-    return "OK · v24 assets"
+    return "OK · v25 assets"
+
+
+def _proc_status_kb() -> dict[str, int]:
+    values: dict[str, int] = {}
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if ":" not in line:
+                continue
+            key, raw = line.split(":", 1)
+            parts = raw.strip().split()
+            if parts and parts[0].isdigit():
+                values[key] = int(parts[0])
+    except Exception:
+        pass
+    return values
+
+
+def _process_pss_kb() -> int | None:
+    try:
+        for line in Path("/proc/self/smaps_rollup").read_text().splitlines():
+            if line.startswith("Pss:"):
+                return int(line.split()[1])
+    except Exception:
+        return None
+    return None
+
+
+def process_memory_snapshot() -> dict:
+    status = _proc_status_kb()
+    rss_kb = int(status.get("VmRSS", 0))
+    hwm_kb = int(status.get("VmHWM", rss_kb))
+    pss_kb = _process_pss_kb()
+    try:
+        peak_ru_kb = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        hwm_kb = max(hwm_kb, peak_ru_kb)
+    except Exception:
+        pass
+    return {
+        "rss_kb": rss_kb,
+        "pss_kb": pss_kb,
+        "peak_kb": hwm_kb,
+        "threads": int(status.get("Threads", 0)),
+    }
+
+
+def system_memory_snapshot() -> dict:
+    info: dict[str, int] = {}
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if ":" not in line:
+                continue
+            key, raw = line.split(":", 1)
+            first = raw.strip().split()[0]
+            if first.isdigit():
+                info[key] = int(first)
+    except Exception:
+        pass
+    total = int(info.get("MemTotal", 0))
+    available = int(info.get("MemAvailable", 0))
+    return {
+        "total_kb": total,
+        "available_kb": available,
+        "used_kb": max(0, total - available),
+        "cached_kb": int(info.get("Cached", 0)) + int(info.get("SReclaimable", 0)),
+        "swap_total_kb": int(info.get("SwapTotal", 0)),
+        "swap_free_kb": int(info.get("SwapFree", 0)),
+    }
+
+
+def _trim_malloc() -> bool:
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        trim = getattr(libc, "malloc_trim", None)
+        if trim is None:
+            return False
+        trim.argtypes = [ctypes.c_size_t]
+        trim.restype = ctypes.c_int
+        return bool(trim(0))
+    except Exception:
+        return False
+
+
+def prune_runtime_caches() -> dict:
+    now_wall = time.time()
+    now_mono = time.monotonic()
+    removed = {"deploys": 0, "cooldowns": 0, "rate_hosts": 0}
+
+    for token, item in list(ADMIN_PENDING_DEPLOYS.items()):
+        if now_wall - float(item.get("created_at") or 0) <= 1800:
+            continue
+        pending = ADMIN_PENDING_DEPLOYS.pop(token, None)
+        if pending:
+            try:
+                Path(pending.get("path") or "").unlink(missing_ok=True)
+            except Exception:
+                pass
+            removed["deploys"] += 1
+
+    for key, stamp in list(ADMIN_ERROR_COOLDOWN.items()):
+        if now_wall - float(stamp or 0) > 3600:
+            ADMIN_ERROR_COOLDOWN.pop(key, None)
+            removed["cooldowns"] += 1
+    if len(ADMIN_ERROR_COOLDOWN) > 512:
+        overflow = len(ADMIN_ERROR_COOLDOWN) - 512
+        for key, _ in sorted(ADMIN_ERROR_COOLDOWN.items(), key=lambda item: item[1])[:overflow]:
+            ADMIN_ERROR_COOLDOWN.pop(key, None)
+            removed["cooldowns"] += 1
+
+    for host, bucket in list(FRONTEND_RATE.items()):
+        while bucket and now_mono - bucket[0] > FRONTEND_RATE_WINDOW_SECONDS:
+            bucket.popleft()
+        if not bucket:
+            FRONTEND_RATE.pop(host, None)
+            removed["rate_hosts"] += 1
+    if len(FRONTEND_RATE) > FRONTEND_RATE_MAX_HOSTS:
+        overflow = len(FRONTEND_RATE) - FRONTEND_RATE_MAX_HOSTS
+        oldest = sorted(FRONTEND_RATE.items(), key=lambda item: item[1][-1] if item[1] else -1)[:overflow]
+        for host, _ in oldest:
+            FRONTEND_RATE.pop(host, None)
+            removed["rate_hosts"] += 1
+    return removed
+
+
+def release_unused_memory() -> dict:
+    before = process_memory_snapshot()
+    removed = prune_runtime_caches()
+    unreachable = gc.collect()
+    trimmed = _trim_malloc()
+    after = process_memory_snapshot()
+    return {
+        "before": before,
+        "after": after,
+        "gc": unreachable,
+        "trimmed": trimmed,
+        "removed": removed,
+    }
+
+
+def admin_memory_text() -> str:
+    proc = process_memory_snapshot()
+    sysmem = system_memory_snapshot()
+    pss = f"{proc['pss_kb'] / 1024:.1f} MB" if proc.get("pss_kb") is not None else "—"
+    swap_used = max(0, sysmem.get("swap_total_kb", 0) - sysmem.get("swap_free_kb", 0))
+    top = "—"
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "pid,comm,rss", "--sort=-rss"],
+            capture_output=True, text=True, timeout=4,
+        )
+        rows = [row.strip() for row in (result.stdout or "").splitlines()[1:7] if row.strip()]
+        formatted = []
+        for row in rows:
+            parts = row.split(None, 2)
+            if len(parts) == 3:
+                pid, command, rss = parts
+                try:
+                    formatted.append(f"{pid} {command}: {int(rss)/1024:.1f} MB")
+                except ValueError:
+                    formatted.append(row)
+        top = "\n".join(formatted) or "—"
+    except Exception:
+        pass
+    return admin_trim(
+        "SVGTracker · memory\n\n"
+        f"Process RSS: {proc['rss_kb']/1024:.1f} MB\n"
+        f"Process PSS: {pss}\n"
+        f"Peak RSS: {proc['peak_kb']/1024:.1f} MB\n"
+        f"Threads: {proc['threads']}\n"
+        f"Python GC: {gc.get_count()}\n"
+        f"Runtime caches: deploy={len(ADMIN_PENDING_DEPLOYS)} · cooldown={len(ADMIN_ERROR_COOLDOWN)} · rate_hosts={len(FRONTEND_RATE)}\n\n"
+        f"VPS RAM used: {sysmem.get('used_kb',0)/1024:.0f} / {sysmem.get('total_kb',0)/1024:.0f} MB\n"
+        f"VPS RAM available: {sysmem.get('available_kb',0)/1024:.0f} MB\n"
+        f"Linux cache: {sysmem.get('cached_kb',0)/1024:.0f} MB\n"
+        f"Swap used: {swap_used/1024:.0f} MB\n\n"
+        "Top processes:\n" + top
+    )
+
+
+async def runtime_memory_maintenance() -> None:
+    while True:
+        await asyncio.sleep(RUNTIME_MAINTENANCE_INTERVAL)
+        try:
+            prune_runtime_caches()
+            current = process_memory_snapshot()
+            if current.get("rss_kb", 0) * 1024 >= PROCESS_TRIM_THRESHOLD_BYTES:
+                before = current.get("rss_kb", 0)
+                unreachable = gc.collect()
+                _trim_malloc()
+                after = process_memory_snapshot().get("rss_kb", 0)
+                logger.info(
+                    "Memory maintenance rss=%.1fMB→%.1fMB gc=%s",
+                    before / 1024, after / 1024, unreachable,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Runtime memory maintenance failed")
 
 
 def admin_server_status_text() -> str:
@@ -547,6 +773,7 @@ def admin_server_status_text() -> str:
         mem_available = f"{info.get('MemAvailable', 0) // 1024} MB"
     except Exception:
         pass
+    process_mem = process_memory_snapshot()
     latest = admin_latest_status()
     deploy_line = latest.get("status") or "—"
     watchdog = subprocess.run(["systemctl", "is-active", "svgtracker-watchdog.timer"], capture_output=True, text=True).stdout.strip() or "unknown"
@@ -562,6 +789,7 @@ def admin_server_status_text() -> str:
         f"Watchdog: {watchdog}\n"
         f"Git: {admin_git_state()}\n"
         f"DB: {db_size / 1024:.1f} KB\n"
+        f"Process RAM: {process_mem['rss_kb'] / 1024:.1f} MB · peak {process_mem['peak_kb'] / 1024:.1f} MB\n"
         f"RAM available: {mem_available}\n"
         f"Disk free: {disk.free / (1024**3):.1f} GB\n"
         f"Last deploy: {deploy_line}"
@@ -569,6 +797,8 @@ def admin_server_status_text() -> str:
 
 
 async def notify_admin_error(title: str, detail: str) -> None:
+    if len(ADMIN_ERROR_COOLDOWN) > 512:
+        prune_runtime_caches()
     fingerprint = hashlib.sha1(f"{title}|{detail[:500]}".encode("utf-8", "ignore")).hexdigest()
     now = time.time()
     if now - ADMIN_ERROR_COOLDOWN.get(fingerprint, 0) < 300:
@@ -745,14 +975,27 @@ async def api_frontend_diagnostics(request: Request):
     """
     host = request.client.host if request.client else "unknown"
     now = time.monotonic()
+    if len(FRONTEND_RATE) >= FRONTEND_RATE_MAX_HOSTS and host not in FRONTEND_RATE:
+        prune_runtime_caches()
     bucket = FRONTEND_RATE.setdefault(host, deque())
     while bucket and now - bucket[0] > FRONTEND_RATE_WINDOW_SECONDS:
         bucket.popleft()
     if len(bucket) >= FRONTEND_RATE_LIMIT:
         return JSONResponse(status_code=429, content={"status": "rate_limited"})
     bucket.append(now)
+    content_length = request.headers.get("content-length")
     try:
-        payload = await request.json()
+        if content_length and int(content_length) > FRONTEND_DIAGNOSTICS_MAX_BODY:
+            return JSONResponse(status_code=413, content={"status": "payload_too_large"})
+    except ValueError:
+        return JSONResponse(status_code=400, content={"status": "invalid_content_length"})
+    try:
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > FRONTEND_DIAGNOSTICS_MAX_BODY:
+                return JSONResponse(status_code=413, content={"status": "payload_too_large"})
+            body.extend(chunk)
+        payload = json.loads(body.decode("utf-8")) if body else {}
     except Exception:
         return JSONResponse(status_code=400, content={"status": "invalid_json"})
     events = payload.get("events") if isinstance(payload, dict) else None
@@ -1234,7 +1477,7 @@ async def admin_panel(message: Message):
         "перезапускает сервис и автоматически откатывается, если API не поднимается.\n\n"
         "После настройки GitHub успешный ZIP-deploy автоматически делает commit + push в origin/main.\n\n"
         "Команды: /deploy /deploy_status /server_status /diagnostics /logs_frontend /logs_backend /logs_bot /logs_system /logs_deploy /backup /backups /rollback /logs /errors /restart "
-        "/github_setup /github_test /github_status /github_sync",
+        "/github_setup /github_test /github_status /github_sync /memory /memory_gc",
         reply_markup=admin_keyboard(),
     )
 
@@ -1402,6 +1645,30 @@ async def admin_timezone_command(message: Message):
     settings = set_user_timezone(user_id, timezone_name, offset_minutes)
     write_admin_timezone_state(settings)
     await message.answer(f"Готово. Логи: {admin_timezone_label(settings)}\nСейчас: {admin_now_text()}")
+
+
+@dp.message(Command("memory"))
+async def admin_memory(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer(await asyncio.to_thread(admin_memory_text))
+
+
+@dp.message(Command("memory_gc"))
+async def admin_memory_gc(message: Message):
+    if not is_admin_message(message):
+        return
+    result = await asyncio.to_thread(release_unused_memory)
+    before = result["before"]["rss_kb"] / 1024
+    after = result["after"]["rss_kb"] / 1024
+    removed = result["removed"]
+    await message.answer(
+        "Memory cleanup\n\n"
+        f"RSS: {before:.1f} → {after:.1f} MB\n"
+        f"GC objects: {result['gc']}\n"
+        f"malloc_trim: {'yes' if result['trimmed'] else 'no'}\n"
+        f"Pruned: deploy={removed['deploys']} · cooldown={removed['cooldowns']} · rate_hosts={removed['rate_hosts']}"
+    )
 
 
 @dp.message(Command("deploy"))
@@ -1820,17 +2087,31 @@ async def reset_data_cancel(callback: CallbackQuery):
 async def main():
     init_db()
     logger.info("SVGTracker starting")
+
+    # Keep thread pools deliberately small. FastAPI/AnyIO otherwise may retain
+    # dozens of worker stacks on a small VPS after traffic bursts.
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=4, thread_name_prefix="svgtracker"))
+    try:
+        import anyio.to_thread
+        anyio.to_thread.current_default_thread_limiter().total_tokens = 8
+    except Exception:
+        logger.exception("Failed to configure AnyIO thread limiter")
+
     await setup_bot_commands()
 
     api_config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
     api_server = uvicorn.Server(api_config)
     bot_task = asyncio.create_task(dp.start_polling(bot), name="telegram-polling")
     api_task = asyncio.create_task(api_server.serve(), name="uvicorn-api")
+    maintenance_task = asyncio.create_task(runtime_memory_maintenance(), name="memory-maintenance")
 
     done, pending = await asyncio.wait(
         {bot_task, api_task},
         return_when=asyncio.FIRST_COMPLETED,
     )
+    maintenance_task.cancel()
+    await asyncio.gather(maintenance_task, return_exceptions=True)
     for task in done:
         if task.cancelled():
             continue

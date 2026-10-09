@@ -12,6 +12,11 @@ ExecStart=/var/www/SVG/venv/bin/python /var/www/SVG/main.py
 Restart=always
 RestartSec=2
 TimeoutStopSec=20
+Environment=MALLOC_ARENA_MAX=2
+MemoryAccounting=true
+MemoryHigh=450M
+MemoryMax=700M
+TasksMax=64
 
 [Install]
 WantedBy=multi-user.target

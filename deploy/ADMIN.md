@@ -71,3 +71,11 @@ Protected production data is never overwritten by ZIP deploy: `config.py`, `.env
 ## Local time / timezone
 
 V24 stores the user's device timezone when the Telegram Mini App opens. Admin log commands (`/logs*`, `/errors`, `/diagnostics`, backup timestamps and deploy notifications) render timestamps in the admin's saved device timezone while the database continues to store UTC internally. `/timezone` shows the active timezone and can override it manually, e.g. `/timezone +04:00` or `/timezone Europe/Moscow`.
+
+
+## Memory / RAM
+
+- `/memory` — current SVGTracker RSS/PSS/peak, VPS memory and top processes.
+- `/memory_gc` — prune expired runtime caches, run Python GC and request glibc `malloc_trim`.
+- `svgtracker.service` uses `MALLOC_ARENA_MAX=2`, `MemoryHigh=450M`, `MemoryMax=700M`, and `TasksMax=64` to avoid runaway memory on a small VPS.
+- Runtime maintenance prunes expired deploy metadata, error cooldowns and frontend rate-limit buckets every 10 minutes.
