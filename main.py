@@ -37,6 +37,12 @@ from finance_db import (
     create_friend_request,
     cancel_friend_request,
     create_shortcut_token,
+    create_web_auth_request,
+    approve_web_auth_request,
+    consume_web_auth_request,
+    create_web_session,
+    get_user_by_web_session,
+    revoke_web_session,
     get_or_create_user,
     get_profile_data,
     get_user_by_shortcut_token,
@@ -60,10 +66,14 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "25"
+APP_VERSION = "26"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
+WEB_SESSION_COOKIE = "svgtracker_session"
+WEB_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
+WEB_AUTH_REQUEST_TTL_SECONDS = 10 * 60
+BOT_USERNAME = os.environ.get("SVGTRACKER_BOT_USERNAME", "SVGTrackerbot").strip().lstrip("@") or "SVGTrackerbot"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -119,9 +129,9 @@ async def setup_bot_commands() -> None:
         BotCommand(command="start", description="Открыть SVGTracker"),
         BotCommand(command="shortcut", description="Токен для iPhone Action Button"),
         BotCommand(command="shortcut_revoke", description="Отключить Action Button"),
-        BotCommand(command="resetdata", description="Очистить мои тестовые данные"),
     ]
     admin = common + [
+        BotCommand(command="resetdata", description="Очистить тестовые данные администратора"),
         BotCommand(command="admin", description="Админ-панель"),
         BotCommand(command="deploy", description="Обновить production ZIP-файлом"),
         BotCommand(command="deploy_status", description="Статус последнего deploy"),
@@ -426,15 +436,15 @@ def frontend_log_summary() -> str:
 
 def admin_public_web_diagnostics() -> str:
     checks = [
-        ("index", f"{PUBLIC_BASE_URL}/", "script.js?v=25"),
-        ("script", f"{PUBLIC_BASE_URL}/script.js?v=25", "SVGTRACKER_BOOT_STAGE"),
-        ("style", f"{PUBLIC_BASE_URL}/style.css?v=25", ":root"),
+        ("index", f"{PUBLIC_BASE_URL}/", f"script.js?v={APP_VERSION}"),
+        ("script", f"{PUBLIC_BASE_URL}/script.js?v={APP_VERSION}", "SVGTRACKER_BOOT_STAGE"),
+        ("style", f"{PUBLIC_BASE_URL}/style.css?v={APP_VERSION}", ":root"),
     ]
     rows = []
     for name, url, expected in checks:
         started = time.monotonic()
         try:
-            req = urllib_request.Request(url, headers={"User-Agent": "SVGTracker-Diagnostics/25", "Cache-Control": "no-cache"})
+            req = urllib_request.Request(url, headers={"User-Agent": f"SVGTracker-Diagnostics/{APP_VERSION}", "Cache-Control": "no-cache"})
             with urllib_request.urlopen(req, timeout=4) as response:
                 body = response.read(512_000).decode("utf-8", "replace")
                 elapsed = int((time.monotonic() - started) * 1000)
@@ -549,11 +559,13 @@ def admin_frontend_status() -> str:
         return "FAIL · " + ", ".join(missing)
     try:
         html = (root / "index.html").read_text(encoding="utf-8", errors="replace")
-        if "/script.js?v=25" not in html or "/style.css?v=25" not in html:
+        expected_script = f"/script.js?v={APP_VERSION}"
+        expected_style = f"/style.css?v={APP_VERSION}"
+        if expected_script not in html or expected_style not in html:
             return "WARN · asset version mismatch"
     except Exception:
         return "FAIL · index unreadable"
-    return "OK · v25 assets"
+    return f"OK · v{APP_VERSION} assets"
 
 
 def _proc_status_kb() -> dict[str, int]:
@@ -941,10 +953,42 @@ def verify_telegram_init_data(init_data: str):
     return user
 
 
-def authenticated_user(x_telegram_init_data: str | None):
-    user = verify_telegram_init_data(x_telegram_init_data or "")
-    user_id = get_or_create_user(user)
-    return user, user_id
+def authenticated_user(request: Request, x_telegram_init_data: str | None):
+    if x_telegram_init_data:
+        user = verify_telegram_init_data(x_telegram_init_data)
+        user_id = get_or_create_user(user)
+        return user, user_id
+
+    session_token = request.cookies.get(WEB_SESSION_COOKIE, "")
+    record = get_user_by_web_session(session_token)
+    if not record:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        telegram_id = int(record["telegram_id"])
+    except (TypeError, ValueError):
+        telegram_id = record["telegram_id"]
+    user = {
+        "id": telegram_id,
+        "username": record.get("username"),
+        "first_name": record.get("first_name"),
+        "last_name": record.get("last_name"),
+        "photo_url": record.get("photo_url"),
+    }
+    return user, record["user_id"]
+
+
+def web_user_payload(record: dict) -> dict:
+    try:
+        telegram_id = int(record.get("telegram_id"))
+    except (TypeError, ValueError):
+        telegram_id = record.get("telegram_id")
+    return {
+        "id": telegram_id,
+        "username": record.get("username"),
+        "first_name": record.get("first_name"),
+        "last_name": record.get("last_name"),
+        "photo_url": record.get("photo_url"),
+    }
 
 
 @app.middleware("http")
@@ -963,6 +1007,69 @@ async def monitor_http_errors(request: Request, call_next):
 @app.get("/api/test")
 def api_test():
     return {"status": "ok", "service": "SVGTracker API", "version": APP_VERSION}
+
+
+@app.post("/api/auth/web/start")
+def api_web_auth_start():
+    auth = create_web_auth_request(WEB_AUTH_REQUEST_TTL_SECONDS)
+    return {
+        "status": "ok",
+        "token": auth["token"],
+        "expires_at": auth["expires_at"],
+        "telegram_url": f"https://t.me/{BOT_USERNAME}?start=webauth_{auth['token']}",
+    }
+
+
+@app.get("/api/auth/web/status")
+def api_web_auth_status(token: str = ""):
+    result = consume_web_auth_request(token)
+    status = result.get("status")
+    if status == "pending":
+        return {"status": "pending", "expires_at": result.get("expires_at")}
+    if status in {"invalid", "expired", "consumed"}:
+        return JSONResponse(status_code=410, content={"status": status, "message": "Ссылка входа устарела. Создай новую."})
+    if status != "approved":
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Не удалось подтвердить вход"})
+
+    session = create_web_session(result["user_id"], ttl_days=30)
+    response = JSONResponse({
+        "status": "authenticated",
+        "user": web_user_payload(result),
+        "expires_at": session["expires_at"],
+    })
+    response.set_cookie(
+        WEB_SESSION_COOKIE,
+        session["token"],
+        max_age=WEB_SESSION_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+@app.get("/api/auth/session")
+def api_web_auth_session(request: Request):
+    record = get_user_by_web_session(request.cookies.get(WEB_SESSION_COOKIE, ""))
+    if not record:
+        return {"status": "ok", "authenticated": False}
+    return {
+        "status": "ok",
+        "authenticated": True,
+        "user": web_user_payload(record),
+        "expires_at": record.get("expires_at"),
+    }
+
+
+@app.post("/api/auth/logout")
+def api_web_auth_logout(request: Request):
+    token = request.cookies.get(WEB_SESSION_COOKIE, "")
+    if token:
+        revoke_web_session(token)
+    response = JSONResponse({"status": "ok"})
+    response.delete_cookie(WEB_SESSION_COOKIE, path="/")
+    return response
 
 
 @app.post("/api/diagnostics/frontend")
@@ -1028,14 +1135,14 @@ async def api_frontend_diagnostics(request: Request):
 
 
 @app.post("/api/user")
-def api_user(x_telegram_init_data: str | None = Header(default=None)):
-    user, user_id = authenticated_user(x_telegram_init_data)
+def api_user(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    user, user_id = authenticated_user(request, x_telegram_init_data)
     return {"status": "ok", "user_id": user_id, "telegram_id": str(user["id"])}
 
 
 @app.get("/api/training/state")
-def api_training_state(x_telegram_init_data: str | None = Header(default=None)):
-    _, user_id = authenticated_user(x_telegram_init_data)
+def api_training_state(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(request, x_telegram_init_data)
     record = get_training_state(user_id)
     if not record:
         return {"status": "ok", "exists": False, "state": None}
@@ -1048,8 +1155,8 @@ def api_training_state(x_telegram_init_data: str | None = Header(default=None)):
 
 
 @app.get("/api/finance/state")
-def api_finance_state(x_telegram_init_data: str | None = Header(default=None)):
-    _, user_id = authenticated_user(x_telegram_init_data)
+def api_finance_state(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(request, x_telegram_init_data)
     record = get_finance_state(user_id)
     if not record:
         return {"status": "ok", "exists": False, "state": None}
@@ -1064,9 +1171,10 @@ def api_finance_state(x_telegram_init_data: str | None = Header(default=None)):
 @app.put("/api/finance/state")
 def api_save_finance_state(
     payload: dict,
+    request: Request,
     x_telegram_init_data: str | None = Header(default=None),
 ):
-    _, user_id = authenticated_user(x_telegram_init_data)
+    _, user_id = authenticated_user(request, x_telegram_init_data)
     state = payload.get("state") if isinstance(payload.get("state"), dict) else payload
     base_updated_at = payload.get("baseUpdatedAt") if isinstance(payload.get("state"), dict) else None
     encoded = json.dumps(state, ensure_ascii=False).encode("utf-8")
@@ -1223,17 +1331,18 @@ async def api_shortcut_finance_transaction(
 
 
 @app.get("/api/profile")
-def api_profile(x_telegram_init_data: str | None = Header(default=None)):
-    _, user_id = authenticated_user(x_telegram_init_data)
+def api_profile(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(request, x_telegram_init_data)
     return {"status": "ok", **get_profile_data(user_id)}
 
 
 @app.put("/api/profile/notifications")
 def api_profile_notifications(
     payload: dict,
+    request: Request,
     x_telegram_init_data: str | None = Header(default=None),
 ):
-    _, user_id = authenticated_user(x_telegram_init_data)
+    _, user_id = authenticated_user(request, x_telegram_init_data)
     if not isinstance(payload.get("enabled"), bool):
         raise HTTPException(status_code=422, detail="enabled must be boolean")
     kind = str(payload.get("kind") or "bot").strip().lower()
@@ -1247,9 +1356,10 @@ def api_profile_notifications(
 @app.put("/api/profile/timezone")
 def api_profile_timezone(
     payload: dict,
+    request: Request,
     x_telegram_init_data: str | None = Header(default=None),
 ):
-    user, user_id = authenticated_user(x_telegram_init_data)
+    user, user_id = authenticated_user(request, x_telegram_init_data)
     timezone_name = str(payload.get("timezone_name") or "").strip()[:80]
     try:
         offset_minutes = int(payload.get("offset_minutes"))
@@ -1276,9 +1386,10 @@ def api_profile_timezone(
 @app.post("/api/friends/request")
 async def api_friend_request(
     payload: dict,
+    request: Request,
     x_telegram_init_data: str | None = Header(default=None),
 ):
-    user, user_id = authenticated_user(x_telegram_init_data)
+    user, user_id = authenticated_user(request, x_telegram_init_data)
     result = create_friend_request(user_id, payload.get("username"))
     status = result.get("status")
     if status == "invalid":
@@ -1312,48 +1423,48 @@ async def api_friend_request(
 
 
 @app.post("/api/friends/requests/{request_id}/accept")
-def api_friend_accept(request_id: int, x_telegram_init_data: str | None = Header(default=None)):
-    _, user_id = authenticated_user(x_telegram_init_data)
+def api_friend_accept(request_id: int, request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(request, x_telegram_init_data)
     if not resolve_friend_request(user_id, request_id, True):
         raise HTTPException(status_code=404, detail="Запрос не найден")
     return {"status": "ok"}
 
 
 @app.post("/api/friends/requests/{request_id}/reject")
-def api_friend_reject(request_id: int, x_telegram_init_data: str | None = Header(default=None)):
-    _, user_id = authenticated_user(x_telegram_init_data)
+def api_friend_reject(request_id: int, request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(request, x_telegram_init_data)
     if not resolve_friend_request(user_id, request_id, False):
         raise HTTPException(status_code=404, detail="Запрос не найден")
     return {"status": "ok"}
 
 
 @app.delete("/api/friends/requests/{request_id}")
-def api_friend_cancel(request_id: int, x_telegram_init_data: str | None = Header(default=None)):
-    _, user_id = authenticated_user(x_telegram_init_data)
+def api_friend_cancel(request_id: int, request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(request, x_telegram_init_data)
     if not cancel_friend_request(user_id, request_id):
         raise HTTPException(status_code=404, detail="Исходящий запрос не найден")
     return {"status": "ok"}
 
 
 @app.delete("/api/friends/{friend_user_id}")
-def api_friend_remove(friend_user_id: int, x_telegram_init_data: str | None = Header(default=None)):
-    _, user_id = authenticated_user(x_telegram_init_data)
+def api_friend_remove(friend_user_id: int, request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(request, x_telegram_init_data)
     if not remove_friend(user_id, friend_user_id):
         raise HTTPException(status_code=404, detail="Друг не найден")
     return {"status": "ok"}
 
 
 @app.post("/api/friends/{target_user_id}/block")
-def api_friend_block(target_user_id: int, x_telegram_init_data: str | None = Header(default=None)):
-    _, user_id = authenticated_user(x_telegram_init_data)
+def api_friend_block(target_user_id: int, request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(request, x_telegram_init_data)
     if not block_user(user_id, target_user_id):
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     return {"status": "ok"}
 
 
 @app.delete("/api/friends/{target_user_id}/block")
-def api_friend_unblock(target_user_id: int, x_telegram_init_data: str | None = Header(default=None)):
-    _, user_id = authenticated_user(x_telegram_init_data)
+def api_friend_unblock(target_user_id: int, request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(request, x_telegram_init_data)
     if not unblock_user(user_id, target_user_id):
         raise HTTPException(status_code=404, detail="Блокировка не найдена")
     return {"status": "ok"}
@@ -1362,9 +1473,10 @@ def api_friend_unblock(target_user_id: int, x_telegram_init_data: str | None = H
 @app.put("/api/training/state")
 def api_save_training_state(
     payload: dict,
+    request: Request,
     x_telegram_init_data: str | None = Header(default=None),
 ):
-    _, user_id = authenticated_user(x_telegram_init_data)
+    _, user_id = authenticated_user(request, x_telegram_init_data)
 
     # v10 clients send an envelope with the state plus the server version they
     # last observed. Legacy clients that send the state directly remain valid.
@@ -1407,6 +1519,28 @@ def api_save_training_state(
 
 @dp.message(Command("start"))
 async def start(message: Message):
+    if not message.from_user:
+        return
+    parts = str(message.text or "").split(maxsplit=1)
+    payload = parts[1].strip() if len(parts) > 1 else ""
+    if payload.startswith("webauth_"):
+        token = payload[len("webauth_"):].strip()
+        user_id = get_or_create_user({
+            "id": message.from_user.id,
+            "username": message.from_user.username,
+            "first_name": message.from_user.first_name,
+            "last_name": message.from_user.last_name,
+            "photo_url": None,
+        })
+        if approve_web_auth_request(token, user_id):
+            await message.answer(
+                "Вход в SVGTracker подтверждён. Вернись в браузер — сайт откроется автоматически.",
+                reply_markup=main_keyboard(),
+            )
+        else:
+            await message.answer("Ссылка входа устарела или уже использована. Вернись на сайт и создай новую.")
+        return
+
     username = message.from_user.first_name
     await message.answer(
         text=f"""
@@ -1477,7 +1611,7 @@ async def admin_panel(message: Message):
         "перезапускает сервис и автоматически откатывается, если API не поднимается.\n\n"
         "После настройки GitHub успешный ZIP-deploy автоматически делает commit + push в origin/main.\n\n"
         "Команды: /deploy /deploy_status /server_status /diagnostics /logs_frontend /logs_backend /logs_bot /logs_system /logs_deploy /backup /backups /rollback /logs /errors /restart "
-        "/github_setup /github_test /github_status /github_sync /memory /memory_gc",
+        "/github_setup /github_test /github_status /github_sync /memory /memory_gc /resetdata",
         reply_markup=admin_keyboard(),
     )
 
@@ -2042,6 +2176,9 @@ async def telegram_error_handler(event: ErrorEvent):
 async def reset_data_request(message: Message):
     if not message.from_user:
         return
+    if not is_admin_message(message):
+        await message.answer("Команда доступна только администратору SVGTracker.")
+        return
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -2064,6 +2201,9 @@ async def reset_data_request(message: Message):
 async def reset_data_confirm(callback: CallbackQuery):
     if not callback.from_user or not callback.data:
         return
+    if not is_admin_telegram_id(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
     requested_user_id = callback.data.split(":", 1)[1]
     if requested_user_id != str(callback.from_user.id):
         await callback.answer("Эта кнопка не для твоего аккаунта", show_alert=True)
@@ -2079,6 +2219,9 @@ async def reset_data_confirm(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "resetdata_cancel")
 async def reset_data_cancel(callback: CallbackQuery):
+    if not callback.from_user or not is_admin_telegram_id(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
     await callback.answer("Отменено")
     if callback.message:
         await callback.message.edit_text("Очистка отменена.")

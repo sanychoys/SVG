@@ -2,7 +2,7 @@ import hashlib
 import json
 import secrets
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "svgtracker.db"
@@ -149,6 +149,28 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked
                 ON user_blocks(blocked_user_id);
+            CREATE TABLE IF NOT EXISTS web_auth_requests(
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                approved_at TEXT,
+                consumed_at TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_web_auth_requests_expiry
+                ON web_auth_requests(expires_at);
+            CREATE TABLE IF NOT EXISTS web_sessions(
+                session_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                last_seen_at TEXT,
+                revoked_at TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_web_sessions_user
+                ON web_sessions(user_id, revoked_at);
             """
         )
         db.execute("PRAGMA journal_mode = WAL")
@@ -175,7 +197,14 @@ def get_or_create_user(data):
         now = utc_now()
         if row:
             db.execute(
-                "UPDATE users SET username=?, first_name=?, last_name=?, photo_url=? WHERE id=?",
+                """
+                UPDATE users SET
+                    username=COALESCE(?, username),
+                    first_name=COALESCE(?, first_name),
+                    last_name=COALESCE(?, last_name),
+                    photo_url=COALESCE(?, photo_url)
+                WHERE id=?
+                """,
                 (
                     data.get("username"),
                     data.get("first_name"),
@@ -333,6 +362,140 @@ def get_user_by_shortcut_token(token):
             (now, token_hash),
         )
         return dict(row)
+
+
+
+def _iso_after(seconds=0, days=0):
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds, days=days)).isoformat().replace("+00:00", "Z")
+
+
+def create_web_auth_request(ttl_seconds=600):
+    token = secrets.token_urlsafe(24)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now = utc_now()
+    expires_at = _iso_after(seconds=max(60, min(int(ttl_seconds), 1800)))
+    with connect() as db:
+        db.execute("DELETE FROM web_auth_requests WHERE expires_at < ? OR consumed_at IS NOT NULL", (now,))
+        db.execute(
+            "INSERT INTO web_auth_requests(token_hash, created_at, expires_at) VALUES(?,?,?)",
+            (token_hash, now, expires_at),
+        )
+    return {"token": token, "expires_at": expires_at}
+
+
+def approve_web_auth_request(token, user_id):
+    clean = str(token or "").strip()
+    if not clean or len(clean) > 160:
+        return False
+    token_hash = hashlib.sha256(clean.encode("utf-8")).hexdigest()
+    now = utc_now()
+    with connect() as db:
+        row = db.execute(
+            "SELECT expires_at, consumed_at FROM web_auth_requests WHERE token_hash=?",
+            (token_hash,),
+        ).fetchone()
+        if not row or row["consumed_at"] is not None or row["expires_at"] < now:
+            return False
+        cur = db.execute(
+            "UPDATE web_auth_requests SET user_id=?, approved_at=? WHERE token_hash=? AND consumed_at IS NULL",
+            (user_id, now, token_hash),
+        )
+        return cur.rowcount > 0
+
+
+def consume_web_auth_request(token):
+    clean = str(token or "").strip()
+    if not clean or len(clean) > 160:
+        return {"status": "invalid"}
+    token_hash = hashlib.sha256(clean.encode("utf-8")).hexdigest()
+    now = utc_now()
+    with connect() as db:
+        row = db.execute(
+            """
+            SELECT r.user_id, r.expires_at, r.approved_at, r.consumed_at,
+                   u.telegram_id, u.username, u.first_name, u.last_name, u.photo_url
+            FROM web_auth_requests r
+            LEFT JOIN users u ON u.id=r.user_id
+            WHERE r.token_hash=?
+            """,
+            (token_hash,),
+        ).fetchone()
+        if not row:
+            return {"status": "invalid"}
+        if row["expires_at"] < now:
+            return {"status": "expired"}
+        if row["consumed_at"] is not None:
+            return {"status": "consumed"}
+        if not row["user_id"] or not row["approved_at"]:
+            return {"status": "pending", "expires_at": row["expires_at"]}
+        db.execute(
+            "UPDATE web_auth_requests SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL",
+            (now, token_hash),
+        )
+        return {
+            "status": "approved",
+            "user_id": row["user_id"],
+            "telegram_id": row["telegram_id"],
+            "username": row["username"],
+            "first_name": row["first_name"],
+            "last_name": row["last_name"],
+            "photo_url": row["photo_url"],
+        }
+
+
+def create_web_session(user_id, ttl_days=30):
+    token = secrets.token_urlsafe(36)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now = utc_now()
+    expires_at = _iso_after(days=max(1, min(int(ttl_days), 90)))
+    with connect() as db:
+        db.execute("DELETE FROM web_sessions WHERE expires_at < ? OR revoked_at IS NOT NULL", (now,))
+        db.execute(
+            "INSERT INTO web_sessions(session_hash, user_id, created_at, expires_at, last_seen_at) VALUES(?,?,?,?,?)",
+            (token_hash, user_id, now, expires_at, now),
+        )
+    return {"token": token, "expires_at": expires_at}
+
+
+def get_user_by_web_session(token):
+    clean = str(token or "").strip()
+    if not clean or len(clean) > 220:
+        return None
+    token_hash = hashlib.sha256(clean.encode("utf-8")).hexdigest()
+    now = utc_now()
+    with connect() as db:
+        row = db.execute(
+            """
+            SELECT s.user_id, s.expires_at, s.last_seen_at,
+                   u.telegram_id, u.username, u.first_name, u.last_name, u.photo_url
+            FROM web_sessions s
+            JOIN users u ON u.id=s.user_id
+            WHERE s.session_hash=? AND s.revoked_at IS NULL
+            LIMIT 1
+            """,
+            (token_hash,),
+        ).fetchone()
+        if not row or row["expires_at"] < now:
+            return None
+        # Avoid a write on every API request; refresh the activity stamp at most hourly.
+        last_seen = row["last_seen_at"] or ""
+        if not last_seen or last_seen < _iso_after(seconds=-3600):
+            db.execute("UPDATE web_sessions SET last_seen_at=? WHERE session_hash=?", (now, token_hash))
+        return dict(row)
+
+
+def revoke_web_session(token):
+    clean = str(token or "").strip()
+    if not clean or len(clean) > 220:
+        return False
+    token_hash = hashlib.sha256(clean.encode("utf-8")).hexdigest()
+    now = utc_now()
+    with connect() as db:
+        cur = db.execute(
+            "UPDATE web_sessions SET revoked_at=? WHERE session_hash=? AND revoked_at IS NULL",
+            (now, token_hash),
+        )
+        return cur.rowcount > 0
 
 
 def get_user_settings(user_id):

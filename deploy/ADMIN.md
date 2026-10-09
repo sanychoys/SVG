@@ -79,3 +79,12 @@ V24 stores the user's device timezone when the Telegram Mini App opens. Admin lo
 - `/memory_gc` — prune expired runtime caches, run Python GC and request glibc `malloc_trim`.
 - `svgtracker.service` uses `MALLOC_ARENA_MAX=2`, `MemoryHigh=450M`, `MemoryMax=700M`, and `TasksMax=64` to avoid runaway memory on a small VPS.
 - Runtime maintenance prunes expired deploy metadata, error cooldowns and frontend rate-limit buckets every 10 minutes.
+
+## V26 website authentication
+
+- Telegram Mini App auth is unchanged and continues to use signed WebApp `initData`.
+- Normal browser visits use a separate Telegram-confirmed web session.
+- The website creates a one-time `webauth_...` deep link, the user confirms it in `@SVGTrackerbot`, and the backend issues an HttpOnly + Secure + SameSite=Lax session cookie.
+- Web login requests expire after 10 minutes; website sessions expire after 30 days and can be ended from the profile drawer.
+- `web_auth_requests` and `web_sessions` are created automatically in SQLite.
+- `/resetdata` and `/resetdb` are admin-only; they are no longer published in the common user command menu.

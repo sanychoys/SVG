@@ -12,6 +12,179 @@ let telegramContextAnnounced = false;
 let telegramBootstrapTimer = null;
 let timezoneSyncKey = '';
 let timezoneSyncInFlight = false;
+window.SVG_WEB_AUTHENTICATED = false;
+window.SVG_WEB_AUTH_USER = null;
+let webAuthToken = '';
+let webAuthPollTimer = null;
+let webAuthInFlight = false;
+
+function isWebsiteLaunch() {
+  return document.documentElement.classList.contains('svg-web');
+}
+
+function hasServerAuth() {
+  return Boolean(tg?.initData || window.SVG_WEB_AUTHENTICATED);
+}
+
+function applyIdentityToShell(user) {
+  if (!user) return;
+  window.SVG_TELEGRAM_USER = user;
+  const name = document.getElementById('name');
+  if (name) name.textContent = user.first_name || user.username || 'Пользователь';
+  const avatar = document.getElementById('avatar');
+  const fallback = document.getElementById('avatar-fallback');
+  if (fallback) {
+    const letter = String(user.first_name || user.username || 'S').trim().charAt(0).toUpperCase() || 'S';
+    fallback.textContent = letter;
+    fallback.style.display = '';
+  }
+  if (avatar) {
+    if (user.photo_url) {
+      avatar.onload = () => { avatar.style.display = 'block'; if (fallback) fallback.style.display = 'none'; };
+      avatar.onerror = () => { avatar.style.display = 'none'; if (fallback) fallback.style.display = ''; };
+      avatar.src = user.photo_url;
+    } else {
+      avatar.style.display = 'none';
+      avatar.removeAttribute('src');
+    }
+  }
+}
+
+function setWebAuthStatus(text, error = false) {
+  const node = document.getElementById('web-auth-status');
+  if (!node) return;
+  node.textContent = text;
+  node.classList.toggle('is-error', Boolean(error));
+}
+
+function stopWebAuthPolling() {
+  if (webAuthPollTimer) clearInterval(webAuthPollTimer);
+  webAuthPollTimer = null;
+}
+
+function activateWebSession(payload) {
+  const user = payload?.user || null;
+  window.SVG_WEB_AUTHENTICATED = true;
+  window.SVG_WEB_AUTH_USER = user;
+  window.SVG_WEB_TRAINING_REMOTE_FIRST = true;
+  window.SVG_WEB_FINANCE_REMOTE_FIRST = true;
+  document.documentElement.classList.add('web-authenticated');
+  applyIdentityToShell(user);
+  const accountGroup = document.getElementById('web-account-group');
+  if (accountGroup) accountGroup.hidden = false;
+  stopWebAuthPolling();
+  try { sessionStorage.removeItem('svg_web_auth_token'); } catch (_) {}
+  svgDiag('web-auth:authenticated');
+  document.dispatchEvent(new CustomEvent('svgtracker:auth-ready', { detail: { source: 'website' } }));
+}
+
+async function pollWebsiteLogin() {
+  if (!webAuthToken || window.SVG_WEB_AUTHENTICATED || !isWebsiteLaunch()) return;
+  try {
+    const response = await fetch(`/api/auth/web/status?token=${encodeURIComponent(webAuthToken)}`, { cache: 'no-store' });
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok && payload.status === 'authenticated') {
+      setWebAuthStatus('Готово. Открываем SVGTracker…');
+      activateWebSession(payload);
+      return;
+    }
+    if (response.status === 410) {
+      stopWebAuthPolling();
+      setWebAuthStatus(payload.message || 'Ссылка входа устарела.', true);
+      const retry = document.getElementById('web-auth-retry');
+      if (retry) retry.hidden = false;
+    }
+  } catch (error) {
+    svgDiag('web-auth:poll-error', { level: 'warning', message: error?.message || String(error) });
+  }
+}
+
+async function prepareWebsiteLogin(force = false) {
+  if (!isWebsiteLaunch() || window.SVG_WEB_AUTHENTICATED || webAuthInFlight) return;
+  webAuthInFlight = true;
+  const link = document.getElementById('web-auth-telegram-link');
+  const retry = document.getElementById('web-auth-retry');
+  if (retry) retry.hidden = true;
+  if (link) link.setAttribute('aria-disabled', 'true');
+  setWebAuthStatus('Подготавливаем безопасный вход…');
+  try {
+    if (!force) {
+      try { webAuthToken = sessionStorage.getItem('svg_web_auth_token') || ''; } catch (_) {}
+    } else {
+      webAuthToken = '';
+      try { sessionStorage.removeItem('svg_web_auth_token'); } catch (_) {}
+    }
+    let telegramUrl = '';
+    if (!webAuthToken) {
+      const response = await fetch('/api/auth/web/start', { method: 'POST', cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.token || !payload.telegram_url) throw new Error(payload.message || 'Не удалось создать ссылку входа');
+      webAuthToken = payload.token;
+      telegramUrl = payload.telegram_url;
+      try { sessionStorage.setItem('svg_web_auth_token', webAuthToken); } catch (_) {}
+    } else {
+      // A refreshed page can reuse the pending token, but needs a fresh Telegram URL.
+      telegramUrl = '';
+    }
+    if (!telegramUrl) {
+      const fresh = await fetch('/api/auth/web/start', { method: 'POST', cache: 'no-store' });
+      const freshPayload = await fresh.json().catch(() => ({}));
+      if (!fresh.ok || !freshPayload.token || !freshPayload.telegram_url) throw new Error('Не удалось обновить ссылку входа');
+      webAuthToken = freshPayload.token;
+      telegramUrl = freshPayload.telegram_url;
+      try { sessionStorage.setItem('svg_web_auth_token', webAuthToken); } catch (_) {}
+    }
+    if (link) { link.href = telegramUrl; link.setAttribute('aria-disabled', 'false'); }
+    setWebAuthStatus('Нажми кнопку, подтверди вход в Telegram и вернись сюда.');
+    stopWebAuthPolling();
+    webAuthPollTimer = setInterval(pollWebsiteLogin, 1200);
+    setTimeout(pollWebsiteLogin, 300);
+  } catch (error) {
+    setWebAuthStatus(error?.message || 'Не удалось подготовить вход через Telegram.', true);
+    if (retry) retry.hidden = false;
+    svgDiag('web-auth:start-error', { level: 'error', message: error?.message || String(error) });
+  } finally {
+    webAuthInFlight = false;
+  }
+}
+
+async function initializeWebsiteAuth() {
+  if (!isWebsiteLaunch()) return;
+  const link = document.getElementById('web-auth-telegram-link');
+  if (link && !link.dataset.bound) {
+    link.dataset.bound = '1';
+    link.addEventListener('click', () => {
+      if (link.getAttribute('aria-disabled') !== 'true') setWebAuthStatus('Ждём подтверждение в Telegram…');
+    });
+  }
+  svgDiag('web-auth:session-check');
+  try {
+    const response = await fetch('/api/auth/session', { cache: 'no-store' });
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok && payload.authenticated && payload.user) {
+      activateWebSession(payload);
+      return;
+    }
+  } catch (error) {
+    svgDiag('web-auth:session-error', { level: 'warning', message: error?.message || String(error) });
+  }
+  await prepareWebsiteLogin(false);
+}
+
+async function logoutWebSession() {
+  if (!window.SVG_WEB_AUTHENTICATED) return;
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
+  window.SVG_WEB_AUTHENTICATED = false;
+  window.SVG_WEB_AUTH_USER = null;
+  window.SVG_TELEGRAM_USER = null;
+  document.documentElement.classList.remove('web-authenticated');
+  const accountGroup = document.getElementById('web-account-group');
+  if (accountGroup) accountGroup.hidden = true;
+  closeProfileDrawer(true);
+  profileLoaded = false;
+  profileState = { bot_notifications_enabled: true, friend_request_notifications_enabled: true, friends: [], incoming: [], outgoing: [], blocked: [] };
+  await prepareWebsiteLogin(true);
+}
 
 function getDeviceTimezonePayload() {
   let timezoneName = '';
@@ -21,7 +194,7 @@ function getDeviceTimezonePayload() {
 }
 
 async function syncDeviceTimezone(force = false) {
-  if (!tg?.initData || timezoneSyncInFlight) return false;
+  if (!hasServerAuth() || timezoneSyncInFlight) return false;
   const payload = getDeviceTimezonePayload();
   const key = `${payload.timezone_name}|${payload.offset_minutes}`;
   if (!force && timezoneSyncKey === key) return true;
@@ -49,33 +222,21 @@ function applyTelegramIdentity() {
   if (!telegramApp) return false;
 
   tg = telegramApp;
+  if (telegramApp.initData) {
+    document.documentElement.classList.remove('svg-web', 'web-authenticated');
+    document.documentElement.classList.add('svg-miniapp');
+    stopWebAuthPolling();
+  }
   try { telegramApp.ready(); } catch (_) {}
   try { telegramApp.expand(); } catch (_) {}
 
   const tgUser = telegramApp.initDataUnsafe?.user || null;
-  window.SVG_TELEGRAM_USER = tgUser;
-
-  if (tgUser) {
-    const name = document.getElementById('name');
-    if (name && tgUser.first_name) name.textContent = tgUser.first_name;
-
-    const avatar = document.getElementById('avatar');
-    const fallback = document.getElementById('avatar-fallback');
-    if (fallback) {
-      const letter = String(tgUser.first_name || tgUser.username || 'S').trim().charAt(0).toUpperCase() || 'S';
-      fallback.textContent = letter;
-    }
-    if (avatar && tgUser.photo_url) {
-      avatar.onload = () => {
-        avatar.style.display = 'block';
-        if (fallback) fallback.style.display = 'none';
-      };
-      avatar.onerror = () => {
-        avatar.style.display = 'none';
-        if (fallback) fallback.style.display = '';
-      };
-      avatar.src = tgUser.photo_url;
-    }
+  if (telegramApp.initData) {
+    window.SVG_TELEGRAM_USER = tgUser;
+    if (tgUser) applyIdentityToShell(tgUser);
+  } else if (!window.SVG_WEB_AUTHENTICATED && tgUser) {
+    window.SVG_TELEGRAM_USER = tgUser;
+    applyIdentityToShell(tgUser);
   }
 
   if (telegramApp.initData) setTimeout(() => syncDeviceTimezone(false), 0);
@@ -1520,7 +1681,7 @@ function scheduleSyncRetry() {
 }
 
 async function saveTrainingToServer(retryConflict = true) {
-  if (!tg?.initData) {
+  if (!hasServerAuth()) {
     setTrainingSyncStatus('local', 'Локально');
     return false;
   }
@@ -1533,10 +1694,7 @@ async function saveTrainingToServer(retryConflict = true) {
   try {
     const response = await fetch('/api/training/state', {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Telegram-Init-Data': tg.initData
-      },
+      headers: telegramApiHeaders(true),
       body: JSON.stringify({ state: getTrainingPayload(), baseUpdatedAt: trainingServerUpdatedAt })
     });
 
@@ -1568,7 +1726,7 @@ async function saveTrainingToServer(retryConflict = true) {
 }
 
 function scheduleTrainingSave() {
-  if (!tg?.initData) {
+  if (!hasServerAuth()) {
     setTrainingSyncStatus('local', 'Локально');
     return;
   }
@@ -1578,8 +1736,8 @@ function scheduleTrainingSave() {
 }
 
 async function syncTrainingWithServer() {
-  if (!tg?.initData || trainingSyncInFlight) {
-    if (!tg?.initData) setTrainingSyncStatus('local', 'Локально');
+  if (!hasServerAuth() || trainingSyncInFlight) {
+    if (!hasServerAuth()) setTrainingSyncStatus('local', 'Локально');
     return false;
   }
   if (!navigator.onLine) {
@@ -1590,13 +1748,26 @@ async function syncTrainingWithServer() {
   setTrainingSyncStatus('saving', 'Синхронизация…');
   try {
     const response = await fetch('/api/training/state', {
-      headers: { 'X-Telegram-Init-Data': tg.initData }
+      headers: telegramApiHeaders(false)
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
     trainingServerReady = true;
     trainingServerUpdatedAt = payload.updated_at || null;
     if (trainingServerUpdatedAt) localStorage.setItem('fitness_server_updated_at_v1', trainingServerUpdatedAt);
+
+    if (window.SVG_WEB_TRAINING_REMOTE_FIRST) {
+      window.SVG_WEB_TRAINING_REMOTE_FIRST = false;
+      if (payload.exists && payload.state) {
+        Object.assign(state, normalizeTrainingState(payload.state));
+        persistLocal();
+        localStorage.removeItem(STORAGE.trainingDirty);
+        setTrainingSyncStatus('saved', 'Сохранено');
+        renderFitness();
+        renderHomeTrainingSummary();
+        return true;
+      }
+    }
 
     const localDirty = localStorage.getItem(STORAGE.trainingDirty) === '1';
     const remoteResetWins = payload.state?.sync?.resetAt && compareIso(payload.state.sync.resetAt, state.sync?.updatedAt) >= 0;
@@ -3031,11 +3202,10 @@ function normalizeTextGoalHistory(goal, targetText, fallbackStatus) {
 
 /* === Dashboard profile & social layer v14 ============================== */
 function telegramApiHeaders(json = false) {
-  if (!tg?.initData) return null;
-  return {
-    ...(json ? { 'Content-Type': 'application/json' } : {}),
-    'X-Telegram-Init-Data': tg.initData
-  };
+  if (!hasServerAuth()) return null;
+  const headers = { ...(json ? { 'Content-Type': 'application/json' } : {}) };
+  if (tg?.initData) headers['X-Telegram-Init-Data'] = tg.initData;
+  return headers;
 }
 
 function getApiErrorMessage(payload, fallback = 'Не удалось выполнить действие') {
@@ -3055,7 +3225,7 @@ function profileDisplayName(person) {
 
 
 async function loadProfileData(force = false) {
-  if (!tg?.initData || profileLoading || (profileLoaded && !force)) {
+  if (!hasServerAuth() || profileLoading || (profileLoaded && !force)) {
     renderProfileState();
     return profileState;
   }
@@ -3114,10 +3284,10 @@ async function toggleBotNotifications(enabled, kind = 'bot') {
   const previous = profileState[key] !== false;
   profileState[key] = Boolean(enabled);
   renderProfileState();
-  if (!tg?.initData) {
+  if (!hasServerAuth()) {
     profileState[key] = previous;
     renderProfileState();
-    showToast('Открой приложение внутри Telegram');
+    showToast('Требуется авторизация через Telegram');
     return;
   }
   if (toggle) toggle.disabled = true;
@@ -3223,7 +3393,7 @@ function renderFriendsSheet() {
 }
 
 async function cancelOutgoingFriendRequest(requestId){
-  if(!tg?.initData)return;
+  if(!hasServerAuth())return;
   try{
     const response=await fetch(`/api/friends/requests/${encodeURIComponent(requestId)}`,{method:'DELETE',headers:telegramApiHeaders(false)});
     const payload=await response.json().catch(()=>({}));
@@ -3256,7 +3426,7 @@ async function submitFriendRequest() {
   const button = document.getElementById('friend-request-button');
   const username = String(input?.value || '').trim();
   if (!username) { showToast('Укажи Telegram username'); return; }
-  if (!tg?.initData) { showToast('Открой приложение внутри Telegram'); return; }
+  if (!hasServerAuth()) { showToast('Требуется авторизация через Telegram'); return; }
   if (button) button.disabled = true;
   try {
     const response = await fetch('/api/friends/request', {
@@ -3276,7 +3446,7 @@ async function submitFriendRequest() {
 }
 
 async function resolveFriendRequestFromUi(requestId, accept) {
-  if (!tg?.initData) return;
+  if (!hasServerAuth()) return;
   try {
     const response = await fetch(`/api/friends/requests/${encodeURIComponent(requestId)}/${accept ? 'accept' : 'reject'}`, {
       method: 'POST', headers: telegramApiHeaders(false)
@@ -3291,7 +3461,7 @@ async function resolveFriendRequestFromUi(requestId, accept) {
 }
 
 async function removeFriendById(friendId) {
-  if (!tg?.initData) return;
+  if (!hasServerAuth()) return;
   try {
     const response = await fetch(`/api/friends/${encodeURIComponent(friendId)}`, {
       method: 'DELETE', headers: telegramApiHeaders(false)
@@ -3330,7 +3500,7 @@ function openBlockedUsersSheet() {
 }
 
 async function blockUserById(userId) {
-  if (!tg?.initData) return;
+  if (!hasServerAuth()) return;
   try {
     const response = await fetch(`/api/friends/${encodeURIComponent(userId)}/block`, { method: 'POST', headers: telegramApiHeaders(false) });
     const payload = await response.json().catch(() => ({}));
@@ -3341,7 +3511,7 @@ async function blockUserById(userId) {
 }
 
 async function unblockUserById(userId) {
-  if (!tg?.initData) return;
+  if (!hasServerAuth()) return;
   try {
     const response = await fetch(`/api/friends/${encodeURIComponent(userId)}/block`, { method: 'DELETE', headers: telegramApiHeaders(false) });
     const payload = await response.json().catch(() => ({}));
@@ -3358,7 +3528,7 @@ document.addEventListener('DOMContentLoaded', () => {
   svgDiag('profile:init:start');
   renderProfileState();
   renderHomeTrainingSummary();
-  if (tg?.initData) loadProfileData(false);
+  if (hasServerAuth()) loadProfileData(false);
   svgDiag('profile:init:done');
 });
 
@@ -3698,7 +3868,7 @@ function mergeFinanceStatesV15(localRaw, remoteRaw) {
   return normalizeFinanceDataV15(merged);
 }
 async function saveFinanceToServerV15(retry = true) {
-  if (!tg?.initData || !navigator.onLine || financeSyncInFlightV15) return false;
+  if (!hasServerAuth() || !navigator.onLine || financeSyncInFlightV15) return false;
   financeSyncInFlightV15 = true; financeSetSyncStatusV15('saving','Синхронизация…');
   try {
     const response = await fetch('/api/finance/state', {
@@ -3725,7 +3895,7 @@ async function saveFinanceToServerV15(retry = true) {
   } finally { financeSyncInFlightV15 = false; }
 }
 async function syncFinanceWithServerV15() {
-  if (!tg?.initData) { financeSetSyncStatusV15('local','Локально'); return false; }
+  if (!hasServerAuth()) { financeSetSyncStatusV15('local','Локально'); return false; }
   if (!navigator.onLine) { financeSetSyncStatusV15('offline','Офлайн · сохранено локально'); return false; }
   if (financeSyncInFlightV15) return false;
   financeSyncInFlightV15 = true; financeSetSyncStatusV15('saving','Синхронизация…');
@@ -3735,6 +3905,19 @@ async function syncFinanceWithServerV15() {
     if (!response.ok) throw new Error(getApiErrorMessage(payload,'Финансы временно недоступны'));
     financeServerUpdatedAtV15 = payload.updated_at || null;
     if (financeServerUpdatedAtV15) localStorage.setItem(FINANCE_SERVER_UPDATED_KEY_V15, financeServerUpdatedAtV15);
+    if (window.SVG_WEB_FINANCE_REMOTE_FIRST) {
+      window.SVG_WEB_FINANCE_REMOTE_FIRST = false;
+      if (payload.exists && payload.state) {
+        financeData = normalizeFinanceDataV15(payload.state);
+        localStorage.setItem(STORAGE.finance, JSON.stringify(financeData));
+        localStorage.removeItem(FINANCE_DIRTY_KEY_V15);
+        financeSetSyncStatusV15('saved','Сохранено');
+        renderFinance();
+        renderHomeTrainingSummary();
+        return true;
+      }
+    }
+
     const localDirty = localStorage.getItem(FINANCE_DIRTY_KEY_V15) === '1';
     if (!payload.exists || !payload.state) {
       financeSyncInFlightV15 = false;
@@ -4103,8 +4286,8 @@ function renderProfileState() {
   if(count)count.textContent=String(friendsCount);
   if(blockedCount)blockedCount.textContent=String(profileState.blocked?.length||0);
   if(friendSummary)friendSummary.textContent=incoming?`${incoming} ${incoming===1?'новый запрос':'новых запроса'}`:(friendsCount?`${friendsCount} ${friendsCount===1?'друг':'друзей'}`:'Друзей пока нет');
-  if(friendToggle){friendToggle.checked=profileState.friend_request_notifications_enabled!==false;friendToggle.disabled=!tg?.initData;}
-  if(botToggle){botToggle.checked=profileState.bot_notifications_enabled!==false;botToggle.disabled=!tg?.initData;}
+  if(friendToggle){friendToggle.checked=profileState.friend_request_notifications_enabled!==false;friendToggle.disabled=!hasServerAuth();}
+  if(botToggle){botToggle.checked=profileState.bot_notifications_enabled!==false;botToggle.disabled=!hasServerAuth();}
   const user=window.SVG_TELEGRAM_USER;
   if(title)title.textContent=user?profileDisplayName(user):'SVGTracker';
   if(username){const hasUsername=Boolean(user?.username);username.textContent=hasUsername?`@${user.username}`:'Username не указан';username.disabled=!hasUsername;username.dataset.username=hasUsername?user.username:'';}
@@ -4113,7 +4296,7 @@ function renderProfileState() {
     avatar.replaceChildren();avatar.textContent=letter;
     if(user?.photo_url){const image=document.createElement('img');image.src=user.photo_url;image.alt='';image.onerror=()=>{image.remove();avatar.textContent=letter;};avatar.replaceChildren(image);}
   }
-  if(status)status.textContent=!tg?.initData?'Социальные функции доступны внутри Telegram':incoming?`${incoming} ${incoming===1?'запрос ждёт ответа':'запроса ждут ответа'}`:'Профиль синхронизирован с Telegram';
+  if(status)status.textContent=!hasServerAuth()?'Требуется авторизация через Telegram':incoming?`${incoming} ${incoming===1?'запрос ждёт ответа':'запроса ждут ответа'}`:'Профиль синхронизирован с Telegram';
 }
 
 async function copyTextV15(text) {
@@ -4135,19 +4318,34 @@ function renderHomeActivity(nowMs = Date.now()) {
 
 window.addEventListener('online',()=>syncFinanceWithServerV15());
 window.addEventListener('offline',()=>financeSetSyncStatusV15('offline','Офлайн · сохранено локально'));
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&tg?.initData){syncFinanceWithServerV15();syncDeviceTimezone(false);}});
-document.addEventListener('DOMContentLoaded',()=>{window.SVGTRACKER_BOOT_STAGE='finance:init';svgDiag('finance:init:start');financeData=normalizeFinanceDataV15(financeData);localStorage.setItem(STORAGE.finance,JSON.stringify(financeData));renderFinance();renderHomeTrainingSummary();if(tg?.initData)syncFinanceWithServerV15();svgDiag('finance:init:done');});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&hasServerAuth()){syncFinanceWithServerV15();syncDeviceTimezone(false);}});
+document.addEventListener('DOMContentLoaded',()=>{window.SVGTRACKER_BOOT_STAGE='finance:init';svgDiag('finance:init:start');financeData=normalizeFinanceDataV15(financeData);localStorage.setItem(STORAGE.finance,JSON.stringify(financeData));renderFinance();renderHomeTrainingSummary();if(hasServerAuth())syncFinanceWithServerV15();svgDiag('finance:init:done');});
 
 // Late Telegram bootstrap: the UI is usable before the Telegram SDK arrives.
 document.addEventListener('svgtracker:telegram-ready', () => {
   svgDiag('telegram:ready-event');
   try { renderProfileState(); } catch (error) { svgDiag('telegram:profile-render-error',{level:'error',message:error?.message||String(error),stack:error?.stack}); }
   try { renderHomeTrainingSummary(); } catch (_) {}
-  if (!tg?.initData) return;
+  if (!hasServerAuth()) return;
   try { syncDeviceTimezone(true); } catch (_) {}
   try { syncTrainingWithServer(); } catch (_) {}
   try { loadProfileData(true); } catch (_) {}
   try { syncFinanceWithServerV15(); } catch (_) {}
+});
+
+document.addEventListener('svgtracker:auth-ready', () => {
+  svgDiag('auth:ready-event', { message: window.SVG_WEB_AUTHENTICATED ? 'website' : 'telegram' });
+  try { renderProfileState(); } catch (_) {}
+  try { renderHomeTrainingSummary(); } catch (_) {}
+  if (!hasServerAuth()) return;
+  try { syncDeviceTimezone(true); } catch (_) {}
+  try { syncTrainingWithServer(); } catch (_) {}
+  try { loadProfileData(true); } catch (_) {}
+  try { syncFinanceWithServerV15(); } catch (_) {}
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (isWebsiteLaunch()) initializeWebsiteAuth();
 });
 
 document.addEventListener('DOMContentLoaded', () => {
