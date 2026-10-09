@@ -99,6 +99,8 @@ def init_db():
                 user_id INTEGER PRIMARY KEY,
                 bot_notifications INTEGER NOT NULL DEFAULT 1,
                 friend_request_notifications INTEGER NOT NULL DEFAULT 1,
+                timezone_name TEXT,
+                timezone_offset_minutes INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
@@ -158,6 +160,10 @@ def init_db():
             db.execute(
                 "UPDATE user_settings SET friend_request_notifications=bot_notifications"
             )
+        if "timezone_name" not in columns:
+            db.execute("ALTER TABLE user_settings ADD COLUMN timezone_name TEXT")
+        if "timezone_offset_minutes" not in columns:
+            db.execute("ALTER TABLE user_settings ADD COLUMN timezone_offset_minutes INTEGER NOT NULL DEFAULT 0")
 
 
 def get_or_create_user(data):
@@ -332,7 +338,7 @@ def get_user_by_shortcut_token(token):
 def get_user_settings(user_id):
     with connect() as db:
         row = db.execute(
-            "SELECT bot_notifications, friend_request_notifications, updated_at FROM user_settings WHERE user_id=?",
+            "SELECT bot_notifications, friend_request_notifications, timezone_name, timezone_offset_minutes, updated_at FROM user_settings WHERE user_id=?",
             (user_id,),
         ).fetchone()
         if not row:
@@ -344,11 +350,15 @@ def get_user_settings(user_id):
             return {
                 "bot_notifications": True,
                 "friend_request_notifications": True,
+                "timezone_name": None,
+                "timezone_offset_minutes": 0,
                 "updated_at": now,
             }
         return {
             "bot_notifications": bool(row["bot_notifications"]),
             "friend_request_notifications": bool(row["friend_request_notifications"]),
+            "timezone_name": row["timezone_name"],
+            "timezone_offset_minutes": int(row["timezone_offset_minutes"] or 0),
             "updated_at": row["updated_at"],
         }
 
@@ -369,6 +379,49 @@ def set_bot_notifications(user_id, enabled, kind="bot"):
     settings["updated_at"] = now
     return settings
 
+
+
+def set_user_timezone(user_id, timezone_name, offset_minutes):
+    now = utc_now()
+    name = str(timezone_name or "").strip()[:80] or None
+    try:
+        offset = int(offset_minutes)
+    except (TypeError, ValueError):
+        offset = 0
+    offset = max(-14 * 60, min(14 * 60, offset))
+    with connect() as db:
+        db.execute(
+            "INSERT OR IGNORE INTO user_settings(user_id, bot_notifications, friend_request_notifications, timezone_name, timezone_offset_minutes, updated_at) VALUES(?,1,1,?,?,?)",
+            (user_id, name, offset, now),
+        )
+        db.execute(
+            "UPDATE user_settings SET timezone_name=?, timezone_offset_minutes=?, updated_at=? WHERE user_id=?",
+            (name, offset, now, user_id),
+        )
+    return get_user_settings(user_id)
+
+
+def get_user_settings_by_telegram_id(telegram_id):
+    with connect() as db:
+        row = db.execute(
+            """
+            SELECT s.bot_notifications, s.friend_request_notifications, s.timezone_name,
+                   s.timezone_offset_minutes, s.updated_at
+            FROM users u
+            JOIN user_settings s ON s.user_id=u.id
+            WHERE u.telegram_id=?
+            """,
+            (str(telegram_id),),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "bot_notifications": bool(row["bot_notifications"]),
+            "friend_request_notifications": bool(row["friend_request_notifications"]),
+            "timezone_name": row["timezone_name"],
+            "timezone_offset_minutes": int(row["timezone_offset_minutes"] or 0),
+            "updated_at": row["updated_at"],
+        }
 
 def get_user_telegram_id(user_id):
     with connect() as db:
@@ -424,6 +477,8 @@ def get_profile_data(user_id):
         "notifications_enabled": settings["bot_notifications"],
         "bot_notifications_enabled": settings["bot_notifications"],
         "friend_request_notifications_enabled": settings["friend_request_notifications"],
+        "timezone_name": settings.get("timezone_name"),
+        "timezone_offset_minutes": settings.get("timezone_offset_minutes", 0),
         "friends": [user_public_dict(row) for row in friends],
         "incoming": [dict(user_public_dict(row), request_id=row["request_id"], created_at=row["created_at"]) for row in incoming],
         "outgoing": [dict(user_public_dict(row), request_id=row["request_id"], created_at=row["created_at"]) for row in outgoing],

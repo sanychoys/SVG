@@ -14,14 +14,16 @@ import sys
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 PROJECT_ROOT = Path(os.environ.get("SVGTRACKER_PROJECT_ROOT", "/var/www/SVG")).resolve()
 STATE_DIR = Path(os.environ.get("SVGTRACKER_ADMIN_STATE_DIR", "/var/lib/svgtracker-admin"))
 ADMIN_ID = int(os.environ.get("SVGTRACKER_ADMIN_ID", "382257126"))
 HEALTH_URL = "http://127.0.0.1:8000/api/test"
 STATE_FILE = STATE_DIR / "watchdog.json"
+TIMEZONE_FILE = STATE_DIR / "timezone.json"
 DEPLOY_LOCK = STATE_DIR / "deploy.lock"
 COOLDOWN = 15 * 60
 INITIAL_ATTEMPTS = 3
@@ -32,6 +34,28 @@ RESTART_DELAY = 2.0
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def display_timezone():
+    name = None
+    offset = 0
+    try:
+        payload = json.loads(TIMEZONE_FILE.read_text(encoding="utf-8")) if TIMEZONE_FILE.is_file() else {}
+        name = str(payload.get("timezone_name") or "").strip()[:80] or None
+        offset = int(payload.get("timezone_offset_minutes") or 0)
+    except Exception:
+        pass
+    offset = max(-14 * 60, min(14 * 60, offset))
+    if name:
+        try:
+            return ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+    return timezone(timedelta(minutes=offset))
+
+
+def local_now_text():
+    return datetime.now(timezone.utc).astimezone(display_timezone()).strftime("%d.%m.%Y %H:%M:%S")
 
 
 def healthy():
@@ -115,7 +139,7 @@ def main():
             if state.get("down"):
                 state.update({"down": False, "recovered_at": now_iso(), "last_check": now_iso()})
                 write_state(state)
-                notify("✅ SVGTracker watchdog\nAPI снова доступен.")
+                notify(f"✅ SVGTracker watchdog\n🕒 {local_now_text()}\nAPI снова доступен.")
             return 0
         if attempt + 1 < INITIAL_ATTEMPTS:
             time.sleep(INITIAL_DELAY)
@@ -134,7 +158,7 @@ def main():
     if before - last_notice >= COOLDOWN:
         state["last_notice_epoch"] = before
         if recovered:
-            notify("⚠️ SVGTracker watchdog\nAPI действительно перестал отвечать. Сервис перезапущен и снова работает.")
+            notify(f"⚠️ SVGTracker watchdog\n🕒 {local_now_text()}\nAPI действительно перестал отвечать. Сервис перезапущен и снова работает.")
         else:
             detail = (proc.stderr or proc.stdout or "restart completed but API is still unavailable").strip()
             notify(

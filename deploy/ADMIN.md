@@ -67,3 +67,7 @@ Protected production data is never overwritten by ZIP deploy: `config.py`, `.env
 - Deploy lifecycle is stored in `/var/lib/svgtracker-admin/logs/deploy.log`.
 - `/server_status` shows whether frontend telemetry is arriving and the last startup stage.
 - The diagnostic endpoint is rate-limited and intentionally works without Telegram auth so it can report failures of the Telegram SDK itself.
+
+## Local time / timezone
+
+V24 stores the user's device timezone when the Telegram Mini App opens. Admin log commands (`/logs*`, `/errors`, `/diagnostics`, backup timestamps and deploy notifications) render timestamps in the admin's saved device timezone while the database continues to store UTC internally. `/timezone` shows the active timezone and can override it manually, e.g. `/timezone +04:00` or `/timezone Europe/Moscow`.

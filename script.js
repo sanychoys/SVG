@@ -10,6 +10,39 @@ svgDiag('script:execute');
 let tg = window.Telegram?.WebApp || null;
 let telegramContextAnnounced = false;
 let telegramBootstrapTimer = null;
+let timezoneSyncKey = '';
+let timezoneSyncInFlight = false;
+
+function getDeviceTimezonePayload() {
+  let timezoneName = '';
+  try { timezoneName = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) {}
+  const offsetMinutes = -new Date().getTimezoneOffset();
+  return { timezone_name: timezoneName, offset_minutes: offsetMinutes };
+}
+
+async function syncDeviceTimezone(force = false) {
+  if (!tg?.initData || timezoneSyncInFlight) return false;
+  const payload = getDeviceTimezonePayload();
+  const key = `${payload.timezone_name}|${payload.offset_minutes}`;
+  if (!force && timezoneSyncKey === key) return true;
+  timezoneSyncInFlight = true;
+  try {
+    const response = await fetch('/api/profile/timezone', {
+      method: 'PUT',
+      headers: telegramApiHeaders(true),
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(`timezone HTTP ${response.status}`);
+    timezoneSyncKey = key;
+    svgDiag('timezone:sync', { message: `${payload.timezone_name || 'offset'} · ${payload.offset_minutes}` });
+    return true;
+  } catch (error) {
+    svgDiag('timezone:sync-error', { level: 'warning', message: error?.message || String(error) });
+    return false;
+  } finally {
+    timezoneSyncInFlight = false;
+  }
+}
 
 function applyTelegramIdentity() {
   const telegramApp = window.Telegram?.WebApp || null;
@@ -44,6 +77,8 @@ function applyTelegramIdentity() {
       avatar.src = tgUser.photo_url;
     }
   }
+
+  if (telegramApp.initData) setTimeout(() => syncDeviceTimezone(false), 0);
 
   if (!telegramContextAnnounced) {
     telegramContextAnnounced = true;
@@ -4100,7 +4135,7 @@ function renderHomeActivity(nowMs = Date.now()) {
 
 window.addEventListener('online',()=>syncFinanceWithServerV15());
 window.addEventListener('offline',()=>financeSetSyncStatusV15('offline','Офлайн · сохранено локально'));
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&tg?.initData)syncFinanceWithServerV15();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&tg?.initData){syncFinanceWithServerV15();syncDeviceTimezone(false);}});
 document.addEventListener('DOMContentLoaded',()=>{window.SVGTRACKER_BOOT_STAGE='finance:init';svgDiag('finance:init:start');financeData=normalizeFinanceDataV15(financeData);localStorage.setItem(STORAGE.finance,JSON.stringify(financeData));renderFinance();renderHomeTrainingSummary();if(tg?.initData)syncFinanceWithServerV15();svgDiag('finance:init:done');});
 
 // Late Telegram bootstrap: the UI is usable before the Telegram SDK arrives.
@@ -4109,6 +4144,7 @@ document.addEventListener('svgtracker:telegram-ready', () => {
   try { renderProfileState(); } catch (error) { svgDiag('telegram:profile-render-error',{level:'error',message:error?.message||String(error),stack:error?.stack}); }
   try { renderHomeTrainingSummary(); } catch (_) {}
   if (!tg?.initData) return;
+  try { syncDeviceTimezone(true); } catch (_) {}
   try { syncTrainingWithServer(); } catch (_) {}
   try { loadProfileData(true); } catch (_) {}
   try { syncFinanceWithServerV15(); } catch (_) {}

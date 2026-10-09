@@ -16,7 +16,7 @@
   #frontend-boot-warning[hidden]{display:none!important}
   #frontend-boot-warning button{margin-top:9px;padding:8px 12px;border:0;border-radius:10px;background:#fff;color:#111;font:inherit;font-weight:600}
 </style>
-<link rel="stylesheet" href="/style.css?v=23">
+<link rel="stylesheet" href="/style.css?v=24">
 </head>
 <body>
 <div class="ambient-layer">
@@ -765,7 +765,7 @@
 <script>
 (function installSvgDiagnostics(){
   var endpoint = '/api/diagnostics/frontend';
-  var storageKey = 'svg_diag_buffer_v23';
+  var storageKey = 'svg_diag_buffer_v24';
   var session = 'web_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8);
   var buffer = [];
   var flushTimer = null;
@@ -789,7 +789,10 @@
   function scheduleFlush(delay){ if(flushTimer) return; flushTimer = setTimeout(flush, delay || 120); }
   function log(stage, extra){
     extra = extra || {};
-    var event = {session:session, level:extra.level || 'info', stage:String(stage || 'event').slice(0,120), message:String(extra.message || '').slice(0,1200), stack:String(extra.stack || '').slice(0,1800), path:location.pathname, asset:String(extra.asset || '').slice(0,220), readyState:document.readyState, online:navigator.onLine, sdk:window.SVG_TELEGRAM_SDK_STATE || 'unknown', ua:String(navigator.userAgent || '').slice(0,320), ts:new Date().toISOString()};
+    var now = new Date();
+    var tz = '';
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) {}
+    var event = {session:session, level:extra.level || 'info', stage:String(stage || 'event').slice(0,120), message:String(extra.message || '').slice(0,1200), stack:String(extra.stack || '').slice(0,1800), path:location.pathname, asset:String(extra.asset || '').slice(0,220), readyState:document.readyState, online:navigator.onLine, sdk:window.SVG_TELEGRAM_SDK_STATE || 'unknown', ua:String(navigator.userAgent || '').slice(0,320), ts:now.toISOString(), localTs:now.toString(), timeZone:tz, offsetMinutes:-now.getTimezoneOffset()};
     buffer.push(event); if(buffer.length>50) buffer=buffer.slice(-50); persist(); scheduleFlush();
   }
   loadStored();
@@ -848,6 +851,6 @@
   }, 8000);
 })();
 </script>
-<script src="/script.js?v=23" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=23'})"></script>
+<script src="/script.js?v=24" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=24'})"></script>
 </body>
 </html>

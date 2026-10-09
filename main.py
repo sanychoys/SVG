@@ -13,9 +13,10 @@ import uuid
 import threading
 from collections import deque
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from urllib.parse import parse_qsl
 from urllib import request as urllib_request
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -38,6 +39,7 @@ from finance_db import (
     get_training_state,
     get_finance_state,
     get_user_settings,
+    get_user_settings_by_telegram_id,
     init_db,
     remove_friend,
     revoke_shortcut_tokens,
@@ -46,6 +48,7 @@ from finance_db import (
     save_training_state,
     save_finance_state,
     set_bot_notifications,
+    set_user_timezone,
     unblock_user,
 )
 
@@ -53,7 +56,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "23"
+APP_VERSION = "24"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -88,6 +91,8 @@ FRONTEND_RATE_WINDOW_SECONDS = 60
 FRONTEND_RATE_LIMIT = 60
 FRONTEND_RATE: dict[str, deque[float]] = {}
 FRONTEND_LOG_LOCK = threading.RLock()
+ADMIN_TIMEZONE_FILE = ADMIN_STATE_DIR / "timezone.json"
+ADMIN_TZ_CACHE = {"expires": 0.0, "settings": None}
 
 
 def is_admin_telegram_id(value) -> bool:
@@ -131,6 +136,7 @@ async def setup_bot_commands() -> None:
         BotCommand(command="github_sync", description="Синхронизировать production → GitHub"),
         BotCommand(command="watchdog_on", description="Включить watchdog"),
         BotCommand(command="watchdog_off", description="Выключить watchdog"),
+        BotCommand(command="timezone", description="Часовой пояс логов"),
     ]
     try:
         await bot.set_my_commands(common)
@@ -180,6 +186,122 @@ def admin_trim(text: str, limit: int = 3600) -> str:
     return "…" + clean[-limit:]
 
 
+def _safe_timezone_settings(settings: dict | None) -> dict:
+    settings = settings or {}
+    name = str(settings.get("timezone_name") or "").strip()[:80] or None
+    try:
+        offset = int(settings.get("timezone_offset_minutes") or 0)
+    except (TypeError, ValueError):
+        offset = 0
+    offset = max(-14 * 60, min(14 * 60, offset))
+    return {"timezone_name": name, "timezone_offset_minutes": offset}
+
+
+def _timezone_from_settings(settings: dict | None):
+    clean = _safe_timezone_settings(settings)
+    if clean["timezone_name"]:
+        try:
+            return ZoneInfo(clean["timezone_name"])
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+    return timezone(timedelta(minutes=clean["timezone_offset_minutes"]))
+
+
+def write_admin_timezone_state(settings: dict | None) -> None:
+    clean = _safe_timezone_settings(settings)
+    admin_state_dirs()
+    payload = {**clean, "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+    tmp = ADMIN_TIMEZONE_FILE.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, ADMIN_TIMEZONE_FILE)
+    except Exception:
+        logger.exception("Failed to persist admin timezone")
+    ADMIN_TZ_CACHE["expires"] = 0.0
+
+
+def admin_timezone_settings(force: bool = False) -> dict:
+    now = time.monotonic()
+    cached = ADMIN_TZ_CACHE.get("settings")
+    if not force and cached and now < float(ADMIN_TZ_CACHE.get("expires") or 0):
+        return cached
+    settings = None
+    try:
+        settings = get_user_settings_by_telegram_id(ADMIN_TELEGRAM_ID)
+    except Exception:
+        logger.exception("Failed to load admin timezone from DB")
+    if not settings and ADMIN_TIMEZONE_FILE.is_file():
+        try:
+            settings = json.loads(ADMIN_TIMEZONE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            settings = None
+    if not settings:
+        env_name = str(os.environ.get("SVGTRACKER_ADMIN_TIMEZONE") or "").strip() or None
+        try:
+            env_offset = int(os.environ.get("SVGTRACKER_ADMIN_UTC_OFFSET_MINUTES", "0"))
+        except ValueError:
+            env_offset = 0
+        settings = {"timezone_name": env_name, "timezone_offset_minutes": env_offset}
+    clean = _safe_timezone_settings(settings)
+    ADMIN_TZ_CACHE["settings"] = clean
+    ADMIN_TZ_CACHE["expires"] = now + 30.0
+    return clean
+
+
+def admin_timezone_label(settings: dict | None = None) -> str:
+    clean = _safe_timezone_settings(settings or admin_timezone_settings())
+    offset = clean["timezone_offset_minutes"]
+    if clean["timezone_name"]:
+        try:
+            current_offset = datetime.now(timezone.utc).astimezone(ZoneInfo(clean["timezone_name"])).utcoffset() or timedelta(0)
+            offset = int(current_offset.total_seconds() // 60)
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+    sign = "+" if offset >= 0 else "−"
+    absolute = abs(offset)
+    offset_text = f"UTC{sign}{absolute // 60:02d}:{absolute % 60:02d}"
+    return f"{clean['timezone_name']} · {offset_text}" if clean["timezone_name"] else offset_text
+
+
+def parse_timestamp(value):
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, (int, float)):
+        numeric = float(value)
+        if numeric > 10_000_000_000:
+            numeric /= 1_000_000.0
+        dt = datetime.fromtimestamp(numeric, tz=timezone.utc)
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if text.isdigit():
+            numeric = float(text)
+            if numeric > 10_000_000_000:
+                numeric /= 1_000_000.0
+            dt = datetime.fromtimestamp(numeric, tz=timezone.utc)
+        else:
+            try:
+                dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def format_admin_timestamp(value, include_date: bool = True) -> str:
+    dt = parse_timestamp(value)
+    if dt is None:
+        return str(value or "—")
+    local = dt.astimezone(_timezone_from_settings(admin_timezone_settings()))
+    return local.strftime("%d.%m.%Y %H:%M:%S" if include_date else "%H:%M:%S")
+
+
+def admin_now_text() -> str:
+    return format_admin_timestamp(datetime.now(timezone.utc), include_date=True)
+
+
 def redact_log_text(value, limit: int = 1800) -> str:
     text = str(value or "")
     if BOT_TOKEN:
@@ -227,14 +349,13 @@ def tail_json_log_pretty(path: Path, lines: int = 40) -> str:
         for line in raw:
             try:
                 item = json.loads(line)
-                stamp = str(item.get("client_ts") or item.get("ts") or item.get("server_ts") or "")
-                if "T" in stamp:
-                    stamp = stamp.split("T", 1)[1][:8]
+                stamp = item.get("client_ts") or item.get("ts") or item.get("server_ts") or ""
+                stamp_text = format_admin_timestamp(stamp, include_date=True) if stamp else "—"
                 stage = str(item.get("stage") or "event")
                 level = str(item.get("level") or "info").upper()
                 message = str(item.get("message") or "").strip()
                 suffix = f" · {message}" if message else ""
-                rows.append(f"{stamp or '—'} {level} {stage}{suffix}")
+                rows.append(f"{stamp_text} {level} {stage}{suffix}")
                 if item.get("stack"):
                     rows.append("  " + str(item.get("stack"))[:420].replace("\n", " ↳ "))
             except Exception:
@@ -255,7 +376,7 @@ def admin_component_journal(component: str, lines: int = 120) -> str:
         keys = ("aiogram", "telegram", "polling", "bot @")
         rows = [r for r in rows if any(k in r.lower() for k in keys)]
     elif component == "system":
-        keys = ("systemd[", "watchdog", "started svgtracker", "stopped svgtracker", "deactivated", "failed")
+        keys = ("systemd[", "systemd:", "watchdog", "started svgtracker", "stopped svgtracker", "deactivated", "failed")
         rows = [r for r in rows if any(k in r.lower() for k in keys)]
     return admin_trim("\n".join(rows[-60:]) or f"Нет записей для компонента {component}.")
 
@@ -276,15 +397,15 @@ def frontend_log_summary() -> str:
 
 def admin_public_web_diagnostics() -> str:
     checks = [
-        ("index", f"{PUBLIC_BASE_URL}/", "script.js?v=23"),
-        ("script", f"{PUBLIC_BASE_URL}/script.js?v=23", "SVGTRACKER_BOOT_STAGE"),
-        ("style", f"{PUBLIC_BASE_URL}/style.css?v=23", ":root"),
+        ("index", f"{PUBLIC_BASE_URL}/", "script.js?v=24"),
+        ("script", f"{PUBLIC_BASE_URL}/script.js?v=24", "SVGTRACKER_BOOT_STAGE"),
+        ("style", f"{PUBLIC_BASE_URL}/style.css?v=24", ":root"),
     ]
     rows = []
     for name, url, expected in checks:
         started = time.monotonic()
         try:
-            req = urllib_request.Request(url, headers={"User-Agent": "SVGTracker-Diagnostics/23", "Cache-Control": "no-cache"})
+            req = urllib_request.Request(url, headers={"User-Agent": "SVGTracker-Diagnostics/24", "Cache-Control": "no-cache"})
             with urllib_request.urlopen(req, timeout=4) as response:
                 body = response.read(512_000).decode("utf-8", "replace")
                 elapsed = int((time.monotonic() - started) * 1000)
@@ -323,7 +444,7 @@ def admin_diagnostics_text() -> str:
         + "\n\nSQLite:\n" + admin_db_diagnostics()
         + "\n\nFrontend telemetry (последние):\n" + latest_frontend
         + "\n\nDeploy:\n"
-        + f"status={deploy.get('status', '—')} updated={deploy.get('updated_at', '—')}\n"
+        + f"status={deploy.get('status', '—')} updated={format_admin_timestamp(deploy.get('updated_at'), True) if deploy.get('updated_at') else '—'}\n"
         + str(deploy.get('message', ''))
     )
 
@@ -337,16 +458,30 @@ def admin_journal(lines: int = 40, errors_only: bool = False) -> str:
                 "-u", "svgtracker-watchdog.service",
                 "-n", str(max(1, min(lines, 250))),
                 "--no-pager",
-                "--output=short-iso",
+                "--output=json",
             ],
             capture_output=True, text=True, timeout=8,
         )
-        output = proc.stdout or proc.stderr or "Логи пусты"
+        raw = proc.stdout or ""
+        rows = []
+        for line in raw.splitlines():
+            try:
+                item = json.loads(line)
+                message = str(item.get("MESSAGE") or "").replace("\n", " ↳ ")
+                identifier = str(item.get("SYSLOG_IDENTIFIER") or item.get("_COMM") or "").strip()
+                stamp = format_admin_timestamp(item.get("__REALTIME_TIMESTAMP"), include_date=True)
+                body = f"{identifier}: {message}" if identifier and not message.startswith(identifier) else message
+                rows.append(f"{stamp} {body}".rstrip())
+            except Exception:
+                rows.append(line)
+        if not rows and proc.stderr:
+            rows = [proc.stderr.strip()]
         if errors_only:
             keywords = (" error", "exception", "traceback", "failed", "critical", "warning", " 400 ", " 401 ", " 403 ", " 404 ", " 409 ", " 422 ", " 429 ", " 500 ", " 502 ", " 503 ")
-            filtered = [line for line in output.splitlines() if any(key in line.lower() for key in keywords)]
-            output = "\n".join(filtered[-45:]) or "За последние записи явных ошибок не найдено."
-        return admin_trim(output)
+            rows = [line for line in rows if any(key in line.lower() for key in keywords)]
+            if not rows:
+                return "За последние записи явных ошибок не найдено."
+        return admin_trim("\n".join(rows) or "Логи пусты")
     except Exception as exc:
         return f"Не удалось прочитать journald: {exc}"
 
@@ -385,11 +520,11 @@ def admin_frontend_status() -> str:
         return "FAIL · " + ", ".join(missing)
     try:
         html = (root / "index.html").read_text(encoding="utf-8", errors="replace")
-        if "/script.js?v=23" not in html or "/style.css?v=23" not in html:
+        if "/script.js?v=24" not in html or "/style.css?v=24" not in html:
             return "WARN · asset version mismatch"
     except Exception:
         return "FAIL · index unreadable"
-    return "OK · v23 assets"
+    return "OK · v24 assets"
 
 
 def admin_server_status_text() -> str:
@@ -418,6 +553,7 @@ def admin_server_status_text() -> str:
     return (
         "SVGTracker · server status\n\n"
         f"Version: {APP_VERSION}\n"
+        f"Time: {admin_now_text()} · {admin_timezone_label()}\n"
         f"Service: {active}\n"
         f"Nginx: {nginx}\n"
         f"API: {api}\n"
@@ -441,7 +577,7 @@ async def notify_admin_error(title: str, detail: str) -> None:
     try:
         await bot.send_message(
             ADMIN_TELEGRAM_ID,
-            admin_trim(f"⚠️ SVGTracker\n{title}\n\n{detail}", 3800),
+            admin_trim(f"⚠️ SVGTracker\n{title}\n🕒 {admin_now_text()}\n\n{detail}", 3800),
         )
     except Exception:
         logger.exception("Failed to notify admin about %s", title)
@@ -525,7 +661,7 @@ def finance_state_for_shortcut(user_id):
     state = dict(record["state"]) if record and isinstance(record.get("state"), dict) else {}
     categories = state.get("categories") if isinstance(state.get("categories"), list) else []
     if not categories:
-        now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         categories = [dict(item, updatedAt=now) for item in SHORTCUT_DEFAULT_CATEGORIES]
         state["categories"] = categories
     state.setdefault("version", 5)
@@ -640,6 +776,9 @@ async def api_frontend_diagnostics(request: Request):
             "sdk": item.get("sdk"),
             "ua": item.get("ua"),
             "client_ts": item.get("ts"),
+            "client_local_ts": item.get("localTs"),
+            "client_timezone": item.get("timeZone"),
+            "client_offset_minutes": item.get("offsetMinutes"),
         })
         accepted += 1
     return {"status": "ok", "accepted": accepted, "version": APP_VERSION}
@@ -769,7 +908,7 @@ async def api_shortcut_finance_transaction(
     except ValueError:
         return {"status": "error", "ok": False, "message": "Некорректная дата. Нужен формат YYYY-MM-DD"}
 
-    now = datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+    now = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     entry_id = f"shortcut_{kind}_{uuid.uuid4().hex}"
 
     with FINANCE_WRITE_LOCK:
@@ -860,6 +999,35 @@ def api_profile_notifications(
     settings = set_bot_notifications(user_id, payload["enabled"], kind=kind)
     enabled_key = "friend_request_notifications" if kind == "friends" else "bot_notifications"
     return {"status": "ok", "kind": kind, "enabled": settings[enabled_key]}
+
+
+@app.put("/api/profile/timezone")
+def api_profile_timezone(
+    payload: dict,
+    x_telegram_init_data: str | None = Header(default=None),
+):
+    user, user_id = authenticated_user(x_telegram_init_data)
+    timezone_name = str(payload.get("timezone_name") or "").strip()[:80]
+    try:
+        offset_minutes = int(payload.get("offset_minutes"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="offset_minutes must be integer")
+    if offset_minutes < -14 * 60 or offset_minutes > 14 * 60:
+        raise HTTPException(status_code=422, detail="offset_minutes is out of range")
+    if timezone_name:
+        try:
+            ZoneInfo(timezone_name)
+        except (ZoneInfoNotFoundError, ValueError):
+            timezone_name = ""
+    settings = set_user_timezone(user_id, timezone_name or None, offset_minutes)
+    if is_admin_telegram_id(user.get("id")):
+        write_admin_timezone_state(settings)
+    return {
+        "status": "ok",
+        "timezone_name": settings.get("timezone_name"),
+        "offset_minutes": settings.get("timezone_offset_minutes", 0),
+        "display": admin_timezone_label(settings) if is_admin_telegram_id(user.get("id")) else None,
+    }
 
 
 @app.post("/api/friends/request")
@@ -1185,6 +1353,57 @@ async def admin_github_sync(message: Message):
         await message.answer(admin_trim(f"GitHub sync остановлен: {exc}"))
 
 
+@dp.message(Command("timezone"))
+async def admin_timezone_command(message: Message):
+    if not is_admin_message(message):
+        return
+    text = str(message.text or "").strip()
+    parts = text.split(maxsplit=1)
+    if len(parts) == 1:
+        settings = admin_timezone_settings(force=True)
+        await message.answer(
+            "Часовой пояс логов\n\n"
+            f"{admin_timezone_label(settings)}\n"
+            f"Текущее время: {admin_now_text()}\n\n"
+            "Он обновляется автоматически по часовому поясу iPhone при открытии Mini App. "
+            "Вручную можно указать: /timezone Europe/Moscow или /timezone +04:00"
+        )
+        return
+    raw = parts[1].strip()[:80]
+    timezone_name = None
+    offset_minutes = 0
+    if raw.startswith(("+", "-")):
+        import re
+        match = re.fullmatch(r"([+-])(\d{1,2})(?::?(\d{2}))?", raw)
+        if not match:
+            await message.answer("Формат: /timezone +04:00 или /timezone Europe/Moscow")
+            return
+        sign = 1 if match.group(1) == "+" else -1
+        offset_minutes = sign * (int(match.group(2)) * 60 + int(match.group(3) or 0))
+        if offset_minutes < -14 * 60 or offset_minutes > 14 * 60:
+            await message.answer("Допустимый диапазон UTC: от −14:00 до +14:00")
+            return
+    else:
+        try:
+            tz = ZoneInfo(raw)
+        except (ZoneInfoNotFoundError, ValueError):
+            await message.answer("Неизвестный часовой пояс. Пример: Europe/Moscow или +04:00")
+            return
+        timezone_name = raw
+        offset = datetime.now(timezone.utc).astimezone(tz).utcoffset() or timedelta(0)
+        offset_minutes = int(offset.total_seconds() // 60)
+    user_id = get_or_create_user({
+        "id": message.from_user.id,
+        "username": message.from_user.username,
+        "first_name": message.from_user.first_name,
+        "last_name": message.from_user.last_name,
+        "photo_url": None,
+    })
+    settings = set_user_timezone(user_id, timezone_name, offset_minutes)
+    write_admin_timezone_state(settings)
+    await message.answer(f"Готово. Логи: {admin_timezone_label(settings)}\nСейчас: {admin_now_text()}")
+
+
 @dp.message(Command("deploy"))
 async def admin_deploy_help(message: Message):
     if not is_admin_message(message):
@@ -1259,7 +1478,7 @@ async def admin_backups(message: Message):
         return
     lines = ["Последние backups:"]
     for index, path in enumerate(backups, 1):
-        stamp = datetime.fromtimestamp(path.stat().st_mtime).strftime("%d.%m %H:%M")
+        stamp = format_admin_timestamp(path.stat().st_mtime, include_date=True)
         lines.append(f"{index}. {path.name} · {stamp} · {path.stat().st_size / 1024:.0f} KB")
     lines.append("\n/rollback откатывает код к последнему backup. БД при rollback не откатывается, чтобы не потерять новые данные.")
     await message.answer("\n".join(lines))

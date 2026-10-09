@@ -23,8 +23,9 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path, PurePosixPath
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from html.parser import HTMLParser
 
 PROJECT_ROOT = Path(os.environ.get("SVGTRACKER_PROJECT_ROOT", "/var/www/SVG")).resolve()
@@ -50,6 +51,7 @@ GITHUB_KEY_PATH = Path(os.environ.get("SVGTRACKER_GITHUB_KEY", "/root/.ssh/svgtr
 GITHUB_STATE_FILE = STATE_DIR / "github.json"
 GIT_AUTHOR_NAME = os.environ.get("SVGTRACKER_GIT_AUTHOR_NAME", "SVGTracker Deploy Bot")
 GIT_AUTHOR_EMAIL = os.environ.get("SVGTRACKER_GIT_AUTHOR_EMAIL", "deploy@svgtracker.local")
+TIMEZONE_FILE = STATE_DIR / "timezone.json"
 
 PROTECTED_NAMES = {
     "config.py", ".env", "svgtracker.db", "svgtracker.db-wal", "svgtracker.db-shm",
@@ -65,6 +67,37 @@ CORE_FILES = {"main.py", "finance_db.py", "index.html", "script.js", "style.css"
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def display_timezone():
+    name = None
+    offset = 0
+    try:
+        payload = json.loads(TIMEZONE_FILE.read_text(encoding="utf-8")) if TIMEZONE_FILE.is_file() else {}
+        name = str(payload.get("timezone_name") or "").strip()[:80] or None
+        offset = int(payload.get("timezone_offset_minutes") or 0)
+    except Exception:
+        name = None
+        offset = 0
+    offset = max(-14 * 60, min(14 * 60, offset))
+    if name:
+        try:
+            return ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+    return timezone(timedelta(minutes=offset))
+
+
+def local_now():
+    return datetime.now(timezone.utc).astimezone(display_timezone())
+
+
+def local_now_text() -> str:
+    return local_now().strftime("%d.%m.%Y %H:%M:%S")
+
+
+def local_filename_stamp() -> str:
+    return local_now().strftime("%Y%m%d-%H%M%S")
 
 
 def ensure_dirs() -> None:
@@ -315,7 +348,7 @@ def sqlite_snapshot(src: Path, dst: Path) -> bool:
 def create_backup(relpaths: list[Path] | None = None, *, include_db: bool = False, label: str = "deploy") -> tuple[Path, dict]:
     ensure_dirs()
     relpaths = list(dict.fromkeys(relpaths or git_tracked_files()))
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    timestamp = local_filename_stamp()
     digest = hashlib.sha1((timestamp + label).encode()).hexdigest()[:7]
     archive = BACKUP_DIR / f"{timestamp}-{label}-{digest}.tar.gz"
     manifest = {
@@ -770,7 +803,7 @@ def github_sync_current() -> dict:
     paths = safe_dirty_paths()
     if paths:
         run_git(["add", "--", *paths])
-        run_git(["commit", "-m", f"Sync production {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} via SVGTracker bot"], timeout=40)
+        run_git(["commit", "-m", f"Sync production {local_now().strftime('%Y-%m-%d %H:%M %z')} via SVGTracker bot"], timeout=40)
     commit = run_git(["rev-parse", "--short", "HEAD"]).stdout.strip()
     run_git(["push", "origin", f"HEAD:refs/heads/{branch}"], timeout=60, env=github_env())
     return {"commit": commit, "branch": branch, "files": paths, "repository": github_repo_slug()}
@@ -786,7 +819,7 @@ def git_summary() -> str:
 
 def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
     ensure_dirs()
-    deployment_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    deployment_id = local_filename_stamp()
     DEPLOY_LOCK.write_text(json.dumps({"deployment_id": deployment_id, "started_at": utc_now()}), encoding="utf-8")
     write_status("validating", "Проверяю ZIP и GitHub", deployment_id=deployment_id, archive=zip_path.name)
     deploy_log("validating", "ZIP received; starting preflight", deployment_id=deployment_id, archive=zip_path.name)
@@ -871,6 +904,7 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
 
             message = (
                 f"Обновление успешно. Изменено файлов: {len(changed)}.\n"
+                f"Время: {local_now_text()}\n"
                 f"Backup: {backup.name}\n"
                 f"GitHub: {github_repo_slug()} · {git_context['branch']} · {commit}\n"
                 "VPS: OK\nAPI: OK\nGitHub push: OK"
@@ -918,7 +952,7 @@ def rollback(backup: Path, admin_chat: str | int | None) -> int:
             service_restart()
             wait_health()
             raise RuntimeError(f"Rollback target failed health-check: {detail}")
-        message = f"Rollback выполнен: {backup.name}\nSafety backup: {safety_backup.name}\nAPI: OK"
+        message = f"Rollback выполнен: {backup.name}\nВремя: {local_now_text()}\nSafety backup: {safety_backup.name}\nAPI: OK"
         write_status("rollback_success", message, backup=backup.name, safety_backup=safety_backup.name)
         telegram_notify(admin_chat, "✅ SVGTracker rollback\n\n" + message)
         return 0
