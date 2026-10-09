@@ -16,7 +16,7 @@
   #frontend-boot-warning[hidden]{display:none!important}
   #frontend-boot-warning button{margin-top:9px;padding:8px 12px;border:0;border-radius:10px;background:#fff;color:#111;font:inherit;font-weight:600}
 </style>
-<link rel="stylesheet" href="/style.css?v=22">
+<link rel="stylesheet" href="/style.css?v=23">
 </head>
 <body>
 <div class="ambient-layer">
@@ -758,37 +758,96 @@
 </main>
 
 <div id="frontend-boot-warning" hidden role="status">
-  Не удалось полностью загрузить интерфейс SVGTracker. Обнови страницу — данные не потеряны.
+  Не удалось полностью загрузить интерфейс SVGTracker. Диагностика уже отправлена администратору.
+  <br><small id="frontend-boot-detail">Этап: ожидание script.js</small>
   <br><button type="button" onclick="location.reload()">Обновить</button>
 </div>
 <script>
+(function installSvgDiagnostics(){
+  var endpoint = '/api/diagnostics/frontend';
+  var storageKey = 'svg_diag_buffer_v23';
+  var session = 'web_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8);
+  var buffer = [];
+  var flushTimer = null;
+  var nativeFetch = window.fetch ? window.fetch.bind(window) : null;
+
+  function safeAsset(raw){
+    try { var u = new URL(String(raw || ''), location.href); return u.host + u.pathname; } catch (_) { return String(raw || '').slice(0,180); }
+  }
+  function loadStored(){
+    try { var parsed = JSON.parse(localStorage.getItem(storageKey) || '[]'); if (Array.isArray(parsed)) buffer = parsed.slice(-40); } catch (_) {}
+  }
+  function persist(){ try { localStorage.setItem(storageKey, JSON.stringify(buffer.slice(-40))); } catch (_) {} }
+  function flush(){
+    flushTimer = null;
+    if (!buffer.length || !nativeFetch) return;
+    var batch = buffer.slice(0,20);
+    nativeFetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({events:batch}), keepalive:true})
+      .then(function(response){ if (!response.ok) throw new Error('telemetry HTTP ' + response.status); buffer.splice(0,batch.length); persist(); if(buffer.length) scheduleFlush(300); })
+      .catch(function(){ persist(); });
+  }
+  function scheduleFlush(delay){ if(flushTimer) return; flushTimer = setTimeout(flush, delay || 120); }
+  function log(stage, extra){
+    extra = extra || {};
+    var event = {session:session, level:extra.level || 'info', stage:String(stage || 'event').slice(0,120), message:String(extra.message || '').slice(0,1200), stack:String(extra.stack || '').slice(0,1800), path:location.pathname, asset:String(extra.asset || '').slice(0,220), readyState:document.readyState, online:navigator.onLine, sdk:window.SVG_TELEGRAM_SDK_STATE || 'unknown', ua:String(navigator.userAgent || '').slice(0,320), ts:new Date().toISOString()};
+    buffer.push(event); if(buffer.length>50) buffer=buffer.slice(-50); persist(); scheduleFlush();
+  }
+  loadStored();
+  window.SVGDiag = {log:log, flush:flush, session:session};
+  log('html:diagnostics-installed');
+
+  window.addEventListener('error', function(event){
+    var target = event.target || {};
+    if (target !== window && (target.src || target.href)) { log('resource:error', {level:'error', message:String(target.tagName || 'resource'), asset:safeAsset(target.src || target.href)}); return; }
+    log('window:error', {level:'error', message:event.message || 'Unknown JS error', stack:(event.error && event.error.stack) || (event.filename ? event.filename + ':' + event.lineno + ':' + event.colno : '')});
+  }, true);
+  window.addEventListener('unhandledrejection', function(event){
+    var reason = event.reason; log('promise:unhandled', {level:'error', message:reason && reason.message ? reason.message : String(reason || 'Unhandled rejection'), stack:reason && reason.stack ? reason.stack : ''});
+  });
+  window.addEventListener('DOMContentLoaded', function(){ log('dom:content-loaded'); });
+  window.addEventListener('load', function(){ log('window:load'); flush(); });
+  window.addEventListener('online', function(){ log('network:online'); flush(); });
+  window.addEventListener('offline', function(){ log('network:offline', {level:'warning'}); });
+
+  if (nativeFetch) {
+    window.fetch = function(input, init){
+      var started = Date.now(); var url = typeof input === 'string' ? input : (input && input.url) || '';
+      if (String(url).indexOf(endpoint) !== -1) return nativeFetch(input, init);
+      return nativeFetch(input, init).then(function(response){
+        if (!response.ok) log('fetch:http-error', {level:'warning', message:(init && init.method ? init.method : 'GET') + ' ' + safeAsset(url) + ' → ' + response.status});
+        else if (Date.now()-started > 5000) log('fetch:slow', {level:'warning', message:safeAsset(url) + ' · ' + (Date.now()-started) + 'ms'});
+        return response;
+      }).catch(function(error){ log('fetch:network-error', {level:'error', message:safeAsset(url) + ' · ' + (error && error.message ? error.message : error), stack:error && error.stack}); throw error; });
+    };
+  }
+})();
+
 (function loadTelegramSdkNonBlocking(){
-  window.SVG_TELEGRAM_SDK_STATE = window.Telegram?.WebApp ? 'ready' : 'loading';
-  if (window.Telegram?.WebApp) {
+  window.SVG_TELEGRAM_SDK_STATE = window.Telegram && window.Telegram.WebApp ? 'ready' : 'loading';
+  if (window.SVGDiag) window.SVGDiag.log('telegram-sdk:start');
+  if (window.Telegram && window.Telegram.WebApp) {
+    if (window.SVGDiag) window.SVGDiag.log('telegram-sdk:already-ready');
     window.dispatchEvent(new Event('svgtracker:telegram-sdk'));
     return;
   }
   var sdk = document.createElement('script');
   sdk.src = 'https://telegram.org/js/telegram-web-app.js';
   sdk.async = true;
-  sdk.onload = function(){
-    window.SVG_TELEGRAM_SDK_STATE = 'ready';
-    window.dispatchEvent(new Event('svgtracker:telegram-sdk'));
-  };
-  sdk.onerror = function(){
-    window.SVG_TELEGRAM_SDK_STATE = 'unavailable';
-    window.dispatchEvent(new Event('svgtracker:telegram-sdk-error'));
-  };
+  sdk.onload = function(){ window.SVG_TELEGRAM_SDK_STATE = 'ready'; if(window.SVGDiag)window.SVGDiag.log('telegram-sdk:ready'); window.dispatchEvent(new Event('svgtracker:telegram-sdk')); };
+  sdk.onerror = function(){ window.SVG_TELEGRAM_SDK_STATE = 'unavailable'; if(window.SVGDiag)window.SVGDiag.log('telegram-sdk:error',{level:'warning',asset:'telegram.org/js/telegram-web-app.js'}); window.dispatchEvent(new Event('svgtracker:telegram-sdk-error')); };
   document.head.appendChild(sdk);
 
   window.setTimeout(function(){
     if (window.SVGTRACKER_FRONTEND_READY !== true) {
+      if(window.SVGDiag)window.SVGDiag.log('frontend:boot-timeout',{level:'error',message:'SVGTRACKER_FRONTEND_READY is not true after 8s'});
       var warning = document.getElementById('frontend-boot-warning');
+      var detail = document.getElementById('frontend-boot-detail');
+      if (detail) detail.textContent = 'Этап: ' + (window.SVGTRACKER_BOOT_STAGE || 'script.js не завершил запуск');
       if (warning) warning.hidden = false;
     }
   }, 8000);
 })();
 </script>
-<script src="/script.js?v=22" defer></script>
+<script src="/script.js?v=23" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=23'})"></script>
 </body>
 </html>

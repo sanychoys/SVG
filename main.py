@@ -5,13 +5,15 @@ import json
 import logging
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
 import uuid
 import threading
+from collections import deque
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import parse_qsl
 from urllib import request as urllib_request
 
@@ -51,7 +53,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "22"
+APP_VERSION = "23"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -79,6 +81,13 @@ ADMIN_DEPLOY_HELPER = Path(__file__).parent / "deploy" / "admin_deploy.py"
 ADMIN_PENDING_DEPLOYS: dict[str, dict] = {}
 ADMIN_ERROR_COOLDOWN: dict[str, float] = {}
 ADMIN_MAX_ZIP_BYTES = 20 * 1024 * 1024
+PUBLIC_BASE_URL = os.environ.get("SVGTRACKER_PUBLIC_URL", "https://starslix.ru").rstrip("/")
+ADMIN_LOG_DIR = ADMIN_STATE_DIR / "logs"
+FRONTEND_LOG_FILE = ADMIN_LOG_DIR / "frontend.log"
+FRONTEND_RATE_WINDOW_SECONDS = 60
+FRONTEND_RATE_LIMIT = 60
+FRONTEND_RATE: dict[str, deque[float]] = {}
+FRONTEND_LOG_LOCK = threading.RLock()
 
 
 def is_admin_telegram_id(value) -> bool:
@@ -108,7 +117,13 @@ async def setup_bot_commands() -> None:
         BotCommand(command="backups", description="Список backup"),
         BotCommand(command="rollback", description="Откатить код"),
         BotCommand(command="errors", description="Ошибки сервера"),
-        BotCommand(command="logs", description="Последние логи"),
+        BotCommand(command="logs", description="Общие логи"),
+        BotCommand(command="logs_frontend", description="Frontend runtime логи"),
+        BotCommand(command="logs_backend", description="Backend/API логи"),
+        BotCommand(command="logs_bot", description="Telegram bot логи"),
+        BotCommand(command="logs_system", description="systemd/watchdog логи"),
+        BotCommand(command="logs_deploy", description="Deploy/GitHub логи"),
+        BotCommand(command="diagnostics", description="Диагностический снимок"),
         BotCommand(command="restart", description="Перезапустить SVGTracker"),
         BotCommand(command="github_setup", description="Подключить GitHub Deploy Key"),
         BotCommand(command="github_test", description="Проверить запись в GitHub"),
@@ -140,6 +155,10 @@ def admin_keyboard() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="Логи", callback_data="admin:logs"),
+            InlineKeyboardButton(text="Диагностика", callback_data="admin:diagnostics"),
+        ],
+        [
+            InlineKeyboardButton(text="Frontend", callback_data="admin:logs_frontend"),
             InlineKeyboardButton(text="Restart", callback_data="admin:restart"),
         ],
         [
@@ -150,6 +169,7 @@ def admin_keyboard() -> InlineKeyboardMarkup:
 
 def admin_state_dirs() -> None:
     (ADMIN_STATE_DIR / "incoming").mkdir(parents=True, exist_ok=True)
+    ADMIN_LOG_DIR.mkdir(parents=True, exist_ok=True)
     ADMIN_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -158,6 +178,154 @@ def admin_trim(text: str, limit: int = 3600) -> str:
     if len(clean) <= limit:
         return clean
     return "…" + clean[-limit:]
+
+
+def redact_log_text(value, limit: int = 1800) -> str:
+    text = str(value or "")
+    if BOT_TOKEN:
+        text = text.replace(BOT_TOKEN, "***")
+    # Never persist bearer credentials or Telegram init data accidentally passed by a client.
+    import re
+    text = re.sub(r"Bearer\s+[^\s]+", "Bearer ***", text, flags=re.I)
+    text = re.sub(r"(?:tgWebAppData|initData)=([^\s&#]+)", r"\1=***", text, flags=re.I)
+    return text[:limit]
+
+
+def append_json_log(path: Path, payload: dict, max_bytes: int = 2_000_000) -> None:
+    admin_state_dirs()
+    safe = {str(k)[:64]: redact_log_text(v) for k, v in payload.items() if v is not None}
+    safe.setdefault("server_ts", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+    line = json.dumps(safe, ensure_ascii=False, separators=(",", ":")) + "\n"
+    with FRONTEND_LOG_LOCK:
+        try:
+            if path.exists() and path.stat().st_size > max_bytes:
+                rotated = path.with_suffix(path.suffix + ".1")
+                rotated.unlink(missing_ok=True)
+                path.replace(rotated)
+        except OSError:
+            pass
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+
+
+def tail_text_file(path: Path, lines: int = 60) -> str:
+    try:
+        if not path.is_file():
+            return "Лог пока пуст."
+        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return admin_trim("\n".join(content[-max(1, min(lines, 120)):]))
+    except Exception as exc:
+        return f"Не удалось прочитать {path.name}: {exc}"
+
+
+def tail_json_log_pretty(path: Path, lines: int = 40) -> str:
+    try:
+        if not path.is_file():
+            return "Лог пока пуст."
+        raw = path.read_text(encoding="utf-8", errors="replace").splitlines()[-max(1, min(lines, 80)):]
+        rows = []
+        for line in raw:
+            try:
+                item = json.loads(line)
+                stamp = str(item.get("client_ts") or item.get("ts") or item.get("server_ts") or "")
+                if "T" in stamp:
+                    stamp = stamp.split("T", 1)[1][:8]
+                stage = str(item.get("stage") or "event")
+                level = str(item.get("level") or "info").upper()
+                message = str(item.get("message") or "").strip()
+                suffix = f" · {message}" if message else ""
+                rows.append(f"{stamp or '—'} {level} {stage}{suffix}")
+                if item.get("stack"):
+                    rows.append("  " + str(item.get("stack"))[:420].replace("\n", " ↳ "))
+            except Exception:
+                rows.append(line)
+        return admin_trim("\n".join(rows) or "Лог пока пуст.")
+    except Exception as exc:
+        return f"Не удалось прочитать {path.name}: {exc}"
+
+
+def admin_component_journal(component: str, lines: int = 120) -> str:
+    raw = admin_journal(lines, errors_only=False)
+    rows = raw.splitlines()
+    component = component.lower()
+    if component == "backend":
+        keys = ("svgtracker:", "uvicorn", '"get /api/', '"post /api/', '"put /api/', '"delete /api/', "fastapi")
+        rows = [r for r in rows if any(k in r.lower() for k in keys) and "aiogram" not in r.lower()]
+    elif component == "bot":
+        keys = ("aiogram", "telegram", "polling", "bot @")
+        rows = [r for r in rows if any(k in r.lower() for k in keys)]
+    elif component == "system":
+        keys = ("systemd[", "watchdog", "started svgtracker", "stopped svgtracker", "deactivated", "failed")
+        rows = [r for r in rows if any(k in r.lower() for k in keys)]
+    return admin_trim("\n".join(rows[-60:]) or f"Нет записей для компонента {component}.")
+
+
+def frontend_log_summary() -> str:
+    if not FRONTEND_LOG_FILE.is_file():
+        return "нет событий"
+    try:
+        rows = FRONTEND_LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+        if not rows:
+            return "нет событий"
+        last = json.loads(rows[-1])
+        stage = last.get("stage") or last.get("kind") or last.get("message") or "event"
+        return f"{len(rows)} events · last: {str(stage)[:46]}"
+    except Exception:
+        return "лог есть, формат повреждён"
+
+
+def admin_public_web_diagnostics() -> str:
+    checks = [
+        ("index", f"{PUBLIC_BASE_URL}/", "script.js?v=23"),
+        ("script", f"{PUBLIC_BASE_URL}/script.js?v=23", "SVGTRACKER_BOOT_STAGE"),
+        ("style", f"{PUBLIC_BASE_URL}/style.css?v=23", ":root"),
+    ]
+    rows = []
+    for name, url, expected in checks:
+        started = time.monotonic()
+        try:
+            req = urllib_request.Request(url, headers={"User-Agent": "SVGTracker-Diagnostics/23", "Cache-Control": "no-cache"})
+            with urllib_request.urlopen(req, timeout=4) as response:
+                body = response.read(512_000).decode("utf-8", "replace")
+                elapsed = int((time.monotonic() - started) * 1000)
+                ok = response.status == 200 and expected in body
+                rows.append(f"{name}: {'OK' if ok else 'WARN'} · HTTP {response.status} · {len(body)} chars · {elapsed}ms")
+        except Exception as exc:
+            rows.append(f"{name}: FAIL · {type(exc).__name__}: {exc}")
+    return "\n".join(rows)
+
+
+def admin_db_diagnostics() -> str:
+    db_path = Path(__file__).parent / "svgtracker.db"
+    if not db_path.is_file():
+        return "DB: missing"
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+        try:
+            quick = conn.execute("PRAGMA quick_check").fetchone()[0]
+            tables = conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
+        finally:
+            conn.close()
+        wal = Path(str(db_path) + "-wal")
+        shm = Path(str(db_path) + "-shm")
+        return f"quick_check={quick} · tables={tables} · db={db_path.stat().st_size/1024:.1f}KB · wal={(wal.stat().st_size if wal.exists() else 0)/1024:.1f}KB · shm={(shm.stat().st_size if shm.exists() else 0)/1024:.1f}KB"
+    except Exception as exc:
+        return f"DB check FAIL · {type(exc).__name__}: {exc}"
+
+
+def admin_diagnostics_text() -> str:
+    status = admin_server_status_text()
+    latest_frontend = tail_json_log_pretty(FRONTEND_LOG_FILE, 12)
+    deploy = admin_latest_status()
+    return admin_trim(
+        status
+        + "\n\nPublic web:\n" + admin_public_web_diagnostics()
+        + "\n\nSQLite:\n" + admin_db_diagnostics()
+        + "\n\nFrontend telemetry (последние):\n" + latest_frontend
+        + "\n\nDeploy:\n"
+        + f"status={deploy.get('status', '—')} updated={deploy.get('updated_at', '—')}\n"
+        + str(deploy.get('message', ''))
+    )
 
 
 def admin_journal(lines: int = 40, errors_only: bool = False) -> str:
@@ -217,15 +385,16 @@ def admin_frontend_status() -> str:
         return "FAIL · " + ", ".join(missing)
     try:
         html = (root / "index.html").read_text(encoding="utf-8", errors="replace")
-        if "/script.js?v=22" not in html or "/style.css?v=22" not in html:
+        if "/script.js?v=23" not in html or "/style.css?v=23" not in html:
             return "WARN · asset version mismatch"
     except Exception:
         return "FAIL · index unreadable"
-    return "OK · v22 assets"
+    return "OK · v23 assets"
 
 
 def admin_server_status_text() -> str:
     active = subprocess.run(["systemctl", "is-active", "svgtracker"], capture_output=True, text=True).stdout.strip() or "unknown"
+    nginx = subprocess.run(["systemctl", "is-active", "nginx"], capture_output=True, text=True).stdout.strip() or "unknown"
     try:
         with urllib_request.urlopen("http://127.0.0.1:8000/api/test", timeout=2.5) as response:
             api = "OK" if response.status == 200 else f"HTTP {response.status}"
@@ -250,8 +419,10 @@ def admin_server_status_text() -> str:
         "SVGTracker · server status\n\n"
         f"Version: {APP_VERSION}\n"
         f"Service: {active}\n"
+        f"Nginx: {nginx}\n"
         f"API: {api}\n"
         f"Frontend: {admin_frontend_status()}\n"
+        f"Frontend logs: {frontend_log_summary()}\n"
         f"Watchdog: {watchdog}\n"
         f"Git: {admin_git_state()}\n"
         f"DB: {db_size / 1024:.1f} KB\n"
@@ -426,6 +597,52 @@ async def monitor_http_errors(request: Request, call_next):
 @app.get("/api/test")
 def api_test():
     return {"status": "ok", "service": "SVGTracker API", "version": APP_VERSION}
+
+
+@app.post("/api/diagnostics/frontend")
+async def api_frontend_diagnostics(request: Request):
+    """Receive privacy-minimized browser runtime diagnostics.
+
+    This endpoint intentionally does not require Telegram auth: it must work even
+    when the Telegram SDK itself is the thing that failed to load. It stores no
+    cookies, initData, request bodies or authorization headers.
+    """
+    host = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    bucket = FRONTEND_RATE.setdefault(host, deque())
+    while bucket and now - bucket[0] > FRONTEND_RATE_WINDOW_SECONDS:
+        bucket.popleft()
+    if len(bucket) >= FRONTEND_RATE_LIMIT:
+        return JSONResponse(status_code=429, content={"status": "rate_limited"})
+    bucket.append(now)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"status": "invalid_json"})
+    events = payload.get("events") if isinstance(payload, dict) else None
+    if not isinstance(events, list):
+        events = [payload] if isinstance(payload, dict) else []
+    accepted = 0
+    for item in events[:20]:
+        if not isinstance(item, dict):
+            continue
+        append_json_log(FRONTEND_LOG_FILE, {
+            "version": APP_VERSION,
+            "session": item.get("session"),
+            "level": item.get("level") or "info",
+            "stage": item.get("stage") or item.get("kind") or "event",
+            "message": item.get("message"),
+            "stack": item.get("stack"),
+            "path": item.get("path"),
+            "asset": item.get("asset"),
+            "ready_state": item.get("readyState"),
+            "online": item.get("online"),
+            "sdk": item.get("sdk"),
+            "ua": item.get("ua"),
+            "client_ts": item.get("ts"),
+        })
+        accepted += 1
+    return {"status": "ok", "accepted": accepted, "version": APP_VERSION}
 
 
 @app.post("/api/user")
@@ -848,7 +1065,7 @@ async def admin_panel(message: Message):
         "Production управляется отсюда. ZIP-deploy делает backup, проверяет файлы, "
         "перезапускает сервис и автоматически откатывается, если API не поднимается.\n\n"
         "После настройки GitHub успешный ZIP-deploy автоматически делает commit + push в origin/main.\n\n"
-        "Команды: /deploy /deploy_status /server_status /backup /backups /rollback /logs /errors /restart "
+        "Команды: /deploy /deploy_status /server_status /diagnostics /logs_frontend /logs_backend /logs_bot /logs_system /logs_deploy /backup /backups /rollback /logs /errors /restart "
         "/github_setup /github_test /github_status /github_sync",
         reply_markup=admin_keyboard(),
     )
@@ -1074,6 +1291,49 @@ async def admin_logs(message: Message):
     await message.answer("Последние логи:\n\n" + admin_journal(45))
 
 
+@dp.message(Command("logs_frontend"))
+async def admin_logs_frontend(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer("Frontend runtime:\n\n" + tail_json_log_pretty(FRONTEND_LOG_FILE, 55))
+
+
+@dp.message(Command("logs_backend"))
+async def admin_logs_backend(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer("Backend / API:\n\n" + admin_component_journal("backend", 180))
+
+
+@dp.message(Command("logs_bot"))
+async def admin_logs_bot(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer("Telegram bot:\n\n" + admin_component_journal("bot", 180))
+
+
+@dp.message(Command("logs_system"))
+async def admin_logs_system(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer("systemd / watchdog:\n\n" + admin_component_journal("system", 180))
+
+
+@dp.message(Command("logs_deploy"))
+async def admin_logs_deploy(message: Message):
+    if not is_admin_message(message):
+        return
+    path = ADMIN_LOG_DIR / "deploy.log"
+    await message.answer("Deploy / GitHub:\n\n" + tail_json_log_pretty(path, 55))
+
+
+@dp.message(Command("diagnostics"))
+async def admin_diagnostics(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer(await asyncio.to_thread(admin_diagnostics_text))
+
+
 @dp.message(Command("errors"))
 async def admin_errors(message: Message):
     if not is_admin_message(message):
@@ -1153,6 +1413,16 @@ async def admin_callback(callback: CallbackQuery):
         await callback.answer()
         if callback.message:
             await callback.message.answer("Последние логи:\n\n" + admin_journal(45))
+        return
+    if action == "logs_frontend":
+        await callback.answer()
+        if callback.message:
+            await callback.message.answer("Frontend runtime:\n\n" + tail_json_log_pretty(FRONTEND_LOG_FILE, 55))
+        return
+    if action == "diagnostics":
+        await callback.answer()
+        if callback.message:
+            await callback.message.answer(await asyncio.to_thread(admin_diagnostics_text))
         return
     if action == "github":
         await callback.answer()

@@ -38,6 +38,8 @@ SYSTEMD_UNITS = {
 BACKUP_DIR = Path(os.environ.get("SVGTRACKER_BACKUP_DIR", "/var/backups/svgtracker"))
 STATE_DIR = Path(os.environ.get("SVGTRACKER_ADMIN_STATE_DIR", "/var/lib/svgtracker-admin"))
 STATUS_FILE = STATE_DIR / "deploy_status.json"
+LOG_DIR = STATE_DIR / "logs"
+DEPLOY_LOG_FILE = LOG_DIR / "deploy.log"
 DEPLOY_LOCK = STATE_DIR / "deploy.lock"
 DB_PATH = PROJECT_ROOT / "svgtracker.db"
 MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
@@ -68,6 +70,7 @@ def utc_now() -> str:
 def ensure_dirs() -> None:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     (STATE_DIR / "incoming").mkdir(parents=True, exist_ok=True)
 
 
@@ -81,6 +84,21 @@ def atomic_json(path: Path, payload: dict) -> None:
 def write_status(status: str, message: str, **extra) -> None:
     payload = {"status": status, "message": message, "updated_at": utc_now(), **extra}
     atomic_json(STATUS_FILE, payload)
+
+
+def deploy_log(stage: str, message: str, **extra) -> None:
+    ensure_dirs()
+    payload = {"ts": utc_now(), "stage": stage, "message": str(message)[:1800], **extra}
+    line = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+    try:
+        if DEPLOY_LOG_FILE.exists() and DEPLOY_LOG_FILE.stat().st_size > 2_000_000:
+            rotated = DEPLOY_LOG_FILE.with_suffix(".log.1")
+            rotated.unlink(missing_ok=True)
+            DEPLOY_LOG_FILE.replace(rotated)
+    except OSError:
+        pass
+    with DEPLOY_LOG_FILE.open("a", encoding="utf-8") as handle:
+        handle.write(line)
 
 
 def safe_rel_path(raw_name: str, strip_prefix: str | None = None) -> Path | None:
@@ -771,31 +789,39 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
     deployment_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     DEPLOY_LOCK.write_text(json.dumps({"deployment_id": deployment_id, "started_at": utc_now()}), encoding="utf-8")
     write_status("validating", "Проверяю ZIP и GitHub", deployment_id=deployment_id, archive=zip_path.name)
+    deploy_log("validating", "ZIP received; starting preflight", deployment_id=deployment_id, archive=zip_path.name)
     git_context = None
     backup = None
     changed = []
     try:
         # GitHub is the source of truth. Refuse to deploy over an unsynchronized production tree.
         git_context = github_preflight_for_deploy()
+        deploy_log("git-preflight", "VPS and origin are synchronized", deployment_id=deployment_id, branch=git_context.get("branch"), head=git_context.get("head"))
         with tempfile.TemporaryDirectory(prefix="svgdeploy-") as td:
             extracted = Path(td) / "release"
             extracted.mkdir()
             relpaths = extract_selected(zip_path, extracted)
             notes = validate_release(extracted, relpaths)
+            deploy_log("validated", "Archive validation passed", deployment_id=deployment_id, files=len(relpaths), notes="; ".join(notes))
             changed_targets = [rel for rel in relpaths if not (PROJECT_ROOT / rel).is_file() or (PROJECT_ROOT / rel).read_bytes() != (extracted / rel).read_bytes()]
             if not changed_targets:
                 message = "ZIP проверен: изменений относительно production нет. GitHub и VPS остаются без изменений."
                 write_status("no_changes", message, deployment_id=deployment_id, archive=zip_path.name)
+                deploy_log("no-changes", message, deployment_id=deployment_id)
                 telegram_notify(admin_chat, "SVGTracker deploy\n\n" + message)
                 return 0
             backup, manifest = create_backup(changed_targets, include_db=False, label="predeploy")
+            deploy_log("backup", "Pre-deploy backup created", deployment_id=deployment_id, backup=backup.name, files=len(changed_targets))
             write_status(
                 "deploying", "Файлы проверены, применяю обновление", deployment_id=deployment_id,
                 archive=zip_path.name, backup=backup.name, files=[p.as_posix() for p in changed_targets], notes=notes,
             )
             changed = apply_release(extracted, relpaths)
+            deploy_log("applied", "Files copied to production", deployment_id=deployment_id, files=",".join(changed))
             service_restart()
+            deploy_log("restart", "svgtracker.service restart requested", deployment_id=deployment_id)
             ok, health_detail = wait_health(timeout=35.0)
+            deploy_log("health", "Health-check finished", deployment_id=deployment_id, ok=ok, detail=health_detail[:500])
             if not ok:
                 restore_backup(backup)
                 git_reset_to(git_context["head"])
@@ -810,6 +836,7 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
                     "rolled_back", message, deployment_id=deployment_id, archive=zip_path.name,
                     backup=backup.name, files=changed, health=health_detail,
                 )
+                deploy_log("rollback", message, deployment_id=deployment_id, backup=backup.name)
                 telegram_notify(admin_chat, "⚠️ SVGTracker deploy\n\n" + message)
                 return 2
 
@@ -819,6 +846,7 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
             )
             try:
                 commit = git_commit_and_push(changed_targets, deployment_id, git_context["branch"])
+                deploy_log("github-push", "Commit pushed successfully", deployment_id=deployment_id, commit=commit, branch=git_context["branch"])
             except Exception as push_exc:
                 # Keep GitHub and production atomic: if publish fails, restore the exact previous release.
                 try:
@@ -837,6 +865,7 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
                     "github_rollback", message, deployment_id=deployment_id, archive=zip_path.name,
                     backup=backup.name, files=changed,
                 )
+                deploy_log("github-rollback", message, deployment_id=deployment_id)
                 telegram_notify(admin_chat, "❌ SVGTracker deploy\n\n" + message)
                 return 3
 
@@ -850,11 +879,13 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
                 "success", message, deployment_id=deployment_id, archive=zip_path.name,
                 backup=backup.name, files=changed, health="ok", notes=notes, github_commit=commit,
             )
+            deploy_log("success", message, deployment_id=deployment_id, commit=commit)
             telegram_notify(admin_chat, "✅ SVGTracker deploy\n\n" + message)
             return 0
     except Exception as exc:
         message = f"Deploy error: {type(exc).__name__}: {exc}"
         write_status("error", message, deployment_id=deployment_id, archive=zip_path.name)
+        deploy_log("error", message, deployment_id=deployment_id, archive=zip_path.name)
         telegram_notify(admin_chat, "❌ SVGTracker deploy\n\n" + message[:3500])
         return 1
     finally:

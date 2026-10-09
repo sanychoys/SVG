@@ -1,3 +1,9 @@
+window.SVGTRACKER_BOOT_STAGE = 'script:execute';
+function svgDiag(stage, extra = {}) {
+  try { if (window.SVGDiag?.log) window.SVGDiag.log(stage, extra); } catch (_) {}
+}
+svgDiag('script:execute');
+
 // Telegram WebApp bootstrap and user binding.
 // The Telegram SDK is intentionally loaded asynchronously by index.html so a
 // slow telegram.org response can never block the whole SVGTracker UI.
@@ -93,7 +99,8 @@ function readJSON(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
     return raw === null ? fallback : JSON.parse(raw);
-  } catch (_) {
+  } catch (error) {
+    svgDiag('storage:read-error', { level: 'warning', message: `${key}: ${error?.message || error}` });
     return fallback;
   }
 }
@@ -1010,6 +1017,8 @@ function updateWorkoutTimer() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  window.SVGTRACKER_BOOT_STAGE = 'training:init';
+  svgDiag('training:init:start');
   if (tg) tg.ready();
 
   // Startup route: всегда Dashboard.
@@ -1026,6 +1035,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (staleWorkoutChanged) persist(); else persistLocal();
   renderFitness();
   syncTrainingWithServer();
+  svgDiag('training:init:done');
 });
 
 /* === Training product layer v11 ==========================================
@@ -3309,9 +3319,12 @@ async function unblockUserById(userId) {
 
 window.addEventListener('online', () => loadProfileData(true));
 document.addEventListener('DOMContentLoaded', () => {
+  window.SVGTRACKER_BOOT_STAGE = 'profile:init';
+  svgDiag('profile:init:start');
   renderProfileState();
   renderHomeTrainingSummary();
   if (tg?.initData) loadProfileData(false);
+  svgDiag('profile:init:done');
 });
 
 /* === Dashboard + finance product layer v15 ==============================
@@ -4088,11 +4101,12 @@ function renderHomeActivity(nowMs = Date.now()) {
 window.addEventListener('online',()=>syncFinanceWithServerV15());
 window.addEventListener('offline',()=>financeSetSyncStatusV15('offline','Офлайн · сохранено локально'));
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&tg?.initData)syncFinanceWithServerV15();});
-document.addEventListener('DOMContentLoaded',()=>{financeData=normalizeFinanceDataV15(financeData);localStorage.setItem(STORAGE.finance,JSON.stringify(financeData));renderFinance();renderHomeTrainingSummary();if(tg?.initData)syncFinanceWithServerV15();});
+document.addEventListener('DOMContentLoaded',()=>{window.SVGTRACKER_BOOT_STAGE='finance:init';svgDiag('finance:init:start');financeData=normalizeFinanceDataV15(financeData);localStorage.setItem(STORAGE.finance,JSON.stringify(financeData));renderFinance();renderHomeTrainingSummary();if(tg?.initData)syncFinanceWithServerV15();svgDiag('finance:init:done');});
 
 // Late Telegram bootstrap: the UI is usable before the Telegram SDK arrives.
 document.addEventListener('svgtracker:telegram-ready', () => {
-  try { renderProfileState(); } catch (_) {}
+  svgDiag('telegram:ready-event');
+  try { renderProfileState(); } catch (error) { svgDiag('telegram:profile-render-error',{level:'error',message:error?.message||String(error),stack:error?.stack}); }
   try { renderHomeTrainingSummary(); } catch (_) {}
   if (!tg?.initData) return;
   try { syncTrainingWithServer(); } catch (_) {}
@@ -4101,8 +4115,11 @@ document.addEventListener('svgtracker:telegram-ready', () => {
 });
 
 document.addEventListener('DOMContentLoaded', () => {
+  window.SVGTRACKER_BOOT_STAGE = 'frontend:ready';
   window.SVGTRACKER_FRONTEND_READY = true;
   document.documentElement.dataset.svgtrackerReady = '1';
   const warning = document.getElementById('frontend-boot-warning');
   if (warning) warning.hidden = true;
+  svgDiag('frontend:ready', { message: `bodyChildren=${document.body?.children?.length || 0}` });
+  try { window.SVGDiag?.flush?.(); } catch (_) {}
 });

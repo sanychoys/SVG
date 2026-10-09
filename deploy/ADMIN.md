@@ -12,7 +12,13 @@ Admin Telegram ID is read from `SVGTRACKER_ADMIN_ID` and defaults to the project
 - `/backups` — recent backups
 - `/rollback` — restore code from the latest backup (database is intentionally not rolled back)
 - `/errors` — recent errors/warnings from journald
-- `/logs` — recent service logs
+- `/logs` — общие service logs
+- `/logs_frontend` — ошибки/этапы загрузки Safari и Telegram WebView
+- `/logs_backend` — FastAPI/Uvicorn/API
+- `/logs_bot` — aiogram/Telegram polling
+- `/logs_system` — systemd/watchdog
+- `/logs_deploy` — ZIP deploy + GitHub publish
+- `/diagnostics` — сводный снимок сервера + последние frontend events
 - `/restart` — safe systemd restart
 - `/github_setup` — generate the repository-scoped GitHub Deploy Key and show its public half
 - `/github_test` — verify GitHub write access and switch `origin` to SSH
@@ -53,3 +59,11 @@ Protected production data is never overwritten by ZIP deploy: `config.py`, `.env
 - `script.js` and `style.css` are cache-busted with `?v=22`.
 - ZIP deploy validation rejects missing frontend assets and a blocking Telegram SDK tag.
 - `/server_status` reports a separate Frontend status.
+
+## V23 diagnostics
+- Browser bootstrap starts logging before `script.js` is loaded.
+- Captures resource failures, JS errors, unhandled promises, API/network errors and startup stages.
+- Frontend telemetry is stored in `/var/lib/svgtracker-admin/logs/frontend.log`; credentials and Telegram init data are not logged.
+- Deploy lifecycle is stored in `/var/lib/svgtracker-admin/logs/deploy.log`.
+- `/server_status` shows whether frontend telemetry is arriving and the last startup stage.
+- The diagnostic endpoint is rate-limited and intentionally works without Telegram auth so it can report failures of the Telegram SDK itself.
