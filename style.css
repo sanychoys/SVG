@@ -5176,7 +5176,7 @@ body.profile-drawer-open{overflow:hidden}
   .profile-drawer-header h2{font-size:21px}
 }
 
-/* === Website Telegram authentication · v26 =========================== */
+/* === Website Telegram authentication · v27 =========================== */
 .web-auth-gate{display:none;position:fixed;inset:0;z-index:12000;min-height:100dvh;padding:24px;align-items:center;justify-content:center;background:#000;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text",sans-serif}
 html.svg-web:not(.web-authenticated) .web-auth-gate{display:flex}
 html.svg-web:not(.web-authenticated) .app-shell,html.svg-web:not(.web-authenticated) .ambient-layer{visibility:hidden;pointer-events:none}

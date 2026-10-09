@@ -66,7 +66,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "26"
+APP_VERSION = "27"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -108,6 +108,10 @@ FRONTEND_DIAGNOSTICS_MAX_BODY = 64 * 1024
 RUNTIME_MAINTENANCE_INTERVAL = 10 * 60
 PROCESS_TRIM_THRESHOLD_BYTES = 220 * 1024 * 1024
 FRONTEND_RATE: dict[str, deque[float]] = {}
+WEB_AUTH_RATE_WINDOW_SECONDS = 60
+WEB_AUTH_RATE_LIMIT = 10
+WEB_AUTH_RATE_MAX_HOSTS = 256
+WEB_AUTH_RATE: dict[str, deque[float]] = {}
 FRONTEND_LOG_LOCK = threading.RLock()
 ADMIN_TIMEZONE_FILE = ADMIN_STATE_DIR / "timezone.json"
 ADMIN_TZ_CACHE = {"expires": 0.0, "settings": None}
@@ -651,7 +655,7 @@ def _trim_malloc() -> bool:
 def prune_runtime_caches() -> dict:
     now_wall = time.time()
     now_mono = time.monotonic()
-    removed = {"deploys": 0, "cooldowns": 0, "rate_hosts": 0}
+    removed = {"deploys": 0, "cooldowns": 0, "rate_hosts": 0, "web_auth_hosts": 0}
 
     for token, item in list(ADMIN_PENDING_DEPLOYS.items()):
         if now_wall - float(item.get("created_at") or 0) <= 1800:
@@ -686,6 +690,19 @@ def prune_runtime_caches() -> dict:
         for host, _ in oldest:
             FRONTEND_RATE.pop(host, None)
             removed["rate_hosts"] += 1
+
+    for host, bucket in list(WEB_AUTH_RATE.items()):
+        while bucket and now_mono - bucket[0] > WEB_AUTH_RATE_WINDOW_SECONDS:
+            bucket.popleft()
+        if not bucket:
+            WEB_AUTH_RATE.pop(host, None)
+            removed["web_auth_hosts"] += 1
+    if len(WEB_AUTH_RATE) > WEB_AUTH_RATE_MAX_HOSTS:
+        overflow = len(WEB_AUTH_RATE) - WEB_AUTH_RATE_MAX_HOSTS
+        oldest = sorted(WEB_AUTH_RATE.items(), key=lambda item: item[1][-1] if item[1] else -1)[:overflow]
+        for host, _ in oldest:
+            WEB_AUTH_RATE.pop(host, None)
+            removed["web_auth_hosts"] += 1
     return removed
 
 
@@ -735,7 +752,7 @@ def admin_memory_text() -> str:
         f"Peak RSS: {proc['peak_kb']/1024:.1f} MB\n"
         f"Threads: {proc['threads']}\n"
         f"Python GC: {gc.get_count()}\n"
-        f"Runtime caches: deploy={len(ADMIN_PENDING_DEPLOYS)} · cooldown={len(ADMIN_ERROR_COOLDOWN)} · rate_hosts={len(FRONTEND_RATE)}\n\n"
+        f"Runtime caches: deploy={len(ADMIN_PENDING_DEPLOYS)} · cooldown={len(ADMIN_ERROR_COOLDOWN)} · frontend_hosts={len(FRONTEND_RATE)} · auth_hosts={len(WEB_AUTH_RATE)}\n\n"
         f"VPS RAM used: {sysmem.get('used_kb',0)/1024:.0f} / {sysmem.get('total_kb',0)/1024:.0f} MB\n"
         f"VPS RAM available: {sysmem.get('available_kb',0)/1024:.0f} MB\n"
         f"Linux cache: {sysmem.get('cached_kb',0)/1024:.0f} MB\n"
@@ -1010,7 +1027,17 @@ def api_test():
 
 
 @app.post("/api/auth/web/start")
-def api_web_auth_start():
+def api_web_auth_start(request: Request):
+    host = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    if len(WEB_AUTH_RATE) >= WEB_AUTH_RATE_MAX_HOSTS and host not in WEB_AUTH_RATE:
+        prune_runtime_caches()
+    bucket = WEB_AUTH_RATE.setdefault(host, deque())
+    while bucket and now - bucket[0] > WEB_AUTH_RATE_WINDOW_SECONDS:
+        bucket.popleft()
+    if len(bucket) >= WEB_AUTH_RATE_LIMIT:
+        return JSONResponse(status_code=429, content={"status": "rate_limited", "message": "Слишком много попыток входа. Подожди минуту."})
+    bucket.append(now)
     auth = create_web_auth_request(WEB_AUTH_REQUEST_TTL_SECONDS)
     return {
         "status": "ok",
@@ -1025,7 +1052,11 @@ def api_web_auth_status(token: str = ""):
     result = consume_web_auth_request(token)
     status = result.get("status")
     if status == "pending":
-        return {"status": "pending", "expires_at": result.get("expires_at")}
+        return {
+            "status": "pending",
+            "expires_at": result.get("expires_at"),
+            "telegram_url": f"https://t.me/{BOT_USERNAME}?start=webauth_{token}",
+        }
     if status in {"invalid", "expired", "consumed"}:
         return JSONResponse(status_code=410, content={"status": status, "message": "Ссылка входа устарела. Создай новую."})
     if status != "approved":

@@ -17,6 +17,94 @@ window.SVG_WEB_AUTH_USER = null;
 let webAuthToken = '';
 let webAuthPollTimer = null;
 let webAuthInFlight = false;
+let appHydrationPromise = null;
+let appHydrationGeneration = 0;
+let appHydrationTimeoutHandle = null;
+
+function setBootstrapStatus(text, slow = false) {
+  const node = document.getElementById('app-bootstrap-status');
+  const placeholder = document.getElementById('app-bootstrap-placeholder');
+  if (node && text) node.textContent = text;
+  if (placeholder) placeholder.classList.toggle('is-slow', Boolean(slow));
+}
+
+function setAppDataPending(message = 'Загружаем данные…') {
+  window.SVG_APP_DATA_READY = false;
+  document.documentElement.classList.add('svg-data-pending');
+  const shell = document.querySelector('.app-shell');
+  if (shell) shell.setAttribute('aria-busy', 'true');
+  document.documentElement.removeAttribute('data-svg-data-ready');
+  setBootstrapStatus(message, false);
+  clearTimeout(appHydrationTimeoutHandle);
+  appHydrationTimeoutHandle = setTimeout(() => {
+    if (!window.SVG_APP_DATA_READY) setBootstrapStatus('Синхронизация занимает чуть больше времени…', true);
+  }, 4500);
+}
+
+function markAppDataReady(reason = 'ready') {
+  if (window.SVG_APP_DATA_READY) return;
+  window.SVG_APP_DATA_READY = true;
+  clearTimeout(appHydrationTimeoutHandle);
+  appHydrationTimeoutHandle = null;
+  document.documentElement.classList.remove('svg-data-pending');
+  document.documentElement.dataset.svgDataReady = '1';
+  const shell = document.querySelector('.app-shell');
+  if (shell) shell.setAttribute('aria-busy', 'false');
+  const name = document.getElementById('name');
+  const status = document.querySelector('.subtle-status');
+  if (name) name.removeAttribute('aria-busy');
+  if (status) status.removeAttribute('aria-busy');
+  setBootstrapStatus('Готово');
+  svgDiag('app:data-ready', { message: reason });
+}
+
+function waitForPrimaryAvatar(maxWaitMs = 900) {
+  const avatar = document.getElementById('avatar');
+  if (!avatar || !avatar.getAttribute('src') || avatar.complete) return Promise.resolve();
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => { if (done) return; done = true; resolve(); };
+    avatar.addEventListener('load', finish, { once: true });
+    avatar.addEventListener('error', finish, { once: true });
+    setTimeout(finish, maxWaitMs);
+  });
+}
+
+async function hydrateAuthenticatedApp(source = 'auth') {
+  if (!hasServerAuth()) return false;
+  if (appHydrationPromise) return appHydrationPromise;
+  const generation = ++appHydrationGeneration;
+  setAppDataPending('Синхронизируем данные…');
+  svgDiag('app:hydrate-start', { message: source });
+
+  appHydrationPromise = (async () => {
+    const tasks = [
+      Promise.resolve().then(() => syncTrainingWithServer()),
+      Promise.resolve().then(() => syncFinanceWithServerV15()),
+      Promise.resolve().then(() => loadProfileData(true)),
+      Promise.resolve().then(() => syncDeviceTimezone(true)),
+    ];
+    const settled = Promise.allSettled(tasks);
+    const timeout = new Promise(resolve => setTimeout(() => resolve('timeout'), 8000));
+    const outcome = await Promise.race([settled, timeout]);
+    if (outcome === 'timeout') {
+      svgDiag('app:hydrate-timeout', { level: 'warning', message: source });
+      setBootstrapStatus('Показываем сохранённые данные. Синхронизация продолжится в фоне.', true);
+    }
+
+    try { renderProfileState(); } catch (error) { svgDiag('app:profile-render-error', { level: 'warning', message: error?.message || String(error) }); }
+    try { renderFitness(); } catch (_) {}
+    try { renderFinance(); } catch (_) {}
+    try { renderHomeTrainingSummary(); } catch (_) {}
+    await waitForPrimaryAvatar();
+
+    if (generation === appHydrationGeneration) markAppDataReady(outcome === 'timeout' ? `${source}:timeout-fallback` : source);
+    return true;
+  })().finally(() => {
+    if (generation === appHydrationGeneration) appHydrationPromise = null;
+  });
+  return appHydrationPromise;
+}
 
 function isWebsiteLaunch() {
   return document.documentElement.classList.contains('svg-web');
@@ -64,6 +152,8 @@ function stopWebAuthPolling() {
 
 function activateWebSession(payload) {
   const user = payload?.user || null;
+  appHydrationPromise = null;
+  setAppDataPending('Загружаем аккаунт…');
   window.SVG_WEB_AUTHENTICATED = true;
   window.SVG_WEB_AUTH_USER = user;
   window.SVG_WEB_TRAINING_REMOTE_FIRST = true;
@@ -114,26 +204,33 @@ async function prepareWebsiteLogin(force = false) {
       webAuthToken = '';
       try { sessionStorage.removeItem('svg_web_auth_token'); } catch (_) {}
     }
+
     let telegramUrl = '';
-    if (!webAuthToken) {
+    if (webAuthToken) {
+      const pending = await fetch(`/api/auth/web/status?token=${encodeURIComponent(webAuthToken)}`, { cache: 'no-store' });
+      const pendingPayload = await pending.json().catch(() => ({}));
+      if (pending.ok && pendingPayload.status === 'authenticated') {
+        setWebAuthStatus('Готово. Открываем SVGTracker…');
+        activateWebSession(pendingPayload);
+        return;
+      }
+      if (pending.ok && pendingPayload.status === 'pending' && pendingPayload.telegram_url) {
+        telegramUrl = pendingPayload.telegram_url;
+      } else {
+        webAuthToken = '';
+        try { sessionStorage.removeItem('svg_web_auth_token'); } catch (_) {}
+      }
+    }
+
+    if (!webAuthToken || !telegramUrl) {
       const response = await fetch('/api/auth/web/start', { method: 'POST', cache: 'no-store' });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.token || !payload.telegram_url) throw new Error(payload.message || 'Не удалось создать ссылку входа');
       webAuthToken = payload.token;
       telegramUrl = payload.telegram_url;
       try { sessionStorage.setItem('svg_web_auth_token', webAuthToken); } catch (_) {}
-    } else {
-      // A refreshed page can reuse the pending token, but needs a fresh Telegram URL.
-      telegramUrl = '';
     }
-    if (!telegramUrl) {
-      const fresh = await fetch('/api/auth/web/start', { method: 'POST', cache: 'no-store' });
-      const freshPayload = await fresh.json().catch(() => ({}));
-      if (!fresh.ok || !freshPayload.token || !freshPayload.telegram_url) throw new Error('Не удалось обновить ссылку входа');
-      webAuthToken = freshPayload.token;
-      telegramUrl = freshPayload.telegram_url;
-      try { sessionStorage.setItem('svg_web_auth_token', webAuthToken); } catch (_) {}
-    }
+
     if (link) { link.href = telegramUrl; link.setAttribute('aria-disabled', 'false'); }
     setWebAuthStatus('Нажми кнопку, подтверди вход в Telegram и вернись сюда.');
     stopWebAuthPolling();
@@ -173,6 +270,9 @@ async function initializeWebsiteAuth() {
 
 async function logoutWebSession() {
   if (!window.SVG_WEB_AUTHENTICATED) return;
+  appHydrationGeneration += 1;
+  appHydrationPromise = null;
+  setAppDataPending('Завершаем сессию…');
   try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
   window.SVG_WEB_AUTHENTICATED = false;
   window.SVG_WEB_AUTH_USER = null;
@@ -1230,7 +1330,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const staleWorkoutChanged = reconcileStaleActiveWorkout(false);
   if (staleWorkoutChanged) persist(); else persistLocal();
   renderFitness();
-  syncTrainingWithServer();
+  // Remote hydration starts only after Telegram/web authentication is confirmed.
   svgDiag('training:init:done');
 });
 
@@ -3528,7 +3628,7 @@ document.addEventListener('DOMContentLoaded', () => {
   svgDiag('profile:init:start');
   renderProfileState();
   renderHomeTrainingSummary();
-  if (hasServerAuth()) loadProfileData(false);
+  // Profile API hydration is coordinated centrally after authentication.
   svgDiag('profile:init:done');
 });
 
@@ -4319,33 +4419,30 @@ function renderHomeActivity(nowMs = Date.now()) {
 window.addEventListener('online',()=>syncFinanceWithServerV15());
 window.addEventListener('offline',()=>financeSetSyncStatusV15('offline','Офлайн · сохранено локально'));
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&hasServerAuth()){syncFinanceWithServerV15();syncDeviceTimezone(false);}});
-document.addEventListener('DOMContentLoaded',()=>{window.SVGTRACKER_BOOT_STAGE='finance:init';svgDiag('finance:init:start');financeData=normalizeFinanceDataV15(financeData);localStorage.setItem(STORAGE.finance,JSON.stringify(financeData));renderFinance();renderHomeTrainingSummary();if(hasServerAuth())syncFinanceWithServerV15();svgDiag('finance:init:done');});
+document.addEventListener('DOMContentLoaded',()=>{window.SVGTRACKER_BOOT_STAGE='finance:init';svgDiag('finance:init:start');financeData=normalizeFinanceDataV15(financeData);localStorage.setItem(STORAGE.finance,JSON.stringify(financeData));renderFinance();renderHomeTrainingSummary();svgDiag('finance:init:done');});
 
-// Late Telegram bootstrap: the UI is usable before the Telegram SDK arrives.
+// Authentication-aware bootstrap: keep neutral placeholders visible until the
+// account identity and critical server state have settled.
 document.addEventListener('svgtracker:telegram-ready', () => {
   svgDiag('telegram:ready-event');
-  try { renderProfileState(); } catch (error) { svgDiag('telegram:profile-render-error',{level:'error',message:error?.message||String(error),stack:error?.stack}); }
-  try { renderHomeTrainingSummary(); } catch (_) {}
   if (!hasServerAuth()) return;
-  try { syncDeviceTimezone(true); } catch (_) {}
-  try { syncTrainingWithServer(); } catch (_) {}
-  try { loadProfileData(true); } catch (_) {}
-  try { syncFinanceWithServerV15(); } catch (_) {}
+  hydrateAuthenticatedApp('telegram');
 });
 
 document.addEventListener('svgtracker:auth-ready', () => {
-  svgDiag('auth:ready-event', { message: window.SVG_WEB_AUTHENTICATED ? 'website' : 'telegram' });
-  try { renderProfileState(); } catch (_) {}
-  try { renderHomeTrainingSummary(); } catch (_) {}
+  const source = window.SVG_WEB_AUTHENTICATED ? 'website' : 'telegram';
+  svgDiag('auth:ready-event', { message: source });
   if (!hasServerAuth()) return;
-  try { syncDeviceTimezone(true); } catch (_) {}
-  try { syncTrainingWithServer(); } catch (_) {}
-  try { loadProfileData(true); } catch (_) {}
-  try { syncFinanceWithServerV15(); } catch (_) {}
+  hydrateAuthenticatedApp(source);
 });
 
 document.addEventListener('DOMContentLoaded', () => {
   if (isWebsiteLaunch()) initializeWebsiteAuth();
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Covers the rare case where Telegram auth became available before the late listeners were attached.
+  if (hasServerAuth()) hydrateAuthenticatedApp(isWebsiteLaunch() ? 'website-dom' : 'telegram-dom');
 });
 
 document.addEventListener('DOMContentLoaded', () => {

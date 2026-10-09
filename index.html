@@ -12,8 +12,8 @@
 <script>
 (function(){
   var href=String(location.href||'');
-  var mini=href.indexOf('tgWebAppData=')!==-1 || !!window.TelegramWebviewProxy;
-  document.documentElement.classList.add(mini?'svg-miniapp':'svg-web');
+  var mini=/(?:tgWebAppData|tgWebAppVersion|tgWebAppPlatform)=/.test(href) || !!window.TelegramWebviewProxy;
+  document.documentElement.classList.add(mini?'svg-miniapp':'svg-web','svg-data-pending');
 })();
 </script>
 <style id="svgtracker-critical-css">
@@ -22,8 +22,15 @@
   #frontend-boot-warning{position:fixed;left:14px;right:14px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:9999;padding:13px 14px;border:1px solid rgba(255,255,255,.12);border-radius:16px;background:rgba(24,26,30,.96);color:#fff;font-size:13px;line-height:1.35;box-shadow:0 18px 44px rgba(0,0,0,.4)}
   #frontend-boot-warning[hidden]{display:none!important}
   #frontend-boot-warning button{margin-top:9px;padding:8px 12px;border:0;border-radius:10px;background:#fff;color:#111;font:inherit;font-weight:600}
+
+  .app-bootstrap-placeholder{display:none;width:min(100%,430px);min-height:100vh;margin:0 auto;padding:calc(22px + env(safe-area-inset-top)) 16px calc(26px + env(safe-area-inset-bottom));box-sizing:border-box}
+  html.svg-data-pending:not(.svg-web) .app-bootstrap-placeholder,html.svg-data-pending.svg-web.web-authenticated .app-bootstrap-placeholder{display:block}
+  html.svg-data-pending:not(.svg-web) .app-shell,html.svg-data-pending.svg-web.web-authenticated .app-shell{visibility:hidden!important;pointer-events:none!important;position:absolute!important;inset:0!important}
+  html.svg-web:not(.web-authenticated) .app-bootstrap-placeholder{display:none!important}
+  .bootstrap-skeleton-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.bootstrap-skeleton-copy{display:grid;gap:8px}.bootstrap-skeleton-copy span,.bootstrap-skeleton-copy b,.bootstrap-skeleton-copy i,.bootstrap-skeleton-line,.bootstrap-skeleton-stats span,.bootstrap-skeleton-chart,.bootstrap-skeleton-avatar,.bootstrap-skeleton-card{background:linear-gradient(110deg,rgba(255,255,255,.055) 25%,rgba(255,255,255,.11) 38%,rgba(255,255,255,.055) 52%);background-size:220% 100%;animation:svgSkeleton 1.5s ease-in-out infinite}.bootstrap-skeleton-copy span{width:72px;height:10px;border-radius:5px}.bootstrap-skeleton-copy b{width:138px;height:29px;border-radius:9px}.bootstrap-skeleton-copy i{width:168px;height:12px;border-radius:6px}.bootstrap-skeleton-avatar{width:52px;height:52px;border-radius:50%}.bootstrap-skeleton-card{height:150px;border:1px solid rgba(255,255,255,.06);border-radius:24px;box-sizing:border-box}.bootstrap-skeleton-activity{height:286px;padding:22px;margin-bottom:14px;background-color:rgba(255,255,255,.025)}.bootstrap-skeleton-line{height:11px;width:56%;border-radius:6px}.bootstrap-skeleton-line.is-short{width:74px}.bootstrap-skeleton-line.is-title{height:24px;width:126px;margin-top:9px}.bootstrap-skeleton-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:26px}.bootstrap-skeleton-stats span{height:54px;border-radius:14px}.bootstrap-skeleton-chart{height:96px;border-radius:18px;margin-top:22px}.bootstrap-skeleton-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.app-bootstrap-status{margin:18px 0 0;text-align:center;color:rgba(255,255,255,.42);font-size:12px}.app-bootstrap-placeholder.is-slow .app-bootstrap-status{color:rgba(255,255,255,.62)}
+  @keyframes svgSkeleton{0%{background-position:120% 0}100%{background-position:-120% 0}}
 </style>
-<link rel="stylesheet" href="/style.css?v=26">
+<link rel="stylesheet" href="/style.css?v=27">
 </head>
 <body>
 <section id="web-auth-gate" class="web-auth-gate" aria-labelledby="web-auth-title">
@@ -41,24 +48,41 @@
     <small class="web-auth-footnote">Пароль не нужен. SVGTracker получает только данные Telegram-профиля после твоего подтверждения.</small>
   </div>
 </section>
+<div id="app-bootstrap-placeholder" class="app-bootstrap-placeholder" aria-live="polite" aria-label="Загрузка данных">
+  <div class="bootstrap-skeleton-header">
+    <div class="bootstrap-skeleton-copy"><span></span><b></b><i></i></div>
+    <div class="bootstrap-skeleton-avatar"></div>
+  </div>
+  <div class="bootstrap-skeleton-card bootstrap-skeleton-activity">
+    <div class="bootstrap-skeleton-line is-short"></div>
+    <div class="bootstrap-skeleton-line is-title"></div>
+    <div class="bootstrap-skeleton-stats"><span></span><span></span><span></span></div>
+    <div class="bootstrap-skeleton-chart"></div>
+  </div>
+  <div class="bootstrap-skeleton-grid">
+    <div class="bootstrap-skeleton-card"></div><div class="bootstrap-skeleton-card"></div>
+    <div class="bootstrap-skeleton-card"></div><div class="bootstrap-skeleton-card"></div>
+  </div>
+  <p id="app-bootstrap-status" class="app-bootstrap-status">Загружаем данные…</p>
+</div>
 <div class="ambient-layer">
   <div class="beam-core"></div>
   <div class="beam-reflection"></div>
   <div class="beam-diffusion"></div>
 </div>
 
-<main class="app-shell">
+<main class="app-shell" aria-busy="true">
   <header class="profile-header">
     <div class="profile-copy">
       <p class="eyebrow">С возвращением</p>
-      <h1 id="name">Александр</h1>
-      <span class="subtle-status">Сегодня хороший темп</span>
+      <h1 id="name" aria-busy="true">&nbsp;</h1>
+      <span class="subtle-status" aria-busy="true">&nbsp;</span>
     </div>
     <button class="avatar-button" type="button" onclick="openProfileDrawer()" aria-label="Открыть профиль">
       <span class="avatar-wrap">
         <span class="avatar">
           <img id="avatar" src="" alt="Telegram avatar" style="display:none;width:100%;height:100%;border-radius:50%;object-fit:cover;">
-          <span id="avatar-fallback">А</span>
+          <span id="avatar-fallback" aria-hidden="true"></span>
         </span>
         <span class="avatar-ring"></span>
       </span>
@@ -72,14 +96,14 @@
         <h2>Эта неделя</h2>
       </div>
       <div class="activity-progress" id="home-activity-progress">
-        <b>0%</b>
+        <b>—</b>
         <small>общей активности</small>
       </div>
     </div>
 
     <div class="stats-row">
       <article class="mini-stat">
-        <strong id="home-finance-spent">0 ₽</strong>
+        <strong id="home-finance-spent">—</strong>
         <small>Сегодня потрачено</small>
       </article>
       <article class="mini-stat">
@@ -149,8 +173,8 @@
       </div>
       <div class="feature-body">
         <h3 class="card-title">Тренировки</h3>
-        <strong class="card-primary" id="home-workout-primary">План не задан</strong>
-        <p id="home-workout-secondary">Открой тренировки, чтобы начать</p>
+        <strong class="card-primary" id="home-workout-primary">—</strong>
+        <p id="home-workout-secondary">&nbsp;</p>
       </div>
     </article>
 
@@ -165,8 +189,8 @@
       </div>
       <div class="feature-body">
         <h3 class="card-title">Расписание</h3>
-        <strong class="card-primary" id="home-schedule-primary">Событий нет</strong>
-        <p id="home-schedule-secondary">Расписание пока пустое</p>
+        <strong class="card-primary" id="home-schedule-primary">—</strong>
+        <p id="home-schedule-secondary">&nbsp;</p>
       </div>
     </article>
 
@@ -182,8 +206,8 @@
       </div>
       <div class="feature-body">
         <h3 class="card-title">Финансы</h3>
-        <strong class="card-primary" id="home-finance-primary">0 ₽ сегодня</strong>
-        <p id="home-finance-secondary">Расходов пока нет</p>
+        <strong class="card-primary" id="home-finance-primary">—</strong>
+        <p id="home-finance-secondary">&nbsp;</p>
       </div>
     </article>
 
@@ -198,8 +222,8 @@
       </div>
       <div class="feature-body">
         <h3 class="card-title">Заметки</h3>
-        <strong class="card-primary" id="home-notes-primary">Заметок нет</strong>
-        <p id="home-notes-secondary">Новые записи появятся здесь</p>
+        <strong class="card-primary" id="home-notes-primary">—</strong>
+        <p id="home-notes-secondary">&nbsp;</p>
       </div>
     </article>
   </section>
@@ -883,6 +907,6 @@
   }, 8000);
 })();
 </script>
-<script src="/script.js?v=26" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=26'})"></script>
+<script src="/script.js?v=27" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=27'})"></script>
 </body>
 </html>
