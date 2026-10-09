@@ -88,3 +88,29 @@ V24 stores the user's device timezone when the Telegram Mini App opens. Admin lo
 - Web login requests expire after 10 minutes; website sessions expire after 30 days and can be ended from the profile drawer.
 - `web_auth_requests` and `web_sessions` are created automatically in SQLite.
 - `/resetdata` and `/resetdb` are admin-only; they are no longer published in the common user command menu.
+
+## V28 product modules
+
+Расписание и заметки вынесены из монолитного frontend/backend слоя:
+
+- `product.js` / `product.css` — UI расписания и заметок;
+- `product_api.py` — HTTP API этих модулей;
+- `product_db.py` — нормализованные SQLite-таблицы, совместные события и reminder log.
+
+Напоминания расписания, заметок, обязательных платежей и долгов используют общий
+переключатель «Уведомления от бота» в профиле. Запросы в друзья по-прежнему
+управляются отдельным переключателем.
+
+## V28 compatibility fix: legacy ZIP validation
+
+When deploying V28 over V27, the *old* `admin_deploy.py` validates inline
+HTML event handlers using declarations in `script.js` alone. V28 moved sixteen
+handlers into `product.js`, causing a false `Missing JS handlers referenced by
+HTML` rejection **before** the new deploy helper can be installed.
+
+This release maintains the complete implementations in `product.js`, captures
+them in `window.SVGTrackerProductHandlers`, and adds forwarding declarations
+in `script.js` for the old validator. `product.js` must be included **before**
+`script.js` in `index.html` (`defer` preserves document order). The new
+validation helper continues to check both files. No runtime data, credentials,
+or SQLite databases are included in the update ZIP.

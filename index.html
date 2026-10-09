@@ -30,7 +30,8 @@
   .bootstrap-skeleton-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.bootstrap-skeleton-copy{display:grid;gap:8px}.bootstrap-skeleton-copy span,.bootstrap-skeleton-copy b,.bootstrap-skeleton-copy i,.bootstrap-skeleton-line,.bootstrap-skeleton-stats span,.bootstrap-skeleton-chart,.bootstrap-skeleton-avatar,.bootstrap-skeleton-card{background:linear-gradient(110deg,rgba(255,255,255,.055) 25%,rgba(255,255,255,.11) 38%,rgba(255,255,255,.055) 52%);background-size:220% 100%;animation:svgSkeleton 1.5s ease-in-out infinite}.bootstrap-skeleton-copy span{width:72px;height:10px;border-radius:5px}.bootstrap-skeleton-copy b{width:138px;height:29px;border-radius:9px}.bootstrap-skeleton-copy i{width:168px;height:12px;border-radius:6px}.bootstrap-skeleton-avatar{width:52px;height:52px;border-radius:50%}.bootstrap-skeleton-card{height:150px;border:1px solid rgba(255,255,255,.06);border-radius:24px;box-sizing:border-box}.bootstrap-skeleton-activity{height:286px;padding:22px;margin-bottom:14px;background-color:rgba(255,255,255,.025)}.bootstrap-skeleton-line{height:11px;width:56%;border-radius:6px}.bootstrap-skeleton-line.is-short{width:74px}.bootstrap-skeleton-line.is-title{height:24px;width:126px;margin-top:9px}.bootstrap-skeleton-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:26px}.bootstrap-skeleton-stats span{height:54px;border-radius:14px}.bootstrap-skeleton-chart{height:96px;border-radius:18px;margin-top:22px}.bootstrap-skeleton-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.app-bootstrap-status{margin:18px 0 0;text-align:center;color:rgba(255,255,255,.42);font-size:12px}.app-bootstrap-placeholder.is-slow .app-bootstrap-status{color:rgba(255,255,255,.62)}
   @keyframes svgSkeleton{0%{background-position:120% 0}100%{background-position:-120% 0}}
 </style>
-<link rel="stylesheet" href="/style.css?v=27">
+<link rel="stylesheet" href="/style.css?v=28">
+<link rel="stylesheet" href="/product.css?v=28">
 </head>
 <body>
 <section id="web-auth-gate" class="web-auth-gate" aria-labelledby="web-auth-title">
@@ -178,7 +179,7 @@
       </div>
     </article>
 
-    <article class="glass-card feature-card schedule">
+    <article class="glass-card feature-card schedule" onclick="openSchedule()">
       <div class="feature-top">
         <div class="icon-shell">
           <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -211,7 +212,7 @@
       </div>
     </article>
 
-    <article class="glass-card feature-card notes">
+    <article class="glass-card feature-card notes" onclick="openNotes()">
       <div class="feature-top">
         <div class="icon-shell">
           <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -281,7 +282,7 @@
           </span>
         </label>
         <label class="profile-action-row profile-toggle-row">
-          <span class="profile-action-copy"><strong>Уведомления от бота</strong><small>Напоминания и сообщения SVGTracker</small></span>
+          <span class="profile-action-copy"><strong>Уведомления от бота</strong><small>Расписание, заметки, финансы и системные напоминания</small></span>
           <span class="ios-switch">
             <input id="profile-bot-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked, 'bot')">
             <span class="ios-switch-track" aria-hidden="true"></span>
@@ -343,6 +344,64 @@
     <div id="blocked-users-list" class="social-section"></div>
   </div>
 </div>
+
+
+<section id="schedule-screen" class="product-screen" hidden>
+  <div class="product-shell">
+    <header class="product-header">
+      <button type="button" class="apple-action-button product-back" onclick="closeSchedule()" aria-label="Назад">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg>
+      </button>
+      <div class="product-header-copy"><span class="section-label">Организация</span><h1>Расписание</h1><p id="schedule-sync-label">Синхронизировано</p></div>
+      <button type="button" class="apple-action-button product-add" onclick="openScheduleEditor()" aria-label="Новое событие">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </header>
+
+    <section class="apple-widget schedule-week-card">
+      <div class="product-week-head">
+        <button type="button" class="calendar-nav-button" onclick="shiftScheduleWeek(-1)" aria-label="Предыдущая неделя"><svg viewBox="0 0 24 24"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg></button>
+        <div><span class="section-label">Неделя</span><strong id="schedule-week-title">—</strong></div>
+        <button type="button" class="calendar-nav-button" onclick="shiftScheduleWeek(1)" aria-label="Следующая неделя"><svg viewBox="0 0 24 24"><path d="M9.5 5.5L16 12l-6.5 6.5"/></svg></button>
+      </div>
+      <div id="schedule-week-strip" class="schedule-week-strip" aria-label="Дни недели"></div>
+    </section>
+
+    <section class="apple-widget product-list-card">
+      <div class="widget-header widget-header--tight product-list-head"><div><span class="section-label">События</span><h2 id="schedule-list-title">Ближайшие</h2></div><span id="schedule-shared-count" class="product-count-badge">0</span></div>
+      <div id="schedule-event-list" class="product-list"></div>
+    </section>
+
+    <button type="button" class="product-primary-button" onclick="openScheduleEditor()">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Новое событие</span>
+    </button>
+  </div>
+</section>
+
+<section id="notes-screen" class="product-screen" hidden>
+  <div class="product-shell">
+    <header class="product-header">
+      <button type="button" class="apple-action-button product-back" onclick="closeNotes()" aria-label="Назад">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg>
+      </button>
+      <div class="product-header-copy"><span class="section-label">Личное</span><h1>Заметки</h1><p id="notes-sync-label">Синхронизировано</p></div>
+      <button type="button" class="apple-action-button product-add" onclick="openNoteEditor()" aria-label="Новая заметка">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </header>
+
+    <label class="product-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg><input id="notes-search-input" type="search" placeholder="Поиск по заметкам" autocomplete="off" oninput="renderNotes()"></label>
+
+    <section class="apple-widget product-list-card notes-list-card">
+      <div class="widget-header widget-header--tight product-list-head"><div><span class="section-label">Записи</span><h2>Все заметки</h2></div><span id="notes-count" class="product-count-badge">0</span></div>
+      <div id="notes-list" class="notes-list"></div>
+    </section>
+
+    <button type="button" class="product-primary-button" onclick="openNoteEditor()">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Новая заметка</span>
+    </button>
+  </div>
+</section>
 
 <section id="finance-screen" class="single-training-screen" hidden>
   <div class="training-overlay-shell finance-shell">
@@ -703,6 +762,44 @@
 </div>
 
 
+
+<div id="schedule-editor-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+  <div class="sheet-panel product-editor-panel" data-sheet-panel>
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Расписание</span><h3 id="schedule-editor-title">Новое событие</h3></div><button type="button" class="sheet-close" onclick="closeScheduleEditor()">×</button></div>
+    <input id="schedule-event-id" type="hidden">
+    <label class="sheet-field"><span>Название</span><input id="schedule-event-title" maxlength="120" autocomplete="off" placeholder="Например, встреча"></label>
+    <label class="sheet-field"><span>Дата</span><input id="schedule-event-date" type="date"></label>
+    <label class="product-toggle-row"><span><strong>Весь день</strong><small>Без конкретного времени</small></span><span class="ios-switch"><input id="schedule-event-all-day" type="checkbox" onchange="toggleScheduleAllDay()"><span class="ios-switch-track"></span></span></label>
+    <div id="schedule-time-fields" class="product-two-columns">
+      <label class="sheet-field"><span>Начало</span><input id="schedule-event-time" type="time"></label>
+      <label class="sheet-field"><span>Окончание</span><input id="schedule-event-end-time" type="time"></label>
+    </div>
+    <label class="sheet-field"><span>Повтор</span><select id="schedule-event-recurrence"><option value="none">Не повторять</option><option value="daily">Каждый день</option><option value="weekly">Каждую неделю</option><option value="monthly">Каждый месяц</option></select></label>
+    <label class="sheet-field" id="schedule-recurrence-until-field" hidden><span>Повторять до</span><input id="schedule-event-recurrence-until" type="date"></label>
+    <label class="sheet-field"><span>Напомнить</span><select id="schedule-event-reminder"><option value="-1">Не напоминать</option><option value="0">В момент события</option><option value="10">За 10 минут</option><option value="30">За 30 минут</option><option value="60">За 1 час</option><option value="1440">За 1 день</option></select></label>
+    <div class="product-field-block"><span>Совместно с друзьями</span><div id="schedule-friend-picker" class="friend-picker"></div></div>
+    <label class="sheet-field"><span>Описание</span><textarea id="schedule-event-details" rows="4" maxlength="2000" placeholder="Необязательно"></textarea></label>
+    <button type="button" class="sheet-primary-action" onclick="saveScheduleEvent()">Сохранить</button>
+    <button type="button" id="schedule-delete-button" class="sheet-danger-button" onclick="deleteScheduleEvent()" hidden>Удалить событие</button>
+  </div>
+</div>
+
+<div id="note-editor-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
+  <div class="sheet-panel product-editor-panel" data-sheet-panel>
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Заметка</span><h3 id="note-editor-title">Новая заметка</h3></div><button type="button" class="sheet-close" onclick="closeNoteEditor()">×</button></div>
+    <input id="note-edit-id" type="hidden">
+    <label class="sheet-field"><span>Заголовок</span><input id="note-title-input" maxlength="120" autocomplete="off" placeholder="Короткое название"></label>
+    <label class="sheet-field"><span>Текст</span><textarea id="note-body-input" rows="8" maxlength="12000" placeholder="Запиши мысль, список или идею"></textarea></label>
+    <label class="product-toggle-row"><span><strong>Закрепить</strong><small>Показывать заметку первой</small></span><span class="ios-switch"><input id="note-pinned-input" type="checkbox"><span class="ios-switch-track"></span></span></label>
+    <label class="product-toggle-row"><span><strong>Напомнить</strong><small>Бот пришлёт сообщение</small></span><span class="ios-switch"><input id="note-reminder-enabled" type="checkbox" onchange="toggleNoteReminderField()"><span class="ios-switch-track"></span></span></label>
+    <label class="sheet-field" id="note-reminder-field" hidden><span>Дата и время</span><input id="note-reminder-input" type="datetime-local"></label>
+    <button type="button" class="sheet-primary-action" onclick="saveNote()">Сохранить</button>
+    <button type="button" id="note-delete-button" class="sheet-danger-button" onclick="deleteNote()" hidden>Удалить заметку</button>
+  </div>
+</div>
+
 <div id="finance-action-sheet" class="ios-sheet" hidden onclick="closeSheetByBackdrop(event)">
   <div class="sheet-panel finance-action-panel" data-sheet-panel>
     <div class="sheet-handle"></div>
@@ -725,7 +822,11 @@
     <label class="sheet-field"><span>Название</span><input id="finance-entry-title" autocomplete="off" maxlength="80" placeholder="Например, продукты"></label>
     <label class="sheet-field"><span>Сумма</span><div class="finance-money-input"><input id="finance-entry-amount" inputmode="decimal" autocomplete="off" placeholder="0"><b>₽</b></div></label>
     <label id="finance-entry-category-field" class="sheet-field"><span>Категория</span><select id="finance-entry-category" aria-label="Категория расхода"></select></label>
-    <label class="sheet-field"><span>Дата</span><input id="finance-entry-date" type="date"></label>
+    <label id="finance-entry-date-field" class="sheet-field"><span>Дата</span><input id="finance-entry-date" type="date"></label>
+    <div id="finance-mandatory-options" class="finance-mandatory-options" hidden>
+      <label class="product-toggle-row"><span><strong>Оплачено</strong><small>Показывать как фактический платёж</small></span><span class="ios-switch"><input id="finance-mandatory-paid" type="checkbox"><span class="ios-switch-track"></span></span></label>
+      <label class="sheet-field"><span>Срок оплаты</span><input id="finance-mandatory-due" type="date"></label>
+    </div>
     <button type="button" class="sheet-primary-action" onclick="saveFinanceEntryV15()">Сохранить</button>
     <button type="button" id="finance-entry-delete-button" class="sheet-danger-button" onclick="deleteFinanceEntryV15()" hidden>Удалить</button>
   </div>
@@ -907,6 +1008,8 @@
   }, 8000);
 })();
 </script>
-<script src="/script.js?v=27" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=27'})"></script>
+<!-- Keep product.js before script.js: it captures original V28 handlers for V27 deploy compatibility. -->
+<script src="/product.js?v=28" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:product-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:product-failed',{level:'error',asset:'/product.js?v=28'})"></script>
+<script src="/script.js?v=28" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=28'})"></script>
 </body>
 </html>

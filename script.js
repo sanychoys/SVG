@@ -82,6 +82,7 @@ async function hydrateAuthenticatedApp(source = 'auth') {
       Promise.resolve().then(() => syncTrainingWithServer()),
       Promise.resolve().then(() => syncFinanceWithServerV15()),
       Promise.resolve().then(() => loadProfileData(true)),
+      Promise.resolve().then(() => typeof syncScheduleNotesWithServer === 'function' ? syncScheduleNotesWithServer(true) : false),
       Promise.resolve().then(() => syncDeviceTimezone(true)),
     ];
     const settled = Promise.allSettled(tasks);
@@ -96,6 +97,8 @@ async function hydrateAuthenticatedApp(source = 'auth') {
     try { renderFitness(); } catch (_) {}
     try { renderFinance(); } catch (_) {}
     try { renderHomeTrainingSummary(); } catch (_) {}
+    try { if (typeof renderSchedule === 'function' && !document.getElementById('schedule-screen')?.hidden) renderSchedule(); } catch (_) {}
+    try { if (typeof renderNotes === 'function' && !document.getElementById('notes-screen')?.hidden) renderNotes(); } catch (_) {}
     await waitForPrimaryAvatar();
 
     if (generation === appHydrationGeneration) markAppDataReady(outcome === 'timeout' ? `${source}:timeout-fallback` : source);
@@ -2709,40 +2712,6 @@ function getLocalDateKeyFromValue(value) {
 
 
 
-function getScheduleEventDate(event) {
-  if (!event || typeof event !== 'object') return null;
-  const raw = event.start || event.startAt || event.dateTime || event.datetime || event.date || null;
-  if (!raw) return null;
-  if (typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    const time = String(event.time || '12:00').trim();
-    const parsed = new Date(`${raw}T${/^\d{1,2}:\d{2}$/.test(time) ? time : '12:00'}:00`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-  const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function getScheduleEventsForDate(date) {
-  const key = getDateKey(date);
-  return scheduleData.filter(event => {
-    const eventDate = getScheduleEventDate(event);
-    return eventDate && getDateKey(eventDate) === key && event?.status !== 'cancelled';
-  });
-}
-
-function getNextScheduleEvent(now = new Date()) {
-  const nowMs = now.getTime();
-  return scheduleData
-    .map(event => ({ event, date: getScheduleEventDate(event) }))
-    .filter(item => item.date && item.event?.status !== 'cancelled' && item.event?.status !== 'completed' && item.date.getTime() >= nowMs - 60_000)
-    .sort((a, b) => a.date - b.date)[0] || null;
-}
-
-function getNotesForDate(date) {
-  const key = getDateKey(date);
-  return notesData.filter(note => getLocalDateKeyFromValue(note?.updatedAt || note?.createdAt || note?.date) === key && note?.archived !== true);
-}
-
 function getTrainingSecondsForDate(date, nowMs = Date.now()) {
   const key = getDateKey(date);
   let seconds = getCompletedWorkoutsForDate(date).reduce((sum, item) => sum + normalizeWorkoutSeconds(item.duration), 0);
@@ -3711,13 +3680,19 @@ function normalizeFinanceDataV15(raw) {
   const normalizeEntry = (item, prefix, index) => {
     const legacyCategory = categoryForLegacyName(item?.category || 'Другое');
     const category = categories.find(cat => String(cat.id) === String(item?.categoryId)) || legacyCategory;
+    const cleanDate = financeCleanDateV15(item?.date || item?.createdAt);
     return {
       id: String(item?.id || `${prefix}_${index}_${hashGoalIdentity(`${item?.title || ''}|${item?.amount || ''}|${item?.date || item?.createdAt || ''}`)}`),
       title: String(item?.title || item?.name || '').trim().slice(0,80),
       amount: financeSafeAmountV15(item?.amount),
       categoryId: category.id,
-      date: financeCleanDateV15(item?.date || item?.createdAt),
-      monthKey: prefix === 'mandatory' ? String(item?.monthKey || financeMonthKeyV15(new Date(`${financeCleanDateV15(item?.date || item?.createdAt)}T12:00:00`))) : undefined,
+      date: cleanDate,
+      monthKey: prefix === 'mandatory' ? String(item?.monthKey || financeMonthKeyV15(new Date(`${cleanDate}T12:00:00`))) : undefined,
+      ...(prefix === 'mandatory' ? {
+        dueDate: item?.dueDate ? financeCleanDateV15(item.dueDate) : cleanDate,
+        paid: item?.paid === true,
+        paidAt: item?.paidAt || null
+      } : {}),
       updatedAt: item?.updatedAt || item?.date || item?.createdAt || source?.sync?.updatedAt || now
     };
   };
@@ -3818,6 +3793,17 @@ function financeMandatoryTotalV15(date = new Date()) {
 function financeSpentForDateV15(date = new Date()) {
   const key = getDateKey(date);
   return financeData.expenses.reduce((sum,item) => item.date === key ? sum + financeSafeAmountV15(item.amount) : sum,0);
+}
+function financePaidMandatoryForDateV28(date = new Date()) {
+  const key = getDateKey(date);
+  return (financeData.mandatoryExpenses || []).reduce((sum,item) => {
+    if (item?.paid !== true) return sum;
+    const paidKey = getLocalDateKeyFromValue(item.paidAt) || item.dueDate || item.date;
+    return paidKey === key ? sum + financeSafeAmountV15(item.amount) : sum;
+  }, 0);
+}
+function financeCashSpentForDateV28(date = new Date()) {
+  return financeSpentForDateV15(date) + financePaidMandatoryForDateV28(date);
 }
 function financeDateForMonthKeyV16(key, day = 1) {
   const [year, month] = String(key || '').split('-').map(Number);
@@ -4108,7 +4094,7 @@ function renderFinance() {
     if (pct) pct.textContent = `${Math.round(stats.percentRemaining)}%`; if (bar) bar.style.width = `${stats.percentRemaining}%`;
     const carryText = stats.carryover ? `Перенос ${formatSignedRublesV16(stats.carryover)} · ` : '';
     if (caption) caption.textContent = isCurrentMonth ? `${carryText}${formatSignedRublesV16(stats.freeBudget)} после обязательных · ${stats.daysRemaining} ${financePluralV15(stats.daysRemaining,'день','дня','дней')} до конца месяца` : `${carryText}${formatSignedRublesV16(stats.freeBudget)} после обязательных · итог месяца`;
-    if (dayLimit) dayLimit.textContent = formatRubles(stats.dailyAllowance); if (dayContext) dayContext.textContent = 'Лимит на начало дня'; if (todaySpent) todaySpent.textContent = formatRubles(stats.todaySpent);
+    if (dayLimit) dayLimit.textContent = formatRubles(stats.dailyAllowance); if (dayContext) dayContext.textContent = 'Лимит на начало дня'; if (todaySpent) todaySpent.textContent = formatRubles(financeCashSpentForDateV28(viewDate));
     if (todayStatus) { todayStatus.classList.toggle('is-over', stats.remainingToday < 0); todayStatus.classList.toggle('is-good', stats.remainingToday >= 0 && stats.todaySpent > 0); todayStatus.textContent = stats.remainingToday < 0 ? `Перерасход ${formatRubles(Math.abs(stats.remainingToday))}` : stats.todaySpent > 0 ? `Можно ещё ${formatRubles(stats.remainingToday)}` : 'В пределах лимита'; }
   } else {
     const hasOperations = financeExpensesForMonthV15(viewDate).length > 0 || financeExtraIncomeForMonthV17(viewDate) > 0 || financeMandatoryForMonthV16(viewDate).length > 0;
@@ -4118,11 +4104,11 @@ function renderFinance() {
     if (caption) caption.textContent = hasOperations ? 'Операции сохранены · укажи месячный доход, чтобы рассчитать лимит' : 'Укажи месячный доход и обязательные расходы';
     if (dayLimit) dayLimit.textContent='—';
     if (dayContext) dayContext.textContent=hasOperations ? 'Расходы уже учитываются' : 'Лимит появится после настройки';
-    if (todaySpent) todaySpent.textContent=formatRubles(stats.todaySpent);
+    if (todaySpent) todaySpent.textContent=formatRubles(financeCashSpentForDateV28(viewDate));
     if (todayStatus) todayStatus.textContent=stats.todaySpent ? `Сегодня потрачено ${formatRubles(stats.todaySpent)}` : 'Расходов пока нет';
   }
   const mandatoryItems = financeMandatoryForMonthV16(viewDate); const mandatoryTotal = document.getElementById('finance-mandatory-total'); const mandatoryCount = document.getElementById('finance-mandatory-count');
-  if (mandatoryTotal) mandatoryTotal.textContent = formatRubles(stats.mandatory); if (mandatoryCount) mandatoryCount.textContent = mandatoryItems.length ? `${mandatoryItems.length} ${financePluralV15(mandatoryItems.length,'платёж','платежа','платежей')}` : 'Нет расходов';
+  if (mandatoryTotal) mandatoryTotal.textContent = formatRubles(stats.mandatory); if (mandatoryCount) { const paidCount=mandatoryItems.filter(item=>item.paid===true).length; mandatoryCount.textContent = mandatoryItems.length ? `${mandatoryItems.length} ${financePluralV15(mandatoryItems.length,'платёж','платежа','платежей')}${paidCount?` · ${paidCount} оплачено`:''}` : 'Нет расходов'; }
   const openDebts = financeData.debts.filter(item => item.status !== 'closed'); const owe = openDebts.filter(item => item.kind === 'owe').reduce((sum,item)=>sum+item.amount,0); const lent = openDebts.filter(item => item.kind === 'lent').reduce((sum,item)=>sum+item.amount,0); const debtBalance = document.getElementById('finance-debt-balance'); const debtCaption = document.getElementById('finance-debt-caption');
   if (debtBalance) { const parts=[]; if(owe)parts.push(`−${formatFinanceCompactV15(owe)}`); if(lent)parts.push(`+${formatFinanceCompactV15(lent)}`); debtBalance.textContent=parts.length?parts.join(' · '):'0 ₽'; }
   if (debtCaption) debtCaption.textContent = owe && lent ? 'я должен · мне должны' : owe ? 'я должен' : lent ? 'мне должны' : 'Нет открытых';
@@ -4148,7 +4134,7 @@ function renderFinanceSpendChartV15() {
   const root = document.getElementById('finance-spend-chart'); if (!root) return;
   const anchor = financeEffectiveViewDateV16();
   const days = Array.from({length:7},(_,i)=>{const d=new Date(anchor);d.setDate(anchor.getDate()-(6-i));return d;});
-  const values = days.map(date => ({ date, spent:Math.max(0,financeSpentForDateV15(date)), allowance:Math.max(0,financeMonthStatsV15(date).dailyAllowance) }));
+  const values = days.map(date => ({ date, spent:Math.max(0,financeCashSpentForDateV28(date)), allowance:Math.max(0,financeMonthStatsV15(date).dailyAllowance) }));
   const maxRaw = Math.max(1, ...values.flatMap(item => [item.spent, item.allowance]));
   const magnitude = 10 ** Math.max(0, Math.floor(Math.log10(maxRaw)) - 1);
   const scaleMax = Math.max(1, Math.ceil((maxRaw * 1.12) / magnitude) * magnitude);
@@ -4190,7 +4176,12 @@ function renderFinanceSpendChartV15() {
 
 function renderFinanceCategoryChartV15() {
   const root = document.getElementById('finance-category-chart'); if (!root) return;
-  const monthExpenses = financeExpensesForMonthV15(financeEffectiveViewDateV16());
+  const viewDate = financeEffectiveViewDateV16();
+  const monthKey = financeMonthKeyV15(viewDate);
+  const monthExpenses = [
+    ...financeExpensesForMonthV15(viewDate),
+    ...(financeData.mandatoryExpenses || []).filter(item => item.paid === true && String(getLocalDateKeyFromValue(item.paidAt) || item.dueDate || item.date || '').startsWith(`${monthKey}-`))
+  ];
   const totals = new Map(); monthExpenses.forEach(item => totals.set(item.categoryId,(totals.get(item.categoryId)||0)+Math.max(0,Number(item.amount)||0)));
   const sorted = [...totals.entries()].map(([categoryId,amount])=>({category:financeCategoryByIdV15(categoryId),amount})).sort((a,b)=>b.amount-a.amount);
   let rows = sorted.slice(0,5);
@@ -4222,6 +4213,11 @@ function openFinanceEntrySheet(type='expense', editId=null) {
   const categoryField=document.getElementById('finance-entry-category-field');
   if(categoryField)categoryField.hidden=type==='income';
   if(type!=='income')fillFinanceCategorySelectV15(item?.categoryId || financeData.categories[0]?.id);
+  const mandatoryOptions=document.getElementById('finance-mandatory-options');
+  if(mandatoryOptions) mandatoryOptions.hidden=type!=='mandatory';
+  const dateField=document.getElementById('finance-entry-date-field'); if(dateField) dateField.hidden=type==='mandatory';
+  const paidInput=document.getElementById('finance-mandatory-paid'); if(paidInput) paidInput.checked=Boolean(item?.paid);
+  const dueInput=document.getElementById('finance-mandatory-due'); if(dueInput) dueInput.value=item?.dueDate||item?.date||getDateKey(financeEffectiveViewDateV16());
   const title=document.getElementById('finance-entry-sheet-title');
   if(title)title.textContent=item?(type==='mandatory'?'Обязательный расход':type==='income'?'Доход':'Расход'):(type==='mandatory'?'Новый обязательный':type==='income'?'Новый доход':'Новый расход');
   const del=document.getElementById('finance-entry-delete-button'); if(del)del.hidden=!item;
@@ -4234,11 +4230,15 @@ function saveFinanceEntryV15() {
   const title=String(document.getElementById('finance-entry-title')?.value||'').trim();
   const amount=financeSafeAmountV15(document.getElementById('finance-entry-amount')?.value);
   const categoryId=document.getElementById('finance-entry-category')?.value || financeData.categories[0]?.id;
-  const date=financeCleanDateV15(document.getElementById('finance-entry-date')?.value);
+  let date=financeCleanDateV15(document.getElementById('finance-entry-date')?.value);
   if(!title){showToast(type==='income'?'Укажи источник дохода':'Укажи название');return;} if(!(amount>0)){showToast('Укажи сумму');return;}
   const collectionKey=type==='mandatory'?'mandatoryExpenses':type==='income'?'incomes':'expenses';
   const collection=financeData[collectionKey] || []; const existing=id?collection.find(x=>String(x.id)===id):null;
-  const item={ id:existing?.id||financeIdV15(type), title:title.slice(0,80), amount, ...(type==='income'?{}:{categoryId}), date, ...(type==='mandatory'?{monthKey:financeMonthKeyV15(new Date(`${date}T12:00:00`))}:{}), updatedAt:financeNowIsoV15() };
+  const paid = type==='mandatory' ? Boolean(document.getElementById('finance-mandatory-paid')?.checked) : false;
+  const dueDate = type==='mandatory' ? financeCleanDateV15(document.getElementById('finance-mandatory-due')?.value || existing?.dueDate || date) : '';
+  if(type==='mandatory') date=dueDate;
+  const nowIso = financeNowIsoV15();
+  const item={ id:existing?.id||financeIdV15(type), title:title.slice(0,80), amount, ...(type==='income'?{}:{categoryId}), date, ...(type==='mandatory'?{monthKey:financeMonthKeyV15(new Date(`${dueDate}T12:00:00`)),dueDate,paid,paidAt:paid?(existing?.paidAt||nowIso):null}:{}), updatedAt:nowIso };
   if(existing) financeData[collectionKey]=collection.map(x=>String(x.id)===id?item:x); else financeData[collectionKey].push(item);
   closeSheets(); saveFinance(); showToast(type==='mandatory'?'Обязательный расход сохранён':type==='income'?'Доход записан':'Расход записан');
 }
@@ -4265,7 +4265,7 @@ function createFinanceListRowV15({title,meta,amount,color,onClick,status}) {
   if (amount) { const value=document.createElement('strong');value.textContent=amount;tail.appendChild(value); }
   if(status){const badge=document.createElement('small');badge.textContent=status;tail.appendChild(badge);}const chevron=document.createElement('b');chevron.textContent='›';tail.appendChild(chevron);button.append(lead,tail);return button;
 }
-function renderFinanceMandatoryListV15(){const root=document.getElementById('finance-mandatory-list');if(!root)return;const items=financeMandatoryForMonthV16(financeEffectiveViewDateV16());if(!items.length){const e=document.createElement('p');e.className='finance-empty';e.textContent='В этом месяце обязательных расходов нет.';root.replaceChildren(e);return;}root.replaceChildren(...[...items].sort((a,b)=>b.amount-a.amount).map(item=>createFinanceListRowV15({title:item.title,meta:financeCategoryByIdV15(item.categoryId)?.name||'',amount:formatRubles(item.amount),color:financeCategoryByIdV15(item.categoryId)?.color,onClick:()=>openFinanceEntrySheet('mandatory',item.id)})));}
+function renderFinanceMandatoryListV15(){const root=document.getElementById('finance-mandatory-list');if(!root)return;const items=financeMandatoryForMonthV16(financeEffectiveViewDateV16());if(!items.length){const e=document.createElement('p');e.className='finance-empty';e.textContent='В этом месяце обязательных расходов нет.';root.replaceChildren(e);return;}root.replaceChildren(...[...items].sort((a,b)=>String(a.dueDate||a.date).localeCompare(String(b.dueDate||b.date))).map(item=>createFinanceListRowV15({title:item.title,meta:`${financeCategoryByIdV15(item.categoryId)?.name||''}${item.dueDate?` · до ${financeDateLabelV15(item.dueDate)}`:''}`,amount:formatRubles(item.amount),status:item.paid?'Оплачено':'Ожидает оплаты',color:financeCategoryByIdV15(item.categoryId)?.color,onClick:()=>openFinanceEntrySheet('mandatory',item.id)})));}
 function openFinanceMandatorySheet(){closeSheets();renderFinanceMandatoryListV15();const s=document.getElementById('finance-mandatory-sheet');if(s)s.hidden=false;}
 function financeHistoryDayTitleV19(dateKey) {
   const today = getDateKey(new Date());
@@ -4351,8 +4351,8 @@ function deleteFinanceCategory(){const id=String(document.getElementById('financ
 /* Dashboard finance contribution is based on budget discipline, not the
    number of taps/transactions. Spending below the daily allowance improves
    the finance quarter of the activity score; overspending reduces it. */
-function getFinanceEntriesForDate(date) { const key=getDateKey(date); return financeData.expenses.filter(item=>item.date===key); }
-function getTodaySpent(date = new Date()) { return financeSpentForDateV15(date); }
+function getFinanceEntriesForDate(date) { const key=getDateKey(date); return [...financeData.expenses.filter(item=>item.date===key), ...financeData.mandatoryExpenses.filter(item=>item.paid===true && (getLocalDateKeyFromValue(item.paidAt)||item.dueDate||item.date)===key)]; }
+function getTodaySpent(date = new Date()) { return financeCashSpentForDateV28(date); }
 function getDashboardActivityBreakdown(date, nowMs = Date.now()) {
   const trainingSeconds=getTrainingSecondsForDate(date,nowMs);const scheduleEvents=getScheduleEventsForDate(date);const notes=getNotesForDate(date);const completedEvents=scheduleEvents.filter(event=>event?.completed||event?.status==='completed').length;const isFuture=startOfDay(date)>startOfDay(new Date(nowMs));
   const training=isFuture?0:Math.min(25,(trainingSeconds/(45*60))*25);
@@ -4364,9 +4364,9 @@ function getDashboardActivityBreakdown(date, nowMs = Date.now()) {
 }
 function renderHomeDomainCards(now = new Date()) {
   const stats=financeMonthStatsV15(now);const financePrimary=document.getElementById('home-finance-primary');const financeSecondary=document.getElementById('home-finance-secondary');
-  if(financePrimary)financePrimary.textContent=stats.todaySpent?`−${formatRubles(stats.todaySpent)} сегодня`:'0 ₽ сегодня';
+  const cashToday=financeCashSpentForDateV28(now);if(financePrimary)financePrimary.textContent=cashToday?`−${formatRubles(cashToday)} сегодня`:'0 ₽ сегодня';
   if(financeSecondary)financeSecondary.textContent=stats.income>0?(stats.remainingToday<0?`Перерасход ${formatRubles(Math.abs(stats.remainingToday))}`:`Можно ещё ${formatRubles(stats.remainingToday)}`):'Настрой месячный бюджет';
-  const next=getNextScheduleEvent(now);const schedulePrimary=document.getElementById('home-schedule-primary');const scheduleSecondary=document.getElementById('home-schedule-secondary');if(next){const isToday=getDateKey(next.date)===getDateKey(now);if(schedulePrimary)schedulePrimary.textContent=String(next.event.title||next.event.name||'Событие');if(scheduleSecondary)scheduleSecondary.textContent=`${isToday?'Сегодня':new Intl.DateTimeFormat('ru-RU',{weekday:'short',day:'numeric',month:'short'}).format(next.date)} · ${new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(next.date)}`;}else{if(schedulePrimary)schedulePrimary.textContent='Событий нет';if(scheduleSecondary)scheduleSecondary.textContent='Расписание пока пустое';}
+  const next=getNextScheduleEvent(now);const schedulePrimary=document.getElementById('home-schedule-primary');const scheduleSecondary=document.getElementById('home-schedule-secondary');if(next){const isToday=getDateKey(next.date)===getDateKey(now);if(schedulePrimary)schedulePrimary.textContent=String(next.event.title||next.event.name||'Событие');if(scheduleSecondary){const when=next.event?.all_day?'Весь день':new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(next.date);scheduleSecondary.textContent=`${isToday?'Сегодня':new Intl.DateTimeFormat('ru-RU',{weekday:'short',day:'numeric',month:'short'}).format(next.date)} · ${when}`;}}else{if(schedulePrimary)schedulePrimary.textContent='Событий нет';if(scheduleSecondary)scheduleSecondary.textContent='Расписание пока пустое';}
   const notes=notesData.filter(note=>note?.archived!==true);const notesPrimary=document.getElementById('home-notes-primary');const notesSecondary=document.getElementById('home-notes-secondary');if(notesPrimary)notesPrimary.textContent=notes.length?`${notes.length} ${notes.length===1?'заметка':notes.length<5?'заметки':'заметок'}`:'Заметок нет';if(notesSecondary){const last=[...notes].sort((a,b)=>new Date(b.updatedAt||b.createdAt||0)-new Date(a.updatedAt||a.createdAt||0))[0];notesSecondary.textContent=last?String(last.title||last.text||'Последняя запись').slice(0,54):'Новые записи появятся здесь';}
 }
 
@@ -4412,7 +4412,7 @@ async function copyProfileUsername() {
 function renderHomeActivity(nowMs = Date.now()) {
   const now=new Date(nowMs);const monday=getWeekMonday(now);const days=Array.from({length:7},(_,index)=>{const day=new Date(monday);day.setDate(monday.getDate()+index);return day;});const breakdowns=days.map(day=>getDashboardActivityBreakdown(day,nowMs));const todayIndex=Math.max(0,Math.min(6,Math.round((startOfDay(now)-startOfDay(monday))/86400000)));const elapsed=breakdowns.slice(0,todayIndex+1);const weekScore=elapsed.length?Math.round(elapsed.reduce((sum,item)=>sum+item.score,0)/elapsed.length):0;
   const spentEl=document.getElementById('home-finance-spent');const workoutEl=document.getElementById('home-last-workout');const scheduleEl=document.getElementById('home-next-schedule');const scheduleLabel=document.getElementById('home-next-schedule-label');const progress=document.getElementById('home-activity-progress');const line=document.getElementById('home-activity-line');const area=document.getElementById('home-activity-area');const points=document.getElementById('home-activity-points');
-  const todayStats=financeMonthStatsV15(now);if(spentEl)spentEl.textContent=todayStats.todaySpent?`−${formatRubles(todayStats.todaySpent)}`:'0 ₽';const lastWorkout=getLastCompletedWorkout(now);if(workoutEl)workoutEl.textContent=lastWorkout?formatDashboardDuration(normalizeWorkoutSeconds(lastWorkout.duration)):'—';const next=getNextScheduleEvent(now);if(scheduleEl)scheduleEl.textContent=next?new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(next.date):'—';if(scheduleLabel)scheduleLabel.textContent=next?String(next.event.title||next.event.name||'Следующее').slice(0,22):'Следующее';if(progress){const value=progress.querySelector('b');const label=progress.querySelector('small');progress.classList.remove('is-live');if(value)value.textContent=`${weekScore}%`;if(label)label.textContent='общей активности';}
+  const todayStats=financeMonthStatsV15(now);const cashToday=financeCashSpentForDateV28(now);if(spentEl)spentEl.textContent=cashToday?`−${formatRubles(cashToday)}`:'0 ₽';const lastWorkout=getLastCompletedWorkout(now);if(workoutEl)workoutEl.textContent=lastWorkout?formatDashboardDuration(normalizeWorkoutSeconds(lastWorkout.duration)):'—';const next=getNextScheduleEvent(now);if(scheduleEl)scheduleEl.textContent=next?(next.event?.all_day?'Весь день':new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(next.date)):'—';if(scheduleLabel)scheduleLabel.textContent=next?String(next.event.title||next.event.name||'Следующее').slice(0,22):'Следующее';if(progress){const value=progress.querySelector('b');const label=progress.querySelector('small');progress.classList.remove('is-live');if(value)value.textContent=`${weekScore}%`;if(label)label.textContent='общей активности';}
   if(!line||!area||!points)return;const baselineY=124,topY=28;const coords=breakdowns.map((item,index)=>({x:Number((index*(336/6)).toFixed(1)),y:Number((baselineY-Math.max(0,Math.min(100,item.score))/100*(baselineY-topY)).toFixed(1))}));const path=buildSmoothPath(coords);line.setAttribute('d',path);area.setAttribute('d',`${path} L336 142 L0 142 Z`);points.replaceChildren();coords.forEach((point,index)=>{const day=days[index],data=breakdowns[index];const group=document.createElementNS('http://www.w3.org/2000/svg','g');group.setAttribute('tabindex','0');group.setAttribute('role','button');const hit=document.createElementNS('http://www.w3.org/2000/svg','circle');hit.setAttribute('cx',point.x);hit.setAttribute('cy',point.y);hit.setAttribute('r','13');hit.setAttribute('fill','transparent');hit.setAttribute('class','home-point-hit');const circle=document.createElementNS('http://www.w3.org/2000/svg','circle');circle.setAttribute('cx',point.x);circle.setAttribute('cy',point.y);circle.setAttribute('r',getDateKey(day)===getDateKey(now)?'2.2':'1.8');circle.setAttribute('class','home-point-dot');const label=new Intl.DateTimeFormat('ru-RU',{weekday:'short',day:'numeric',month:'short'}).format(day);const detail=`${data.score}% · тренировки ${formatDashboardDuration(data.trainingSeconds)} · финансы ${Math.round(data.finance)}/25 · расписание ${data.scheduleCount} · заметки ${data.noteCount}`;group.setAttribute('aria-label',`${label}: ${detail}`);const announce=()=>showToast(`${label} · ${detail}`);group.addEventListener('click',announce);group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();announce();}});group.append(hit,circle);points.appendChild(group);});
 }
 
@@ -4454,3 +4454,35 @@ document.addEventListener('DOMContentLoaded', () => {
   svgDiag('frontend:ready', { message: `bodyChildren=${document.body?.children?.length || 0}` });
   try { window.SVGDiag?.flush?.(); } catch (_) {}
 });
+
+
+/* V28 compatibility with the V27 ZIP deploy preflight.
+   The original interactive handlers are exported by product.js before this
+   script loads (defer script order in index.html). These declared forwarders
+   satisfy the V27 HTML/JS contract without disabling features or duplicating
+   application state. */
+function svgtrackerCallProductHandler(name, args) {
+  const impl = window.SVGTrackerProductHandlers && window.SVGTrackerProductHandlers[name];
+  if (typeof impl !== 'function') {
+    svgDiag('product:handler-missing', {level:'error', message:name});
+    if (typeof showToast === 'function') showToast('Раздел не загрузился. Обновите страницу.');
+    return false;
+  }
+  return impl(...args);
+}
+function closeNoteEditor(...args) { return svgtrackerCallProductHandler('closeNoteEditor', args); }
+function closeNotes(...args) { return svgtrackerCallProductHandler('closeNotes', args); }
+function closeSchedule(...args) { return svgtrackerCallProductHandler('closeSchedule', args); }
+function closeScheduleEditor(...args) { return svgtrackerCallProductHandler('closeScheduleEditor', args); }
+function deleteNote(...args) { return svgtrackerCallProductHandler('deleteNote', args); }
+function deleteScheduleEvent(...args) { return svgtrackerCallProductHandler('deleteScheduleEvent', args); }
+function openNoteEditor(...args) { return svgtrackerCallProductHandler('openNoteEditor', args); }
+function openNotes(...args) { return svgtrackerCallProductHandler('openNotes', args); }
+function openSchedule(...args) { return svgtrackerCallProductHandler('openSchedule', args); }
+function openScheduleEditor(...args) { return svgtrackerCallProductHandler('openScheduleEditor', args); }
+function renderNotes(...args) { return svgtrackerCallProductHandler('renderNotes', args); }
+function saveNote(...args) { return svgtrackerCallProductHandler('saveNote', args); }
+function saveScheduleEvent(...args) { return svgtrackerCallProductHandler('saveScheduleEvent', args); }
+function shiftScheduleWeek(...args) { return svgtrackerCallProductHandler('shiftScheduleWeek', args); }
+function toggleNoteReminderField(...args) { return svgtrackerCallProductHandler('toggleNoteReminderField', args); }
+function toggleScheduleAllDay(...args) { return svgtrackerCallProductHandler('toggleScheduleAllDay', args); }

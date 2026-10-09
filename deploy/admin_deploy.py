@@ -62,7 +62,7 @@ ALLOWED_SUFFIXES = {
     ".py", ".js", ".css", ".html", ".json", ".md", ".txt", ".service", ".timer", ".toml", ".yml", ".yaml",
     ".png", ".jpg", ".jpeg", ".webp", ".svg", ".ico"
 }
-CORE_FILES = {"main.py", "finance_db.py", "index.html", "script.js", "style.css"}
+CORE_FILES = {"main.py", "finance_db.py", "product_db.py", "product_api.py", "index.html", "script.js", "product.js", "style.css", "product.css"}
 
 
 def utc_now() -> str:
@@ -236,12 +236,12 @@ def validate_frontend_contract(root: Path) -> list[str]:
         return notes
     html = html_path.read_text(encoding="utf-8")
     effective_root = root if (root / "index.html").is_file() else PROJECT_ROOT
-    for asset_name in ("script.js", "style.css"):
+    for asset_name in ("script.js", "style.css", "product.js", "product.css"):
         candidate = root / asset_name if (root / asset_name).is_file() else PROJECT_ROOT / asset_name
         if not candidate.is_file() or candidate.stat().st_size < 1000:
             raise ValueError(f"Frontend asset is missing or empty: {asset_name}")
-    if "script.js" not in html or "style.css" not in html:
-        raise ValueError("index.html does not reference script.js/style.css")
+    if "script.js" not in html or "style.css" not in html or "product.js" not in html or "product.css" not in html:
+        raise ValueError("index.html does not reference all required frontend assets")
     # A synchronous Telegram SDK tag can freeze Safari/Telegram WebView when telegram.org is slow.
     if re.search(r'<script[^>]+src=["\']https://telegram\.org/js/telegram-web-app\.js["\'][^>]*>\s*</script>', html, re.I):
         raise ValueError("Telegram SDK must be loaded asynchronously; blocking tag detected")
@@ -254,7 +254,11 @@ def validate_frontend_contract(root: Path) -> list[str]:
         raise ValueError("Duplicate HTML id: " + ", ".join(sorted(duplicates)[:12]))
     notes.append(f"HTML ids checked: {len(parser.ids)}")
     if js_path.is_file():
-        js = js_path.read_text(encoding="utf-8")
+        js_sources = [js_path.read_text(encoding="utf-8")]
+        product_js = root / "product.js" if (root / "product.js").is_file() else PROJECT_ROOT / "product.js"
+        if product_js.is_file():
+            js_sources.append(product_js.read_text(encoding="utf-8"))
+        js = "\n".join(js_sources)
         handlers = set(re.findall(r'on(?:click|change|input|submit)=["\']\s*([A-Za-z_$][\w$]*)\s*\(', html))
         declared = set(re.findall(r'(?m)^\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(', js))
         missing = sorted(handlers - declared)

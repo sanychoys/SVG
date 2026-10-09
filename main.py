@@ -50,6 +50,7 @@ from finance_db import (
     get_finance_state,
     get_user_settings,
     get_user_settings_by_telegram_id,
+    get_user_telegram_id,
     init_db,
     remove_friend,
     revoke_shortcut_tokens,
@@ -62,11 +63,19 @@ from finance_db import (
     unblock_user,
 )
 
+from product_api import build_product_router
+from product_db import (
+    init_product_db,
+    collect_due_reminders,
+    mark_reminder_sent,
+    reset_product_data_for_telegram,
+)
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "27"
+APP_VERSION = "28"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -442,7 +451,9 @@ def admin_public_web_diagnostics() -> str:
     checks = [
         ("index", f"{PUBLIC_BASE_URL}/", f"script.js?v={APP_VERSION}"),
         ("script", f"{PUBLIC_BASE_URL}/script.js?v={APP_VERSION}", "SVGTRACKER_BOOT_STAGE"),
+        ("product.js", f"{PUBLIC_BASE_URL}/product.js?v={APP_VERSION}", "SVGTRACKER_PRODUCT_VERSION"),
         ("style", f"{PUBLIC_BASE_URL}/style.css?v={APP_VERSION}", ":root"),
+        ("product.css", f"{PUBLIC_BASE_URL}/product.css?v={APP_VERSION}", ".product-screen"),
     ]
     rows = []
     for name, url, expected in checks:
@@ -553,7 +564,7 @@ def admin_git_state() -> str:
 
 def admin_frontend_status() -> str:
     root = Path(__file__).parent
-    required = {"index.html": 1000, "script.js": 1000, "style.css": 1000}
+    required = {"index.html": 1000, "script.js": 1000, "style.css": 1000, "product.js": 1000, "product.css": 1000}
     missing = []
     for name, minimum in required.items():
         path = root / name
@@ -563,9 +574,13 @@ def admin_frontend_status() -> str:
         return "FAIL · " + ", ".join(missing)
     try:
         html = (root / "index.html").read_text(encoding="utf-8", errors="replace")
-        expected_script = f"/script.js?v={APP_VERSION}"
-        expected_style = f"/style.css?v={APP_VERSION}"
-        if expected_script not in html or expected_style not in html:
+        expected_assets = (
+            f"/script.js?v={APP_VERSION}",
+            f"/style.css?v={APP_VERSION}",
+            f"/product.js?v={APP_VERSION}",
+            f"/product.css?v={APP_VERSION}",
+        )
+        if any(asset not in html for asset in expected_assets):
             return "WARN · asset version mismatch"
     except Exception:
         return "FAIL · index unreadable"
@@ -994,6 +1009,16 @@ def authenticated_user(request: Request, x_telegram_init_data: str | None):
     return user, record["user_id"]
 
 
+app.include_router(build_product_router(
+    authenticate=authenticated_user,
+    bot=bot,
+    main_keyboard=main_keyboard,
+    get_user_settings=get_user_settings,
+    get_user_telegram_id=get_user_telegram_id,
+    logger=logger,
+))
+
+
 def web_user_payload(record: dict) -> dict:
     try:
         telegram_id = int(record.get("telegram_id"))
@@ -1231,6 +1256,7 @@ def api_save_finance_state(
         clean_state = {key: state.get(key) for key in allowed if key in state}
         updated_at = save_finance_state(user_id, clean_state)
     return {"status": "ok", "updated_at": updated_at}
+
 
 
 @app.get("/api/shortcut/finance/options")
@@ -2228,6 +2254,52 @@ async def reset_data_request(message: Message):
     )
 
 
+async def bot_reminder_loop():
+    """Deliver user reminders without coupling them to HTTP requests.
+
+    Every reminder is deduplicated in SQLite, so process restarts do not spam
+    users. Global bot notifications are respected for schedule, notes and
+    finance reminders.
+    """
+    await asyncio.sleep(8)
+    while True:
+        try:
+            for item in collect_due_reminders():
+                kind = item.get("kind")
+                when = item.get("when")
+                tz = item.get("timezone") or timezone.utc
+                local_when = when.astimezone(tz) if isinstance(when, datetime) else None
+                if kind == "schedule":
+                    minutes = int(item.get("reminder_minutes") or 0)
+                    when_text = local_when.strftime("%d.%m · %H:%M") if local_when else "скоро"
+                    lead = "сейчас" if minutes == 0 else (f"через {minutes} мин" if minutes < 60 else f"через {minutes // 60} ч")
+                    text = f"📅 Напоминание · {lead}\n\n{item.get('title') or 'Событие'}\n{when_text}"
+                elif kind == "note":
+                    body = str(item.get("body") or "").strip().replace("\n", " ")[:180]
+                    text = f"📝 Напоминание по заметке\n\n{item.get('title') or 'Заметка'}" + (f"\n{body}" if body else "")
+                elif kind == "mandatory":
+                    amount = item.get("amount")
+                    amount_text = f" · {amount:g} ₽" if isinstance(amount, (int, float)) else ""
+                    text = f"💳 Обязательный расход сегодня\n\n{item.get('title') or 'Платёж'}{amount_text}"
+                elif kind == "debt":
+                    amount = item.get("amount")
+                    amount_text = f" · {amount:g} ₽" if isinstance(amount, (int, float)) else ""
+                    direction = "Нужно вернуть" if item.get("debt_kind") == "owe" else "Ожидается возврат"
+                    text = f"↔️ Напоминание о долге\n\n{direction}: {item.get('title') or 'долг'}{amount_text}"
+                else:
+                    continue
+                try:
+                    await bot.send_message(chat_id=item["telegram_id"], text=text, reply_markup=main_keyboard())
+                    mark_reminder_sent(item["user_id"], item["key"])
+                except Exception:
+                    logger.exception("Failed to send %s reminder to Telegram user %s", kind, item.get("telegram_id"))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Reminder loop iteration failed")
+        await asyncio.sleep(45)
+
+
 @dp.callback_query(F.data.startswith("resetdata_confirm:"))
 async def reset_data_confirm(callback: CallbackQuery):
     if not callback.from_user or not callback.data:
@@ -2241,6 +2313,7 @@ async def reset_data_confirm(callback: CallbackQuery):
         return
 
     reset_user_data(callback.from_user.id)
+    reset_product_data_for_telegram(callback.from_user.id)
     await callback.answer("Данные очищены")
     if callback.message:
         await callback.message.edit_text(
@@ -2260,6 +2333,7 @@ async def reset_data_cancel(callback: CallbackQuery):
 
 async def main():
     init_db()
+    init_product_db()
     logger.info("SVGTracker starting")
 
     # Keep thread pools deliberately small. FastAPI/AnyIO otherwise may retain
@@ -2279,13 +2353,15 @@ async def main():
     bot_task = asyncio.create_task(dp.start_polling(bot), name="telegram-polling")
     api_task = asyncio.create_task(api_server.serve(), name="uvicorn-api")
     maintenance_task = asyncio.create_task(runtime_memory_maintenance(), name="memory-maintenance")
+    reminder_task = asyncio.create_task(bot_reminder_loop(), name="bot-reminders")
 
     done, pending = await asyncio.wait(
         {bot_task, api_task},
         return_when=asyncio.FIRST_COMPLETED,
     )
     maintenance_task.cancel()
-    await asyncio.gather(maintenance_task, return_exceptions=True)
+    reminder_task.cancel()
+    await asyncio.gather(maintenance_task, reminder_task, return_exceptions=True)
     for task in done:
         if task.cancelled():
             continue

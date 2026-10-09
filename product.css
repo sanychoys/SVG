@@ -1,0 +1,82 @@
+/* SVGTracker product modules v28: schedule + notes.
+   Kept separate from the legacy stylesheet so new product surfaces can evolve
+   without adding another layer of cascade overrides to style.css. */
+.product-screen[hidden]{display:none!important}
+.product-screen{position:fixed;inset:0;z-index:48;overflow-y:auto;background:#010203;color:var(--text);overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.product-shell{width:min(100%,430px);min-height:100%;margin:0 auto;padding:max(18px,env(safe-area-inset-top)) clamp(12px,4vw,18px) max(28px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:16px}
+.product-header{display:grid;grid-template-columns:42px minmax(0,1fr) 42px;align-items:center;gap:10px;min-height:54px}
+.product-header-copy{min-width:0;text-align:left}
+.product-header-copy h1{margin:3px 0 2px;font-size:29px;line-height:1;letter-spacing:-.05em}
+.product-header-copy p{margin:0;color:rgba(255,255,255,.36);font-size:10.5px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.product-back,.product-add{width:40px;height:40px;margin:0;display:grid;place-items:center}
+.product-back svg,.product-add svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
+.product-add{grid-column:3}
+.schedule-week-card,.product-list-card{padding:17px 15px;border-radius:23px}
+.product-week-head{display:grid;grid-template-columns:34px minmax(0,1fr) 34px;align-items:center;gap:9px;margin-bottom:15px}
+.product-week-head>div{text-align:center;min-width:0;display:grid;gap:3px}
+.product-week-head strong{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.schedule-week-strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+.schedule-day-button{appearance:none;-webkit-appearance:none;min-width:0;min-height:52px;padding:7px 2px;border:0;border-radius:15px;background:rgba(255,255,255,.035);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font:inherit}
+.schedule-day-button small{font-size:8.5px;text-transform:uppercase;color:rgba(255,255,255,.34)}
+.schedule-day-button strong{font-size:14px;line-height:1}
+.schedule-day-button i{width:3px;height:3px;border-radius:50%;background:transparent}
+.schedule-day-button.has-events i{background:rgba(255,255,255,.65)}
+.schedule-day-button.is-selected{background:#fff;color:#090a0c}
+.schedule-day-button.is-selected small{color:rgba(0,0,0,.42)}
+.schedule-day-button.is-selected i{background:#090a0c}
+.schedule-day-button.is-today:not(.is-selected){box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)}
+.product-list-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:13px}
+.product-list-head h2{margin:4px 0 0;font-size:20px;line-height:1.05;letter-spacing:-.035em}
+.product-count-badge{min-width:28px;height:24px;padding:0 8px;border-radius:99px;display:grid;place-items:center;background:rgba(255,255,255,.055);color:rgba(255,255,255,.52);font-size:10px;font-variant-numeric:tabular-nums}
+.product-list,.notes-list{display:flex;flex-direction:column;gap:8px}
+.product-empty{margin:0;padding:25px 12px;text-align:center;color:rgba(255,255,255,.38);font-size:11px;line-height:1.45;overflow-wrap:normal;word-break:normal;white-space:normal}
+.schedule-event-row,.note-row{appearance:none;-webkit-appearance:none;width:100%;min-width:0;border:1px solid rgba(255,255,255,.055);border-radius:18px;background:rgba(255,255,255,.032);color:inherit;padding:12px;display:grid;align-items:center;gap:11px;text-align:left;font:inherit}
+.schedule-event-row{grid-template-columns:48px minmax(0,1fr) auto}
+.schedule-event-row:active,.note-row:active{background:rgba(255,255,255,.06)}
+.schedule-time{width:48px;display:grid;gap:3px;text-align:center}
+.schedule-time strong{font-size:13px;line-height:1;font-variant-numeric:tabular-nums}
+.schedule-time small{font-size:8px;color:rgba(255,255,255,.3)}
+.schedule-event-copy,.note-row-copy{min-width:0;display:grid;gap:4px}
+.schedule-event-copy strong,.note-row-copy strong{font-size:12px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.schedule-event-copy small,.note-row-copy small{font-size:9px;line-height:1.35;color:rgba(255,255,255,.35);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.schedule-event-meta{display:flex;align-items:center;gap:5px;flex:0 0 auto}
+.shared-badge,.reminder-badge,.pin-badge{height:22px;padding:0 7px;border-radius:99px;display:grid;place-items:center;background:rgba(255,255,255,.055);color:rgba(255,255,255,.48);font-size:8px;white-space:nowrap}
+.schedule-event-meta b{font-size:17px;color:rgba(255,255,255,.22);font-weight:400}
+.product-primary-button{appearance:none;-webkit-appearance:none;width:100%;height:52px;border:0;border-radius:18px;background:#fff;color:#08090a;display:flex;align-items:center;justify-content:center;gap:8px;font:600 13px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
+.product-primary-button svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round}
+.product-search{height:46px;border:1px solid rgba(255,255,255,.07);border-radius:16px;background:rgba(255,255,255,.045);display:flex;align-items:center;gap:9px;padding:0 13px}
+.product-search svg{width:17px;height:17px;fill:none;stroke:rgba(255,255,255,.4);stroke-width:1.6}
+.product-search input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:#fff;font:400 16px/1.2 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
+.product-search input::placeholder{color:rgba(255,255,255,.28)}
+.note-row{grid-template-columns:minmax(0,1fr) auto;padding:14px}
+.note-row-copy strong{font-size:13px}
+.note-row-copy small{font-size:10px;-webkit-line-clamp:3;white-space:normal}
+.note-row-meta{display:flex;align-items:center;gap:5px;align-self:start}
+.product-editor-panel{padding-bottom:max(22px,env(safe-area-inset-bottom));text-align:left}
+.product-editor-panel .sheet-heading-row{text-align:left}
+.product-two-columns{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.product-field-block{margin-top:13px}
+.product-field-block>span{display:block;margin:0 2px 7px;color:rgba(255,255,255,.42);font-size:10px}
+.friend-picker{display:flex;gap:7px;overflow-x:auto;padding:1px 0 4px;scrollbar-width:none}
+.friend-picker::-webkit-scrollbar{display:none}
+.friend-choice{appearance:none;-webkit-appearance:none;flex:0 0 auto;max-width:150px;height:36px;padding:0 10px;border:1px solid rgba(255,255,255,.07);border-radius:13px;background:rgba(255,255,255,.035);color:rgba(255,255,255,.64);display:flex;align-items:center;gap:7px;font:500 10px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
+.friend-choice i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.22)}
+.friend-choice.is-selected{background:#fff;color:#090a0c}
+.friend-choice.is-selected i{background:#090a0c}
+.friend-choice span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.friend-picker-empty{padding:9px 2px;color:rgba(255,255,255,.34);font-size:10px}
+.product-toggle-row{min-height:56px;margin-top:10px;padding:8px 3px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;justify-content:space-between;gap:12px}
+.product-toggle-row>span:first-child{min-width:0;display:grid;gap:3px}
+.product-toggle-row strong{font-size:11px;font-weight:600}
+.product-toggle-row small{font-size:9px;color:rgba(255,255,255,.34)}
+.product-editor-panel input,.product-editor-panel select,.product-editor-panel textarea{font-size:16px!important;text-align:left}
+.product-editor-panel textarea{resize:none;line-height:1.4}
+.finance-mandatory-options{margin-top:8px}
+/* Alignment audit: keep action rows and empty states centered/contained without
+   changing the established visual language. */
+.sheet-heading-row>div,.profile-action-copy,.finance-list-lead>span,.feature-body,.mini-stat{min-width:0}
+.sheet-heading-row h3,.sheet-heading-row .section-label{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.sheet-primary-action,.sheet-danger-button,.finance-record-button,.product-primary-button{text-align:center;justify-content:center}
+.finance-empty,.social-empty,.goal-empty,.product-empty{word-break:normal;overflow-wrap:break-word;text-align:center}
+.profile-action-meta,.finance-list-tail{flex-shrink:0}
+@media(max-width:350px){.product-shell{gap:13px}.schedule-week-strip{gap:3px}.schedule-day-button{min-height:48px;border-radius:13px}.schedule-event-row{grid-template-columns:43px minmax(0,1fr) auto;padding:10px;gap:8px}.schedule-time{width:43px}.product-two-columns{grid-template-columns:1fr}.product-header-copy h1{font-size:26px}}

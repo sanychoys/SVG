@@ -685,6 +685,28 @@ def block_user(user_id, target_user_id):
             """,
             (now, user_id, target_user_id, target_user_id, user_id),
         )
+        # Shared schedule is a friendship feature. If the normalized schedule
+        # tables are already installed, blocking also revokes direct shared
+        # events owned by either side. The guard keeps finance_db compatible
+        # with databases created before the schedule module is initialized.
+        has_schedule = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schedule_event_members'"
+        ).fetchone()
+        if has_schedule:
+            db.execute(
+                """
+                DELETE FROM schedule_event_members
+                WHERE user_id=? AND event_id IN (SELECT id FROM schedule_events WHERE owner_user_id=?)
+                """,
+                (target_user_id, user_id),
+            )
+            db.execute(
+                """
+                DELETE FROM schedule_event_members
+                WHERE user_id=? AND event_id IN (SELECT id FROM schedule_events WHERE owner_user_id=?)
+                """,
+                (user_id, target_user_id),
+            )
         return True
 
 
