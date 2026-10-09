@@ -1,37 +1,68 @@
-// Telegram WebApp bootstrap and user binding
-document.addEventListener('DOMContentLoaded', function initTelegram(){
-  const telegramApp = window.Telegram?.WebApp;
-  if (!telegramApp) {
-    window.SVG_TELEGRAM_USER = null;
-    return;
-  }
+// Telegram WebApp bootstrap and user binding.
+// The Telegram SDK is intentionally loaded asynchronously by index.html so a
+// slow telegram.org response can never block the whole SVGTracker UI.
+let tg = window.Telegram?.WebApp || null;
+let telegramContextAnnounced = false;
+let telegramBootstrapTimer = null;
 
-  telegramApp.ready();
-  telegramApp.expand();
+function applyTelegramIdentity() {
+  const telegramApp = window.Telegram?.WebApp || null;
+  if (!telegramApp) return false;
+
+  tg = telegramApp;
+  try { telegramApp.ready(); } catch (_) {}
+  try { telegramApp.expand(); } catch (_) {}
 
   const tgUser = telegramApp.initDataUnsafe?.user || null;
   window.SVG_TELEGRAM_USER = tgUser;
-  if (!tgUser) return;
 
-  const name = document.getElementById('name');
-  if (name && tgUser.first_name) name.textContent = tgUser.first_name;
+  if (tgUser) {
+    const name = document.getElementById('name');
+    if (name && tgUser.first_name) name.textContent = tgUser.first_name;
 
-  const avatar = document.getElementById('avatar');
-  const fallback = document.getElementById('avatar-fallback');
-  if (avatar && tgUser.photo_url) {
-    avatar.onload = () => {
-      avatar.style.display = 'block';
-      if (fallback) fallback.style.display = 'none';
-    };
-    avatar.onerror = () => {
-      avatar.style.display = 'none';
-      if (fallback) fallback.style.display = '';
-    };
-    avatar.src = tgUser.photo_url;
+    const avatar = document.getElementById('avatar');
+    const fallback = document.getElementById('avatar-fallback');
+    if (fallback) {
+      const letter = String(tgUser.first_name || tgUser.username || 'S').trim().charAt(0).toUpperCase() || 'S';
+      fallback.textContent = letter;
+    }
+    if (avatar && tgUser.photo_url) {
+      avatar.onload = () => {
+        avatar.style.display = 'block';
+        if (fallback) fallback.style.display = 'none';
+      };
+      avatar.onerror = () => {
+        avatar.style.display = 'none';
+        if (fallback) fallback.style.display = '';
+      };
+      avatar.src = tgUser.photo_url;
+    }
   }
-});
 
-const tg = window.Telegram?.WebApp;
+  if (!telegramContextAnnounced) {
+    telegramContextAnnounced = true;
+    setTimeout(() => document.dispatchEvent(new Event('svgtracker:telegram-ready')), 0);
+  }
+  return true;
+}
+
+function waitForTelegramSdk() {
+  if (applyTelegramIdentity()) return;
+  if (telegramBootstrapTimer) return;
+  let attempts = 0;
+  telegramBootstrapTimer = setInterval(() => {
+    attempts += 1;
+    if (applyTelegramIdentity() || attempts >= 40) {
+      clearInterval(telegramBootstrapTimer);
+      telegramBootstrapTimer = null;
+    }
+  }, 250);
+}
+
+window.SVG_TELEGRAM_USER = window.SVG_TELEGRAM_USER || null;
+window.addEventListener('svgtracker:telegram-sdk', waitForTelegramSdk);
+document.addEventListener('DOMContentLoaded', waitForTelegramSdk);
+if (window.Telegram?.WebApp) applyTelegramIdentity();
 
 const STORAGE = {
   goals: 'fitness_goals',
@@ -4058,3 +4089,20 @@ window.addEventListener('online',()=>syncFinanceWithServerV15());
 window.addEventListener('offline',()=>financeSetSyncStatusV15('offline','Офлайн · сохранено локально'));
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&tg?.initData)syncFinanceWithServerV15();});
 document.addEventListener('DOMContentLoaded',()=>{financeData=normalizeFinanceDataV15(financeData);localStorage.setItem(STORAGE.finance,JSON.stringify(financeData));renderFinance();renderHomeTrainingSummary();if(tg?.initData)syncFinanceWithServerV15();});
+
+// Late Telegram bootstrap: the UI is usable before the Telegram SDK arrives.
+document.addEventListener('svgtracker:telegram-ready', () => {
+  try { renderProfileState(); } catch (_) {}
+  try { renderHomeTrainingSummary(); } catch (_) {}
+  if (!tg?.initData) return;
+  try { syncTrainingWithServer(); } catch (_) {}
+  try { loadProfileData(true); } catch (_) {}
+  try { syncFinanceWithServerV15(); } catch (_) {}
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  window.SVGTRACKER_FRONTEND_READY = true;
+  document.documentElement.dataset.svgtrackerReady = '1';
+  const warning = document.getElementById('frontend-boot-warning');
+  if (warning) warning.hidden = true;
+});

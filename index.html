@@ -3,8 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#010203">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>SVGTracker</title>
-<link rel="stylesheet" href="style.css?v=20">
+<style id="svgtracker-critical-css">
+  html,body{min-height:100%;margin:0;background:#010203;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text",sans-serif}
+  .app-shell{display:block!important;visibility:visible!important;opacity:1!important;width:min(100%,430px);min-height:100vh;margin:0 auto}
+  #frontend-boot-warning{position:fixed;left:14px;right:14px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:9999;padding:13px 14px;border:1px solid rgba(255,255,255,.12);border-radius:16px;background:rgba(24,26,30,.96);color:#fff;font-size:13px;line-height:1.35;box-shadow:0 18px 44px rgba(0,0,0,.4)}
+  #frontend-boot-warning[hidden]{display:none!important}
+  #frontend-boot-warning button{margin-top:9px;padding:8px 12px;border:0;border-radius:10px;background:#fff;color:#111;font:inherit;font-weight:600}
+</style>
+<link rel="stylesheet" href="/style.css?v=22">
 </head>
 <body>
 <div class="ambient-layer">
@@ -745,7 +757,38 @@
 
 </main>
 
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="script.js?v=20"></script>
+<div id="frontend-boot-warning" hidden role="status">
+  Не удалось полностью загрузить интерфейс SVGTracker. Обнови страницу — данные не потеряны.
+  <br><button type="button" onclick="location.reload()">Обновить</button>
+</div>
+<script>
+(function loadTelegramSdkNonBlocking(){
+  window.SVG_TELEGRAM_SDK_STATE = window.Telegram?.WebApp ? 'ready' : 'loading';
+  if (window.Telegram?.WebApp) {
+    window.dispatchEvent(new Event('svgtracker:telegram-sdk'));
+    return;
+  }
+  var sdk = document.createElement('script');
+  sdk.src = 'https://telegram.org/js/telegram-web-app.js';
+  sdk.async = true;
+  sdk.onload = function(){
+    window.SVG_TELEGRAM_SDK_STATE = 'ready';
+    window.dispatchEvent(new Event('svgtracker:telegram-sdk'));
+  };
+  sdk.onerror = function(){
+    window.SVG_TELEGRAM_SDK_STATE = 'unavailable';
+    window.dispatchEvent(new Event('svgtracker:telegram-sdk-error'));
+  };
+  document.head.appendChild(sdk);
+
+  window.setTimeout(function(){
+    if (window.SVGTRACKER_FRONTEND_READY !== true) {
+      var warning = document.getElementById('frontend-boot-warning');
+      if (warning) warning.hidden = false;
+    }
+  }, 8000);
+})();
+</script>
+<script src="/script.js?v=22" defer></script>
 </body>
 </html>

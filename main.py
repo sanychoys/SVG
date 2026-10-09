@@ -51,7 +51,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "21"
+APP_VERSION = "22"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -205,6 +205,25 @@ def admin_git_state() -> str:
         return "—"
 
 
+def admin_frontend_status() -> str:
+    root = Path(__file__).parent
+    required = {"index.html": 1000, "script.js": 1000, "style.css": 1000}
+    missing = []
+    for name, minimum in required.items():
+        path = root / name
+        if not path.is_file() or path.stat().st_size < minimum:
+            missing.append(name)
+    if missing:
+        return "FAIL · " + ", ".join(missing)
+    try:
+        html = (root / "index.html").read_text(encoding="utf-8", errors="replace")
+        if "/script.js?v=22" not in html or "/style.css?v=22" not in html:
+            return "WARN · asset version mismatch"
+    except Exception:
+        return "FAIL · index unreadable"
+    return "OK · v22 assets"
+
+
 def admin_server_status_text() -> str:
     active = subprocess.run(["systemctl", "is-active", "svgtracker"], capture_output=True, text=True).stdout.strip() or "unknown"
     try:
@@ -232,6 +251,7 @@ def admin_server_status_text() -> str:
         f"Version: {APP_VERSION}\n"
         f"Service: {active}\n"
         f"API: {api}\n"
+        f"Frontend: {admin_frontend_status()}\n"
         f"Watchdog: {watchdog}\n"
         f"Git: {admin_git_state()}\n"
         f"DB: {db_size / 1024:.1f} KB\n"
@@ -959,6 +979,10 @@ async def admin_deploy_help(message: Message):
     )
 
 
+async def admin_server_status_text_async() -> str:
+    return await asyncio.to_thread(admin_server_status_text)
+
+
 @dp.message(Command("deploy_status"))
 async def admin_deploy_status(message: Message):
     if not is_admin_message(message):
@@ -978,7 +1002,7 @@ async def admin_deploy_status(message: Message):
 async def admin_server_status(message: Message):
     if not is_admin_message(message):
         return
-    await message.answer(admin_server_status_text())
+    await message.answer(await admin_server_status_text_async())
 
 
 async def create_manual_backup_for_admin() -> str:
@@ -1118,7 +1142,7 @@ async def admin_callback(callback: CallbackQuery):
     if action == "status":
         await callback.answer()
         if callback.message:
-            await callback.message.answer(admin_server_status_text())
+            await callback.message.answer(await admin_server_status_text_async())
         return
     if action == "errors":
         await callback.answer()

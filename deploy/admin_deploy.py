@@ -184,6 +184,16 @@ def validate_frontend_contract(root: Path) -> list[str]:
     if not html_path.is_file():
         return notes
     html = html_path.read_text(encoding="utf-8")
+    effective_root = root if (root / "index.html").is_file() else PROJECT_ROOT
+    for asset_name in ("script.js", "style.css"):
+        candidate = root / asset_name if (root / asset_name).is_file() else PROJECT_ROOT / asset_name
+        if not candidate.is_file() or candidate.stat().st_size < 1000:
+            raise ValueError(f"Frontend asset is missing or empty: {asset_name}")
+    if "script.js" not in html or "style.css" not in html:
+        raise ValueError("index.html does not reference script.js/style.css")
+    # A synchronous Telegram SDK tag can freeze Safari/Telegram WebView when telegram.org is slow.
+    if re.search(r'<script[^>]+src=["\']https://telegram\.org/js/telegram-web-app\.js["\'][^>]*>\s*</script>', html, re.I):
+        raise ValueError("Telegram SDK must be loaded asynchronously; blocking tag detected")
     parser = _IdParser(); parser.feed(html)
     seen, duplicates = set(), set()
     for value in parser.ids:

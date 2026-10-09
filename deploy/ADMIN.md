@@ -47,3 +47,9 @@ The deployment transaction is:
 If the API health check fails, production is restored from backup. If GitHub commit/push fails, production is also restored and Git is reset to the pre-deploy commit, so GitHub and the VPS do not silently diverge.
 
 Protected production data is never overwritten by ZIP deploy: `config.py`, `.env`, `svgtracker.db`, SQLite WAL/SHM, `.git`, `venv`, uploads and logs.
+
+## V22 frontend resilience
+- Telegram WebApp SDK is loaded asynchronously and can no longer block the whole UI.
+- `script.js` and `style.css` are cache-busted with `?v=22`.
+- ZIP deploy validation rejects missing frontend assets and a blocking Telegram SDK tag.
+- `/server_status` reports a separate Frontend status.
