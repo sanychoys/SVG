@@ -18,6 +18,8 @@ from product_db import (
     list_schedule_events,
     save_note,
     update_schedule_event,
+    get_notification_preferences, update_notification_preferences,
+    notification_enabled, list_busy_availability,
 )
 
 
@@ -97,10 +99,10 @@ def _clean_note_payload(payload: dict) -> dict:
 def build_product_router(*, authenticate, bot, main_keyboard, get_user_settings, get_user_telegram_id, logger):
     router = APIRouter()
 
-    async def notify_user(user_id, text):
+    async def notify_user(user_id, text, category):
         settings = get_user_settings(user_id) or {}
         telegram_id = get_user_telegram_id(user_id)
-        if not telegram_id or not settings.get("bot_notifications", True):
+        if not telegram_id or not notification_enabled(user_id, category):
             return False
         try:
             await bot.send_message(chat_id=telegram_id, text=text, reply_markup=main_keyboard())
@@ -108,6 +110,34 @@ def build_product_router(*, authenticate, bot, main_keyboard, get_user_settings,
         except Exception:
             logger.exception("Failed to send product notification to Telegram user %s", telegram_id)
             return False
+
+    @router.get("/api/notifications/preferences")
+    def notification_preferences(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+        _, user_id = authenticate(request, x_telegram_init_data)
+        return {"status":"ok","preferences":get_notification_preferences(user_id)}
+
+    @router.put("/api/notifications/preferences")
+    def save_notification_preferences(payload: dict, request: Request, x_telegram_init_data: str | None = Header(default=None)):
+        _, user_id = authenticate(request, x_telegram_init_data)
+        try:
+            result=update_notification_preferences(user_id,payload.get('preferences'))
+        except ValueError as exc:
+            raise HTTPException(status_code=422,detail=str(exc)) from exc
+        return {"status":"ok","preferences":result}
+
+    @router.post("/api/schedule/availability")
+    def schedule_availability(payload: dict, request: Request, x_telegram_init_data: str | None = Header(default=None)):
+        _, user_id = authenticate(request, x_telegram_init_data)
+        ids=payload.get('user_ids',[])
+        if not isinstance(ids,list) or len(ids)>30:
+            raise HTTPException(status_code=422,detail='Слишком много участников')
+        start=_clean_iso_datetime(payload.get('start'),'start')
+        end=_clean_iso_datetime(payload.get('end'),'end')
+        try:
+            result=list_busy_availability(user_id,ids,start,end)
+        except ValueError as exc:
+            raise HTTPException(status_code=422,detail=str(exc)) from exc
+        return {"status":"ok","availability":result}
 
     @router.get("/api/schedule/events")
     def schedule_events(request: Request, x_telegram_init_data: str | None = Header(default=None)):
@@ -128,7 +158,7 @@ def build_product_router(*, authenticate, bot, main_keyboard, get_user_settings,
                 continue
             await notify_user(
                 participant["id"],
-                f"📅 {owner_name} добавил совместное событие\n\n{event['title']}",
+                f"📅 {owner_name} добавил совместное событие\n\n{event['title']}", 'shared_created',
             )
         return {"status": "ok", "event": event}
 
@@ -150,11 +180,11 @@ def build_product_router(*, authenticate, bot, main_keyboard, get_user_settings,
         # Newly added friends get a clear invitation-like notification; removed
         # participants are told that the event disappeared from their calendar.
         for participant_id in sorted(set(after_people) - set(before_people) - {actor_id}):
-            await notify_user(participant_id, f"📅 {actor_name} добавил вас в совместное событие\n\n{event['title']}")
+            await notify_user(participant_id, f"📅 {actor_name} добавил вас в совместное событие\n\n{event['title']}", 'shared_created')
         for participant_id in sorted(set(before_people) - set(after_people) - {actor_id}):
-            await notify_user(participant_id, f"📅 {actor_name} убрал совместное событие из вашего расписания\n\n{(before or {}).get('title') or event['title']}")
+            await notify_user(participant_id, f"📅 {actor_name} убрал совместное событие из вашего расписания\n\n{(before or {}).get('title') or event['title']}", 'shared_removed')
         for participant_id in sorted((set(after_people) & set(before_people)) - {actor_id}):
-            await notify_user(participant_id, f"📅 {actor_name} изменил совместное событие\n\n{event['title']}")
+            await notify_user(participant_id, f"📅 {actor_name} изменил совместное событие\n\n{event['title']}", 'shared_updated')
         return {"status": "ok", "event": event}
 
     @router.delete("/api/schedule/events/{event_id}")
@@ -172,11 +202,11 @@ def build_product_router(*, authenticate, bot, main_keyboard, get_user_settings,
                 for participant in before.get("participants", []):
                     if int(participant["id"]) == int(user_id):
                         continue
-                    await notify_user(participant["id"], f"📅 {actor_name} удалил совместное событие\n\n{before['title']}")
+                    await notify_user(participant["id"], f"📅 {actor_name} удалил совместное событие\n\n{before['title']}", 'shared_removed')
             elif result == "left":
                 owner_id = before.get("owner_user_id")
                 if owner_id and int(owner_id) != int(user_id):
-                    await notify_user(owner_id, f"📅 {actor_name} вышел из совместного события\n\n{before['title']}")
+                    await notify_user(owner_id, f"📅 {actor_name} вышел из совместного события\n\n{before['title']}", 'shared_removed')
         return {"status": "ok", "result": result}
 
     @router.get("/api/notes")

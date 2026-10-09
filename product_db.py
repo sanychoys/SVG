@@ -55,6 +55,12 @@ def init_product_db():
             );
             CREATE INDEX IF NOT EXISTS idx_notes_user_updated
                 ON notes(user_id, archived, pinned, updated_at);
+            CREATE TABLE IF NOT EXISTS notification_preferences(
+                user_id INTEGER PRIMARY KEY,
+                preferences_json TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS bot_reminder_log(
                 user_id INTEGER NOT NULL,
                 reminder_key TEXT NOT NULL,
@@ -415,6 +421,10 @@ def collect_due_reminders(now=None, lookback_minutes=30):
             """
         ).fetchall()
         for row in event_rows:
+            member_count = db.execute("SELECT COUNT(*) FROM schedule_event_members WHERE event_id=?", (row['id'],)).fetchone()[0]
+            category = 'shared_reminders' if member_count > 1 else 'personal_reminders'
+            if not notification_enabled(row['user_id'], category, db):
+                continue
             if int(row["owner_user_id"]) != int(row["user_id"]) and _blocked_pair(db, row["owner_user_id"], row["user_id"]):
                 continue
             reminder_minutes = int(row["reminder_minutes"] or 0)
@@ -445,6 +455,8 @@ def collect_due_reminders(now=None, lookback_minutes=30):
             """
         ).fetchall()
         for row in note_rows:
+            if not notification_enabled(row['user_id'], 'note_reminders', db):
+                continue
             remind_at = _parse_iso(row["reminder_at"])
             if not remind_at or not (window_start <= remind_at <= window_end):
                 continue
@@ -475,7 +487,7 @@ def collect_due_reminders(now=None, lookback_minutes=30):
             # Finance reminders are intentionally sent once on the due date, after 09:00 local time.
             if local_now.hour < 9:
                 continue
-            for item in state.get("mandatoryExpenses") or []:
+            for item in (state.get("mandatoryExpenses") or []) if notification_enabled(row['user_id'], 'finance_payments', db) else []:
                 due = str(item.get("dueDate") or item.get("date") or "")[:10]
                 if due != local_date or item.get("paid") is True:
                     continue
@@ -483,7 +495,7 @@ def collect_due_reminders(now=None, lookback_minutes=30):
                 if db.execute("SELECT 1 FROM bot_reminder_log WHERE user_id=? AND reminder_key=?", (row["user_id"], key)).fetchone():
                     continue
                 reminders.append({"user_id":row["user_id"],"telegram_id":row["telegram_id"],"key":key,"kind":"mandatory","title":item.get("title") or "Обязательный расход","amount":item.get("amount"),"when":now,"timezone":tz})
-            for item in state.get("debts") or []:
+            for item in (state.get("debts") or []) if notification_enabled(row['user_id'], 'finance_debts', db) else []:
                 due = str(item.get("dueDate") or "")[:10]
                 if due != local_date or item.get("status") == "closed":
                     continue
@@ -515,4 +527,92 @@ def reset_product_data_for_telegram(telegram_id):
         db.execute("DELETE FROM schedule_event_members WHERE user_id=?", (user_id,))
         db.execute("DELETE FROM notes WHERE user_id=?", (user_id,))
         db.execute("DELETE FROM bot_reminder_log WHERE user_id=?", (user_id,))
+        db.execute("DELETE FROM notification_preferences WHERE user_id=?", (user_id,))
         return True
+
+
+NOTIFICATION_DEFAULTS = {
+    "personal_reminders": True, "shared_reminders": True,
+    "note_reminders": True, "finance_payments": True, "finance_debts": True,
+    "shared_created": True, "shared_updated": True, "shared_removed": True,
+    "friend_accepted": True,
+    "share_busy": False,  # Friends see occupancy only after explicit opt-in
+}
+
+
+def get_notification_preferences(user_id, db=None):
+    if db is None:
+        with connect() as connection:
+            return get_notification_preferences(user_id, connection)
+    row = db.execute("SELECT preferences_json FROM notification_preferences WHERE user_id=?", (user_id,)).fetchone()
+    try:
+        overrides = json.loads(row["preferences_json"]) if row else {}
+    except (TypeError, json.JSONDecodeError):
+        overrides = {}
+    if not isinstance(overrides, dict):
+        overrides = {}
+    return {key: overrides.get(key) if type(overrides.get(key)) is bool else default for key, default in NOTIFICATION_DEFAULTS.items()}
+
+
+def update_notification_preferences(user_id, patch):
+    if not isinstance(patch, dict) or not patch or any(k not in NOTIFICATION_DEFAULTS or type(v) is not bool for k,v in patch.items()):
+        raise ValueError("Invalid notification preference")
+    with connect() as db:
+        result = get_notification_preferences(user_id, db)
+        result.update(patch)
+        db.execute("""INSERT INTO notification_preferences(user_id,preferences_json,updated_at) VALUES(?,?,?)
+                ON CONFLICT(user_id) DO UPDATE SET preferences_json=excluded.preferences_json, updated_at=excluded.updated_at""",
+                (user_id, json.dumps(result, separators=(',',':')), utc_now()))
+        return result
+
+
+def notification_enabled(user_id, category, db=None):
+    if db is None:
+        with connect() as connection:
+            return notification_enabled(user_id, category, connection)
+    row = db.execute("SELECT bot_notifications FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
+    return bool(row and row["bot_notifications"]) and get_notification_preferences(user_id, db).get(category, False)
+
+
+def list_busy_availability(viewer_id, user_ids, start, end):
+    """Give friends permission-gated occupancy, never titles/locations/descriptions."""
+    start_dt, end_dt = _parse_iso(start), _parse_iso(end)
+    if not start_dt or not end_dt or end_dt <= start_dt or end_dt-start_dt > timedelta(days=2):
+        raise ValueError("Invalid availability interval")
+    requested = [int(viewer_id)]
+    for raw in (user_ids or []):
+        try:
+            uid = int(raw)
+        except (ValueError,TypeError):
+            continue
+        if uid not in requested:
+            requested.append(uid)
+    out=[]
+    with connect() as db:
+        friends=_friend_ids(db,viewer_id)
+        for uid in requested[:31]:
+            if uid!=int(viewer_id) and (uid not in friends or _blocked_pair(db,viewer_id,uid)):
+                continue
+            if uid!=int(viewer_id) and not get_notification_preferences(uid,db)['share_busy']:
+                out.append({'user_id':uid,'private':True,'busy':[]})
+                continue
+            events=db.execute("""SELECT e.* FROM schedule_events e JOIN schedule_event_members m ON m.event_id=e.id
+                                WHERE m.user_id=?""",(uid,)).fetchall()
+            intervals=[]
+            for event in events:
+                if uid!=int(event['owner_user_id']) and _blocked_pair(db,event['owner_user_id'],uid):
+                    continue
+                base=_parse_iso(event['starts_at']); base_end=_parse_iso(event['ends_at'])
+                if not base:continue
+                duration=max(timedelta(minutes=1), (base_end-base) if base_end else (timedelta(days=1) if event['all_day'] else timedelta(hours=1)))
+                for occurrence in _occurrences(event,start_dt-min(duration,timedelta(days=7)),end_dt):
+                    a,b=max(start_dt,occurrence),min(end_dt,occurrence+duration)
+                    if b>a:intervals.append((a,b))
+            intervals.sort()
+            merged=[]
+            for a,b in intervals:
+                if merged and a<=merged[-1][1]:
+                    merged[-1]=(merged[-1][0],max(b,merged[-1][1]))
+                else:merged.append((a,b))
+            out.append({'user_id':uid,'private':False,'busy':[{'start':a.isoformat(),'end':b.isoformat()} for a,b in merged]})
+    return out

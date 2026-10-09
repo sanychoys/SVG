@@ -887,3 +887,12 @@ def reset_user_data(telegram_id):
             (user_id, empty_payload, now),
         )
         return True
+
+
+def get_pending_friend_request_sender(receiver_id, request_id):
+    """Return sender only when the target really received a pending request."""
+    with connect() as db:
+        row = db.execute("""SELECT u.id, u.telegram_id FROM friend_requests r
+                JOIN users u ON u.id=r.sender_user_id
+                WHERE r.id=? AND r.receiver_user_id=? AND r.status='pending'""",(request_id,receiver_id)).fetchone()
+        return dict(row) if row else None

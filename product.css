@@ -80,3 +80,85 @@
 .finance-empty,.social-empty,.goal-empty,.product-empty{word-break:normal;overflow-wrap:break-word;text-align:center}
 .profile-action-meta,.finance-list-tail{flex-shrink:0}
 @media(max-width:350px){.product-shell{gap:13px}.schedule-week-strip{gap:3px}.schedule-day-button{min-height:48px;border-radius:13px}.schedule-event-row{grid-template-columns:43px minmax(0,1fr) auto;padding:10px;gap:8px}.schedule-time{width:43px}.product-two-columns{grid-template-columns:1fr}.product-header-copy h1{font-size:26px}}
+
+/* SVGTracker v29 · schedule separation / privacy-first free-time planner */
+.schedule-tabs{display:grid;grid-template-columns:1fr 1fr 1.5fr;gap:4px;padding:4px;background:#15171a;border:1px solid rgba(255,255,255,.075);border-radius:17px;min-width:0}
+.schedule-tabs button{appearance:none;border:0;border-radius:12px;background:transparent;color:#888b91;font:600 12px/1.2 -apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif;padding:12px 2px;min-width:0;text-align:center;transition:background .16s,color .16s}
+.schedule-tabs button.is-active{background:#f5f6f7;color:#111215;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.schedule-view-caption{text-align:center;color:#777d86;font-size:11px;margin:-10px 0 -6px;min-height:16px;line-height:1.4}
+.schedule-week-card{border:1px solid rgba(255,255,255,.065)}
+.schedule-day-button{min-height:59px;border-radius:14px}
+.schedule-day-button.is-selected{box-shadow:0 3px 14px rgba(255,255,255,.1)}
+.schedule-event-row{border-color:rgba(255,255,255,.08);background:linear-gradient(110deg,#191b1f,#141519);min-height:72px;border-radius:16px}
+.schedule-time strong{font-size:12px}
+.schedule-event-copy strong{font-size:13px}
+.schedule-event-copy small{font-size:10px}
+.schedule-empty-v29{display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;padding:28px 14px 30px}
+.schedule-empty-v29 .empty-orbit{display:grid;place-items:center;width:48px;height:48px;border-radius:16px;background:#1a1d21;font-size:30px;color:#d7d8db;margin-bottom:2px}
+.schedule-empty-v29 strong{font-size:13px;color:#ededee}
+.schedule-empty-v29>span:last-child{font-size:11px;color:#848991;line-height:1.5}
+.editor-mode-switch{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:4px;background:#17191c;border:1px solid rgba(255,255,255,.09);border-radius:15px}
+.editor-mode-switch button{min-height:41px;border:0;border-radius:11px;background:transparent;color:#898d94;font-size:12px;font-weight:600}
+.editor-mode-switch button.is-active{background:#f6f6f7;color:#111215}
+.product-editor-panel .collaborators-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
+.collaborators-heading>span{font-size:11px;color:#d5d6d9;font-weight:600}.collaborators-heading small{font-size:10px;color:#969aa2}
+.product-editor-panel .collaborator-search{margin:0 0 10px;min-height:42px;height:42px}
+.product-editor-panel .collaborator-search input{font-size:14px!important}
+.product-editor-panel .friend-picker{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;max-height:205px;overflow-y:auto;overflow-x:hidden;padding:0 2px 2px}
+.collaborator-choice{width:100%;display:flex;align-items:center;gap:10px;text-align:left;min-height:56px;appearance:none;border:1px solid rgba(255,255,255,.09);border-radius:14px;background:#17191c;color:#eceef0;padding:7px 10px;font:inherit}
+.collaborator-choice.is-selected{border-color:rgba(255,255,255,.62);background:#24262b}
+.collaborator-choice:disabled{opacity:.5}
+.collaborator-avatar,.availability-person-avatar{width:36px;height:36px;flex:0 0 36px;display:grid;place-items:center;border-radius:12px;background:#373a40;color:#fff;font-size:14px;font-weight:700}
+.collaborator-choice.is-selected .collaborator-avatar{background:#f2f2f3;color:#101114}
+.collaborator-copy{display:flex;flex-direction:column;min-width:0;gap:3px;flex:1}
+.collaborator-copy strong{font-size:12px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap}
+.collaborator-copy small{font-size:10px;color:#8b9097;text-overflow:ellipsis;overflow:hidden;white-space:nowrap}
+.collaborator-check,.availability-person-check{flex:0 0 22px;width:22px;height:22px;display:grid;place-items:center;border-radius:50%;border:1px solid #666a72;font-size:13px;color:#bbb}
+.collaborator-choice.is-selected .collaborator-check,.availability-person.is-selected .availability-person-check{background:#f8f8f9;color:#17191c;border-color:transparent}
+.collaborators-hint{color:#7f838c;font-size:10px;line-height:1.5;margin:9px 1px 1px}
+.availability-card{padding:17px 15px;border-radius:23px;border:1px solid rgba(255,255,255,.07)}
+.availability-card .product-list-head h2{font-size:20px}
+.availability-tag{white-space:nowrap;font-size:9px;color:#9399a0;border:1px solid #34363b;border-radius:100px;padding:7px 9px}
+.availability-hint,.availability-note{color:#9a9da4;font-size:11px;line-height:1.5;margin:10px 0 12px}
+.availability-friend-picker{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding:0 0 8px}
+.availability-person{display:flex;align-items:center;gap:7px;padding:6px 9px 6px 6px;min-width:fit-content;max-width:180px;min-height:47px;background:#16181b;border:1px solid rgba(255,255,255,.09);border-radius:14px;color:#aeb0b6;font-size:11px;font-weight:600}
+.availability-person.is-selected{border-color:#a7abb0;background:#23262b;color:#fff}
+.availability-person-avatar{width:29px;height:29px;flex-basis:29px;border-radius:9px;font-size:12px}
+.availability-person.is-selected .availability-person-avatar{background:#eee;color:#222}
+.availability-person>span:nth-child(2){max-width:75px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap}
+.availability-person-check{width:17px;height:17px;flex-basis:17px;font-size:11px}
+.availability-placeholder{text-align:center;color:#858a94;padding:35px 12px;font-size:11px}
+.availability-timeline{margin:14px 0 4px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.availability-scale{display:flex;justify-content:space-between;gap:0;margin-left:1px;color:#a7abb2;font-size:9px;font-variant-numeric:tabular-nums}
+.availability-person-row{display:flex;flex-direction:column;gap:5px}
+.availability-row-label{font-size:11px;font-weight:600;color:#eee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.availability-strip{height:25px;border-radius:7px;overflow:hidden;display:grid;grid-template-columns:repeat(30,minmax(0,1fr));gap:2px;background:#15171a}
+.availability-strip span{min-width:0}
+.availability-strip .is-free{background:#435047}
+.availability-strip .is-busy{background:#e5e6e7}
+.availability-strip.is-private{display:grid;place-items:center;background:repeating-linear-gradient(135deg,#222429 0px,#222429 6px,#292c31 6px,#292c31 12px)}
+.availability-private-label{font-size:9px;color:#b5b8c0;padding:0 6px}
+.availability-legend{font-size:10px;color:#9c9ea4;white-space:pre-wrap;text-align:right}
+.availability-suggestions{border-top:1px solid rgba(255,255,255,.09);margin-top:16px;padding-top:13px}
+.availability-suggest-title{font-size:12px;display:block;color:#f5f5f6;margin-bottom:10px}
+.availability-time-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.availability-time-choice{min-width:0;text-align:center;min-height:41px;padding:7px 5px;border:1px solid rgba(255,255,255,.25);background:#22252a;border-radius:12px;color:white;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.availability-time-choice:active{background:#363a40}
+/* Categorized Telegram notification settings */
+#notification-settings-sheet{z-index:110}
+.notification-settings-panel{max-height:min(89vh,850px);overflow-y:auto;padding-bottom:max(25px,env(safe-area-inset-bottom))}
+.notification-settings-panel .sheet-heading-row{text-align:left}
+.notification-settings-intro{margin:8px 0 17px;color:#9ca1a9;line-height:1.55;font-size:12px}
+.notification-group{margin:15px 0 0;padding:4px 13px;border-radius:18px;background:#16181c;border:1px solid rgba(255,255,255,.08)}
+.notification-group-header{display:flex;flex-direction:column;gap:3px;padding:13px 1px 12px;border-bottom:1px solid rgba(255,255,255,.1)}
+.notification-group-header strong{font-size:13px;color:#fff}
+.notification-group-header small{font-size:10px;color:#838891}
+.notification-option{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 0;min-height:59px;border-bottom:1px solid rgba(255,255,255,.06)}
+.notification-option:last-child{border-bottom:0}
+.notification-option-copy{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}
+.notification-option-copy strong{font-size:12px;color:#e8e9ed}
+.notification-option-copy small{font-size:10px;color:#9296a0;line-height:1.42}
+.notification-option .ios-switch{flex-shrink:0}
+.notification-master-hint{font-size:10px;color:#858a93;line-height:1.5;margin:16px 3px 7px}
+.notification-settings-status{min-height:18px;color:#a8adb4;font-size:11px;text-align:center;margin:14px 0 0}
+@media(max-width:350px){.schedule-tabs button{font-size:10px;padding:11px 1px}.availability-time-choices{grid-template-columns:1fr}.availability-card{padding:14px 11px}.product-editor-panel .collaborators-heading{flex-wrap:wrap}}

@@ -51,6 +51,7 @@ from finance_db import (
     get_user_settings,
     get_user_settings_by_telegram_id,
     get_user_telegram_id,
+    get_pending_friend_request_sender,
     init_db,
     remove_friend,
     revoke_shortcut_tokens,
@@ -68,6 +69,7 @@ from product_db import (
     init_product_db,
     collect_due_reminders,
     mark_reminder_sent,
+    notification_enabled,
     reset_product_data_for_telegram,
 )
 
@@ -75,7 +77,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "28"
+APP_VERSION = "29"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -1461,7 +1463,7 @@ async def api_friend_request(
         target_id = result.get("target_user_id")
         target_telegram_id = result.get("target_telegram_id")
         settings = get_user_settings(target_id) if target_id else {"bot_notifications": False, "friend_request_notifications": False}
-        if target_telegram_id and settings.get("friend_request_notifications", True):
+        if target_telegram_id and settings.get("bot_notifications", True) and settings.get("friend_request_notifications", True):
             sender = user.get("first_name") or user.get("username") or "Пользователь SVGTracker"
             sender_username = f" (@{user['username']})" if user.get("username") else ""
             try:
@@ -1480,10 +1482,17 @@ async def api_friend_request(
 
 
 @app.post("/api/friends/requests/{request_id}/accept")
-def api_friend_accept(request_id: int, request: Request, x_telegram_init_data: str | None = Header(default=None)):
-    _, user_id = authenticated_user(request, x_telegram_init_data)
+async def api_friend_accept(request_id: int, request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    user, user_id = authenticated_user(request, x_telegram_init_data)
+    sender = get_pending_friend_request_sender(user_id, request_id)
     if not resolve_friend_request(user_id, request_id, True):
         raise HTTPException(status_code=404, detail="Запрос не найден")
+    if sender and notification_enabled(sender['id'], 'friend_accepted'):
+        recipient_name = user.get('first_name') or user.get('username') or 'Друг'
+        try:
+            await bot.send_message(chat_id=sender['telegram_id'], text=f"{recipient_name} принял твой запрос в друзья в SVGTracker.",reply_markup=main_keyboard())
+        except Exception:
+            logger.exception('Failed to notify accepted friend request %s',request_id)
     return {"status": "ok"}
 
 

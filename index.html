@@ -30,8 +30,8 @@
   .bootstrap-skeleton-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.bootstrap-skeleton-copy{display:grid;gap:8px}.bootstrap-skeleton-copy span,.bootstrap-skeleton-copy b,.bootstrap-skeleton-copy i,.bootstrap-skeleton-line,.bootstrap-skeleton-stats span,.bootstrap-skeleton-chart,.bootstrap-skeleton-avatar,.bootstrap-skeleton-card{background:linear-gradient(110deg,rgba(255,255,255,.055) 25%,rgba(255,255,255,.11) 38%,rgba(255,255,255,.055) 52%);background-size:220% 100%;animation:svgSkeleton 1.5s ease-in-out infinite}.bootstrap-skeleton-copy span{width:72px;height:10px;border-radius:5px}.bootstrap-skeleton-copy b{width:138px;height:29px;border-radius:9px}.bootstrap-skeleton-copy i{width:168px;height:12px;border-radius:6px}.bootstrap-skeleton-avatar{width:52px;height:52px;border-radius:50%}.bootstrap-skeleton-card{height:150px;border:1px solid rgba(255,255,255,.06);border-radius:24px;box-sizing:border-box}.bootstrap-skeleton-activity{height:286px;padding:22px;margin-bottom:14px;background-color:rgba(255,255,255,.025)}.bootstrap-skeleton-line{height:11px;width:56%;border-radius:6px}.bootstrap-skeleton-line.is-short{width:74px}.bootstrap-skeleton-line.is-title{height:24px;width:126px;margin-top:9px}.bootstrap-skeleton-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:26px}.bootstrap-skeleton-stats span{height:54px;border-radius:14px}.bootstrap-skeleton-chart{height:96px;border-radius:18px;margin-top:22px}.bootstrap-skeleton-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.app-bootstrap-status{margin:18px 0 0;text-align:center;color:rgba(255,255,255,.42);font-size:12px}.app-bootstrap-placeholder.is-slow .app-bootstrap-status{color:rgba(255,255,255,.62)}
   @keyframes svgSkeleton{0%{background-position:120% 0}100%{background-position:-120% 0}}
 </style>
-<link rel="stylesheet" href="/style.css?v=28">
-<link rel="stylesheet" href="/product.css?v=28">
+<link rel="stylesheet" href="/style.css?v=29">
+<link rel="stylesheet" href="/product.css?v=29">
 </head>
 <body>
 <section id="web-auth-gate" class="web-auth-gate" aria-labelledby="web-auth-title">
@@ -288,6 +288,7 @@
             <span class="ios-switch-track" aria-hidden="true"></span>
           </span>
         </label>
+        <button type="button" id="open-notification-settings" class="profile-action-row"><span class="profile-action-copy"><strong>Настроить уведомления</strong><small>Выбрать, что присылать в Telegram</small></span><span class="profile-action-meta"><span>›</span></span></button>
       </div>
     </section>
 
@@ -346,6 +347,15 @@
 </div>
 
 
+<div id="notification-settings-sheet" class="ios-sheet" hidden>
+  <div class="sheet-panel notification-settings-panel" data-sheet-panel role="dialog" aria-modal="true" aria-label="Настройки уведомлений">
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Telegram · уведомления</span><h3>Что присылать</h3></div><button id="notification-settings-close" type="button" class="sheet-close" aria-label="Закрыть">×</button></div>
+    <p class="notification-settings-intro">Выбирай только нужное. Изменения сохраняются в аккаунте и работают на всех устройствах.</p>
+    <div id="notification-settings-groups"></div><p id="notification-settings-status" class="notification-settings-status" aria-live="polite"></p>
+  </div>
+</div>
+
 <section id="schedule-screen" class="product-screen" hidden>
   <div class="product-shell">
     <header class="product-header">
@@ -358,6 +368,12 @@
       </button>
     </header>
 
+    <div class="schedule-tabs" role="tablist" aria-label="Режим расписания">
+      <button type="button" data-schedule-view="personal" class="is-active" role="tab" aria-selected="true">Моё</button>
+      <button type="button" data-schedule-view="shared" role="tab" aria-selected="false">Общее</button>
+      <button type="button" data-schedule-view="availability" role="tab" aria-selected="false">Свободное время</button>
+    </div>
+    <p id="schedule-view-caption" class="schedule-view-caption">Только твои личные планы</p>
     <section class="apple-widget schedule-week-card">
       <div class="product-week-head">
         <button type="button" class="calendar-nav-button" onclick="shiftScheduleWeek(-1)" aria-label="Предыдущая неделя"><svg viewBox="0 0 24 24"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg></button>
@@ -367,7 +383,15 @@
       <div id="schedule-week-strip" class="schedule-week-strip" aria-label="Дни недели"></div>
     </section>
 
-    <section class="apple-widget product-list-card">
+    <section id="schedule-availability-section" class="apple-widget availability-card" hidden>
+      <div class="product-list-head"><div><span class="section-label">Планируем вместе</span><h2>Когда все свободны</h2></div><span class="availability-tag">08:00–23:00</span></div>
+      <p class="availability-hint">Выбери друзей. Увидишь только периоды занятости — личные события остаются приватными.</p>
+      <div id="availability-friend-picker" class="availability-friend-picker"></div>
+      <div id="availability-timeline" class="availability-timeline" aria-live="polite"></div>
+      <div id="availability-suggestions" class="availability-suggestions"></div>
+    </section>
+
+    <section id="schedule-events-section" class="apple-widget product-list-card">
       <div class="widget-header widget-header--tight product-list-head"><div><span class="section-label">События</span><h2 id="schedule-list-title">Ближайшие</h2></div><span id="schedule-shared-count" class="product-count-badge">0</span></div>
       <div id="schedule-event-list" class="product-list"></div>
     </section>
@@ -778,7 +802,18 @@
     <label class="sheet-field"><span>Повтор</span><select id="schedule-event-recurrence"><option value="none">Не повторять</option><option value="daily">Каждый день</option><option value="weekly">Каждую неделю</option><option value="monthly">Каждый месяц</option></select></label>
     <label class="sheet-field" id="schedule-recurrence-until-field" hidden><span>Повторять до</span><input id="schedule-event-recurrence-until" type="date"></label>
     <label class="sheet-field"><span>Напомнить</span><select id="schedule-event-reminder"><option value="-1">Не напоминать</option><option value="0">В момент события</option><option value="10">За 10 минут</option><option value="30">За 30 минут</option><option value="60">За 1 час</option><option value="1440">За 1 день</option></select></label>
-    <div class="product-field-block"><span>Совместно с друзьями</span><div id="schedule-friend-picker" class="friend-picker"></div></div>
+    <div class="product-field-block"><span>Видимость события</span>
+      <div id="schedule-editor-mode" class="editor-mode-switch" role="radiogroup" aria-label="Видимость события">
+        <button type="button" data-editor-mode="personal" class="is-active" aria-pressed="true">Личное</button>
+        <button type="button" data-editor-mode="shared" aria-pressed="false">С друзьями</button>
+      </div>
+    </div>
+    <div id="schedule-collaborators-panel" class="product-field-block" hidden>
+      <div class="collaborators-heading"><span>Участники</span><small id="schedule-friends-selected">Выбери друзей</small></div>
+      <label class="product-search collaborator-search"><input id="schedule-friend-search" type="search" placeholder="Найти друга" autocomplete="off"></label>
+      <div id="schedule-friend-picker" class="friend-picker"></div>
+      <p class="collaborators-hint">Совместное событие появится в календаре каждого участника.</p>
+    </div>
     <label class="sheet-field"><span>Описание</span><textarea id="schedule-event-details" rows="4" maxlength="2000" placeholder="Необязательно"></textarea></label>
     <button type="button" class="sheet-primary-action" onclick="saveScheduleEvent()">Сохранить</button>
     <button type="button" id="schedule-delete-button" class="sheet-danger-button" onclick="deleteScheduleEvent()" hidden>Удалить событие</button>
@@ -1009,7 +1044,7 @@
 })();
 </script>
 <!-- Keep product.js before script.js: it captures original V28 handlers for V27 deploy compatibility. -->
-<script src="/product.js?v=28" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:product-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:product-failed',{level:'error',asset:'/product.js?v=28'})"></script>
-<script src="/script.js?v=28" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=28'})"></script>
+<script src="/product.js?v=29" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:product-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:product-failed',{level:'error',asset:'/product.js?v=29'})"></script>
+<script src="/script.js?v=29" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=29'})"></script>
 </body>
 </html>
