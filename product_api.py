@@ -5,7 +5,13 @@ Telegram/system administration process. Authentication is injected by main.py
 because SVGTracker supports both Telegram initData and HttpOnly web sessions.
 """
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import uuid
+import mimetypes
+import re
+from urllib.parse import unquote
+from pathlib import Path
+from fastapi.responses import FileResponse
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
@@ -20,6 +26,9 @@ from product_db import (
     update_schedule_event,
     get_notification_preferences, update_notification_preferences,
     notification_enabled, list_busy_availability,
+    connect, utc_now, ATTACHMENT_DIR, MAX_NOTE_ATTACHMENTS,
+    MAX_ATTACHMENT_BYTES, MAX_USER_ATTACHMENT_BYTES, MAX_UPLOAD_CHUNK_BYTES,
+    note_owned, attachment_usage, get_note_file, delete_note_file,
 )
 
 
@@ -69,8 +78,21 @@ def _clean_schedule_payload(payload: dict) -> dict:
         if reminder is not None:
             reminder = max(0, min(reminder, 7 * 24 * 60))
     participant_ids = payload.get("participant_ids") if isinstance(payload.get("participant_ids"), list) else []
+    raw_offsets = payload.get('repeat_day_offsets', [0])
+    if not isinstance(raw_offsets, list) or len(raw_offsets)>7 or any(type(n) is not int or not 0<=n<=6 for n in raw_offsets):
+        raise HTTPException(status_code=422, detail='Недопустимые дни повторения')
+    repeat_day_offsets = sorted(set(raw_offsets)) if recurrence=='weekly' else [0]
+    recurrence_timezone = str(payload.get('recurrence_timezone') or 'UTC')[:80]
+    try:
+        ZoneInfo(recurrence_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise HTTPException(status_code=422,detail='Неверный часовой пояс')
+    if recurrence == 'weekly' and not repeat_day_offsets:
+        raise HTTPException(status_code=422, detail='Выбери хотя бы один день недели')
     return {
         "title": title,
+        "repeat_day_offsets": repeat_day_offsets,
+        "recurrence_timezone": recurrence_timezone,
         "details": str(payload.get("details") or "").strip()[:2000],
         "starts_at": starts_at,
         "ends_at": ends_at,
@@ -235,5 +257,103 @@ def build_product_router(*, authenticate, bot, main_keyboard, get_user_settings,
         if not delete_note(user_id, note_id):
             raise HTTPException(status_code=404, detail="Заметка не найдена")
         return {"status": "ok"}
+
+    @router.post('/api/notes/{note_id}/attachments/chunks')
+    async def note_upload_chunk(
+        note_id: str, request: Request,
+        x_upload_token: str = Header(default=''), x_chunk_index: int = Header(default=-1),
+        x_chunk_total: int = Header(default=0), x_file_name: str = Header(default=''),
+        x_file_size: int = Header(default=-1),
+        x_telegram_init_data: str | None = Header(default=None),
+    ):
+        _, user_id = authenticate(request, x_telegram_init_data)
+        if (not re.fullmatch(r'[0-9a-f]{32}', x_upload_token) or x_chunk_index<0
+            or not 1<=x_chunk_total<=110 or x_chunk_index>=x_chunk_total
+            or not 0<x_file_size<=MAX_ATTACHMENT_BYTES):
+            raise HTTPException(status_code=422,detail='Некорректные параметры загрузки')
+        name = unquote(x_file_name).replace('\\','/').split('/')[-1].replace('\x00','').strip()[:180]
+        if not name or name in ('.','..'):
+            raise HTTPException(status_code=422, detail='Некорректное имя файла')
+        media_type=(request.headers.get('content-type') or 'application/octet-stream').split(';')[0].lower().strip()[:100]
+        if not re.fullmatch(r'[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+', media_type):
+            media_type='application/octet-stream'
+        content=bytearray()
+        async for block in request.stream():
+            content.extend(block)
+            if len(content)>MAX_UPLOAD_CHUNK_BYTES:
+                raise HTTPException(status_code=413, detail='Часть файла слишком большая')
+        if not content:
+            raise HTTPException(status_code=422,detail='Пустая часть файла')
+        # All chunks use an authenticated owner-bound session. Database lock
+        # serializes concurrent requests for the same upload token.
+        with connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if not note_owned(db,user_id,note_id):
+                raise HTTPException(status_code=404,detail='Заметка не найдена')
+            session=db.execute('SELECT * FROM note_upload_sessions WHERE id=?',(x_upload_token,)).fetchone()
+            if session is None:
+                if x_chunk_index!=0:raise HTTPException(status_code=409,detail='Загрузка должна начаться с первой части')
+                if db.execute('SELECT COUNT(*) AS n FROM note_attachments WHERE note_id=? AND user_id=?',(note_id,user_id)).fetchone()['n']>=MAX_NOTE_ATTACHMENTS:
+                    raise HTTPException(status_code=413,detail='Слишком много вложений')
+                inflight=db.execute('SELECT COUNT(*) AS n, COALESCE(SUM(expected_bytes),0) AS bytes FROM note_upload_sessions WHERE user_id=?',(user_id,)).fetchone()
+                if inflight['n']>=3 or inflight['bytes']+x_file_size>120*1024*1024:
+                    raise HTTPException(status_code=429,detail='Заверши текущие загрузки')
+                if attachment_usage(db,user_id)+x_file_size>MAX_USER_ATTACHMENT_BYTES:
+                    raise HTTPException(status_code=413,detail='Превышен объём хранения файлов')
+                stored_name='upload_'+x_upload_token+'.part'
+                db.execute('INSERT INTO note_upload_sessions(id,note_id,user_id,display_name,media_type,expected_bytes,received_bytes,next_index,stored_name,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                    (x_upload_token,note_id,user_id,name,media_type,x_file_size,0,0,stored_name,utc_now()))
+                session=db.execute('SELECT * FROM note_upload_sessions WHERE id=?',(x_upload_token,)).fetchone()
+            if (session['user_id']!=user_id or session['note_id']!=note_id):
+                raise HTTPException(status_code=404,detail='Загрузка не найдена')
+            if (session['next_index']!=x_chunk_index or session['expected_bytes']!=x_file_size
+                or session['display_name']!=name or session['media_type']!=media_type):
+                raise HTTPException(status_code=409,detail='Неверная последовательность загрузки')
+            if session['received_bytes']+len(content)>session['expected_bytes']:
+                raise HTTPException(status_code=413,detail='Превышен заявленный размер файла')
+            next_bytes=session['received_bytes']+len(content)
+            if (x_chunk_index+1<x_chunk_total and next_bytes>=x_file_size) or (x_chunk_index+1==x_chunk_total and next_bytes!=x_file_size):
+                raise HTTPException(status_code=422,detail='Неверный объём или количество частей')
+            file_path=ATTACHMENT_DIR/session['stored_name']
+            with file_path.open('xb' if x_chunk_index==0 else 'ab') as out:
+                out.write(content)
+            if x_chunk_index+1<x_chunk_total:
+                db.execute('UPDATE note_upload_sessions SET received_bytes=?, next_index=? WHERE id=?',(next_bytes,x_chunk_index+1,x_upload_token))
+                return {'status':'ok','uploaded_chunks':x_chunk_index+1,'total_chunks':x_chunk_total}
+            if next_bytes!=x_file_size:
+                raise HTTPException(status_code=422,detail='Загружен не весь файл')
+            if db.execute('SELECT COUNT(*) AS n FROM note_attachments WHERE note_id=? AND user_id=?',(note_id,user_id)).fetchone()['n']>=MAX_NOTE_ATTACHMENTS:
+                raise HTTPException(status_code=413,detail='Слишком много вложений')
+            if attachment_usage(db,user_id)+x_file_size>MAX_USER_ATTACHMENT_BYTES:
+                raise HTTPException(status_code=413,detail='Превышен объём хранения файлов')
+            attachment_id='file_'+uuid.uuid4().hex
+            final_name=attachment_id+'.bin'
+            file_path.rename(ATTACHMENT_DIR/final_name)
+            db.execute('INSERT INTO note_attachments(id,note_id,user_id,display_name,media_type,byte_size,stored_name,created_at) VALUES (?,?,?,?,?,?,?,?)',
+                (attachment_id,note_id,user_id,name,media_type,x_file_size,final_name,utc_now()))
+            db.execute('DELETE FROM note_upload_sessions WHERE id=?',(x_upload_token,))
+            return {'status':'ok','attachment':{'id':attachment_id,'display_name':name,'media_type':media_type,'byte_size':x_file_size}}
+
+    @router.get('/api/notes/{note_id}/attachments/{attachment_id}')
+    def note_download_file(note_id: str, attachment_id: str, request: Request, x_telegram_init_data: str | None = Header(default=None)):
+        _, user_id=authenticate(request,x_telegram_init_data)
+        attachment=get_note_file(user_id,note_id,attachment_id)
+        if not attachment:
+            raise HTTPException(status_code=404,detail='Файл не найден')
+        path=ATTACHMENT_DIR/attachment['stored_name']
+        if not path.is_file():
+            raise HTTPException(status_code=404,detail='Файл не найден на сервере')
+        mime=attachment['media_type']
+        safe_preview=(mime in {'image/jpeg','image/png','image/webp','image/gif','audio/mpeg','audio/mp4','audio/ogg','audio/wav','audio/webm','video/mp4','video/webm','text/plain','application/pdf'})
+        return FileResponse(path, filename=attachment['display_name'],media_type=mime if safe_preview else 'application/octet-stream',
+                    content_disposition_type='inline' if safe_preview else 'attachment',
+                    headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
+
+    @router.delete('/api/notes/{note_id}/attachments/{attachment_id}')
+    def note_delete_file(note_id: str,attachment_id: str,request: Request,x_telegram_init_data: str | None = Header(default=None)):
+        _,user_id=authenticate(request,x_telegram_init_data)
+        if not delete_note_file(user_id,note_id,attachment_id):
+            raise HTTPException(status_code=404,detail='Файл не найден')
+        return {'status':'ok'}
 
     return router

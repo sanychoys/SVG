@@ -1,12 +1,41 @@
 import calendar
 import json
 import sqlite3
+import os
+import shutil
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from finance_db import connect, utc_now
 
 ALLOWED_RECURRENCE = {"none", "daily", "weekly", "monthly"}
+# Stored outside the served web root where possible, not packed in deployments.
+ATTACHMENT_DIR = Path(os.environ.get('SVGTRACKER_ATTACHMENT_DIR') or (Path(__file__).resolve().parent.parent / '.svgtracker-private-note-files')).resolve()
+MAX_NOTE_ATTACHMENTS = 25
+MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+MAX_USER_ATTACHMENT_BYTES = 500 * 1024 * 1024
+MAX_UPLOAD_CHUNK_BYTES = 768 * 1024
+
+
+def ensure_attachment_dir():
+    ATTACHMENT_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        ATTACHMENT_DIR.chmod(0o700)
+    except OSError:
+        pass
+
+
+def _repeat_offsets(event):
+    try:
+        raw = json.loads(event['repeat_day_offsets'] or '[]')
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError, IndexError):
+        raw = []
+    if not isinstance(raw, list):
+        raw = []
+    offsets = sorted({n for n in raw if type(n) is int and 0 <= n <= 6})
+    return offsets or [0]
+
 
 
 def init_product_db():
@@ -23,6 +52,8 @@ def init_product_db():
                 all_day INTEGER NOT NULL DEFAULT 0,
                 recurrence TEXT NOT NULL DEFAULT 'none',
                 recurrence_until TEXT,
+                recurrence_timezone TEXT NOT NULL DEFAULT 'UTC',
+                repeat_day_offsets TEXT NOT NULL DEFAULT '[]',
                 reminder_minutes INTEGER,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -61,6 +92,32 @@ def init_product_db():
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS note_attachments(
+                id TEXT PRIMARY KEY,
+                note_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                display_name TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                byte_size INTEGER NOT NULL,
+                stored_name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_note_attachment_owner ON note_attachments(user_id,note_id);
+            CREATE TABLE IF NOT EXISTS note_upload_sessions(
+                id TEXT PRIMARY KEY,
+                note_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                display_name TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                expected_bytes INTEGER NOT NULL,
+                received_bytes INTEGER NOT NULL DEFAULT 0,
+                next_index INTEGER NOT NULL DEFAULT 0,
+                stored_name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS bot_reminder_log(
                 user_id INTEGER NOT NULL,
                 reminder_key TEXT NOT NULL,
@@ -70,6 +127,20 @@ def init_product_db():
             );
             """
         )
+        # Migrate existing V29 installations in place without touching user events.
+        columns = {r['name'] for r in db.execute('PRAGMA table_info(schedule_events)')}
+        if 'repeat_day_offsets' not in columns:
+            db.execute("ALTER TABLE schedule_events ADD COLUMN repeat_day_offsets TEXT NOT NULL DEFAULT '[]'")
+        if 'recurrence_timezone' not in columns:
+            db.execute("ALTER TABLE schedule_events ADD COLUMN recurrence_timezone TEXT NOT NULL DEFAULT 'UTC'")
+    ensure_attachment_dir()
+    # Clean abandoned partial uploads after an interrupted client session.
+    cutoff = (datetime.now(timezone.utc)-timedelta(days=1)).isoformat().replace('+00:00','Z')
+    with connect() as db:
+        stale=db.execute('SELECT stored_name FROM note_upload_sessions WHERE created_at<?',(cutoff,)).fetchall()
+        db.execute('DELETE FROM note_upload_sessions WHERE created_at<?',(cutoff,))
+    for row in stale:
+        (ATTACHMENT_DIR / row['stored_name']).unlink(missing_ok=True)
 
 
 def _user_public(row):
@@ -132,6 +203,8 @@ def _event_dict(db, row, viewer_user_id):
         "all_day": bool(row["all_day"]),
         "recurrence": row["recurrence"],
         "recurrence_until": row["recurrence_until"],
+        "repeat_day_offsets": _repeat_offsets(row),
+        "recurrence_timezone": row["recurrence_timezone"],
         "reminder_minutes": row["reminder_minutes"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -195,8 +268,8 @@ def create_schedule_event(user_id, event_id, payload):
         db.execute(
             """
             INSERT INTO schedule_events(
-                id,owner_user_id,title,details,starts_at,ends_at,all_day,recurrence,recurrence_until,reminder_minutes,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                id,owner_user_id,title,details,starts_at,ends_at,all_day,recurrence,recurrence_until,recurrence_timezone,repeat_day_offsets,reminder_minutes,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 event_id,
@@ -208,6 +281,8 @@ def create_schedule_event(user_id, event_id, payload):
                 1 if payload.get("all_day") else 0,
                 payload.get("recurrence", "none"),
                 payload.get("recurrence_until"),
+                payload.get("recurrence_timezone", "UTC"),
+                json.dumps(payload.get("repeat_day_offsets") or [0]),
                 payload.get("reminder_minutes"),
                 now,
                 now,
@@ -242,13 +317,13 @@ def update_schedule_event(user_id, event_id, payload):
             return None, "forbidden"
         db.execute(
             """
-            UPDATE schedule_events SET title=?,details=?,starts_at=?,ends_at=?,all_day=?,recurrence=?,recurrence_until=?,reminder_minutes=?,updated_at=?
+            UPDATE schedule_events SET title=?,details=?,starts_at=?,ends_at=?,all_day=?,recurrence=?,recurrence_until=?,recurrence_timezone=?,repeat_day_offsets=?,reminder_minutes=?,updated_at=?
             WHERE id=?
             """,
             (
                 payload["title"], payload.get("details", ""), payload["starts_at"], payload.get("ends_at"),
                 1 if payload.get("all_day") else 0, payload.get("recurrence", "none"), payload.get("recurrence_until"),
-                payload.get("reminder_minutes"), now, event_id,
+                payload.get("recurrence_timezone", "UTC"), json.dumps(payload.get("repeat_day_offsets") or [0]), payload.get("reminder_minutes"), now, event_id,
             ),
         )
         if int(event["owner_user_id"]) == int(user_id) and "participant_ids" in payload:
@@ -291,6 +366,47 @@ def delete_or_leave_schedule_event(user_id, event_id):
         return "left"
 
 
+def _attachments_for_note(db, user_id, note_id):
+    rows = db.execute('SELECT id,display_name,media_type,byte_size,created_at FROM note_attachments WHERE user_id=? AND note_id=? ORDER BY created_at,id', (user_id,note_id)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _note_with_attachments(db, row):
+    result = dict(row, pinned=bool(row['pinned']), archived=bool(row['archived']))
+    result['attachments'] = _attachments_for_note(db, row['user_id'], row['id'])
+    return result
+
+
+def note_owned(db,user_id,note_id):
+    return db.execute('SELECT 1 FROM notes WHERE id=? AND user_id=?', (note_id,user_id)).fetchone() is not None
+
+
+def list_note_files(user_id, note_id):
+    with connect() as db:
+        if not note_owned(db,user_id,note_id):
+            return None
+        return _attachments_for_note(db,user_id,note_id)
+
+
+def get_note_file(user_id,note_id,attachment_id):
+    with connect() as db:
+        row = db.execute('SELECT * FROM note_attachments WHERE user_id=? AND note_id=? AND id=?', (user_id,note_id,attachment_id)).fetchone()
+        return dict(row) if row else None
+
+
+def attachment_usage(db,user_id):
+    return int(db.execute('SELECT COALESCE(SUM(byte_size),0) AS total FROM note_attachments WHERE user_id=?',(user_id,)).fetchone()['total'])
+
+
+def delete_note_file(user_id,note_id,attachment_id):
+    with connect() as db:
+        row = db.execute('SELECT stored_name FROM note_attachments WHERE id=? AND note_id=? AND user_id=?',(attachment_id,note_id,user_id)).fetchone()
+        if not row:return False
+        db.execute('DELETE FROM note_attachments WHERE id=? AND note_id=? AND user_id=?',(attachment_id,note_id,user_id))
+    (ATTACHMENT_DIR / row['stored_name']).unlink(missing_ok=True)
+    return True
+
+
 def list_notes(user_id, include_archived=False):
     with connect() as db:
         rows = db.execute(
@@ -300,7 +416,7 @@ def list_notes(user_id, include_archived=False):
             """,
             (user_id, 1 if include_archived else 0),
         ).fetchall()
-        return [dict(row, pinned=bool(row["pinned"]), archived=bool(row["archived"])) for row in rows]
+        return [_note_with_attachments(db,row) for row in rows]
 
 
 def save_note(user_id, note_id, payload):
@@ -325,13 +441,17 @@ def save_note(user_id, note_id, payload):
             ),
         )
         row = db.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
-        return dict(row, pinned=bool(row["pinned"]), archived=bool(row["archived"]))
+        return _note_with_attachments(db,row)
 
 
 def delete_note(user_id, note_id):
     with connect() as db:
+        names = [r['stored_name'] for r in db.execute('SELECT stored_name FROM note_attachments WHERE user_id=? AND note_id=?',(user_id,note_id))]
+        names += [r['stored_name'] for r in db.execute('SELECT stored_name FROM note_upload_sessions WHERE user_id=? AND note_id=?',(user_id,note_id))]
         cur = db.execute("DELETE FROM notes WHERE id=? AND user_id=?", (note_id, user_id))
-        return cur.rowcount > 0
+    if cur.rowcount:
+        for name in names:(ATTACHMENT_DIR/name).unlink(missing_ok=True)
+    return cur.rowcount > 0
 
 
 def _parse_iso(value):
@@ -358,6 +478,34 @@ def _occurrences(event, window_start, window_end):
     until = _parse_iso(event["recurrence_until"])
     if recurrence == "none":
         return [start] if window_start <= start <= window_end else []
+
+    if recurrence == 'weekly':
+        offsets = _repeat_offsets(event)
+        # Expand each selected weekday from the original anchor week. Offsets
+        # are relative to the local day chosen in the editor, avoiding UTC
+        # midnight boundary errors for selected weekdays.
+        try:
+            tz = ZoneInfo(event['recurrence_timezone'] or 'UTC')
+        except (ZoneInfoNotFoundError, KeyError, TypeError, ValueError):
+            tz = timezone.utc
+        anchor_local = start.astimezone(tz)
+        window_local = window_start.astimezone(tz)
+        week_index = max(0, int((window_local - anchor_local).total_seconds() // (7 * 86400)) - 1)
+        out = []
+        for _ in range(1002):
+            week_local = anchor_local + timedelta(weeks=week_index)
+            if week_local.astimezone(timezone.utc) > window_end:
+                break
+            for offset in offsets:
+                occurrence = (week_local + timedelta(days=offset)).astimezone(timezone.utc)
+                if until and occurrence > until:
+                    continue
+                if window_start <= occurrence <= window_end:
+                    out.append(occurrence)
+            if until and week_local.astimezone(timezone.utc) > until:
+                break
+            week_index += 1
+        return sorted(out)
 
     current = start
     # Long-running daily/weekly recurrences must not stop working after the
@@ -525,10 +673,14 @@ def reset_product_data_for_telegram(telegram_id):
         for event_id in owned:
             db.execute("DELETE FROM schedule_events WHERE id=?", (event_id,))
         db.execute("DELETE FROM schedule_event_members WHERE user_id=?", (user_id,))
+        names = [r['stored_name'] for r in db.execute('SELECT stored_name FROM note_attachments WHERE user_id=?',(user_id,))]
+        names += [r['stored_name'] for r in db.execute('SELECT stored_name FROM note_upload_sessions WHERE user_id=?',(user_id,))]
         db.execute("DELETE FROM notes WHERE user_id=?", (user_id,))
         db.execute("DELETE FROM bot_reminder_log WHERE user_id=?", (user_id,))
         db.execute("DELETE FROM notification_preferences WHERE user_id=?", (user_id,))
-        return True
+    for name in names:
+        (ATTACHMENT_DIR / name).unlink(missing_ok=True)
+    return True
 
 
 NOTIFICATION_DEFAULTS = {

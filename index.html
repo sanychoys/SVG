@@ -30,8 +30,8 @@
   .bootstrap-skeleton-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.bootstrap-skeleton-copy{display:grid;gap:8px}.bootstrap-skeleton-copy span,.bootstrap-skeleton-copy b,.bootstrap-skeleton-copy i,.bootstrap-skeleton-line,.bootstrap-skeleton-stats span,.bootstrap-skeleton-chart,.bootstrap-skeleton-avatar,.bootstrap-skeleton-card{background:linear-gradient(110deg,rgba(255,255,255,.055) 25%,rgba(255,255,255,.11) 38%,rgba(255,255,255,.055) 52%);background-size:220% 100%;animation:svgSkeleton 1.5s ease-in-out infinite}.bootstrap-skeleton-copy span{width:72px;height:10px;border-radius:5px}.bootstrap-skeleton-copy b{width:138px;height:29px;border-radius:9px}.bootstrap-skeleton-copy i{width:168px;height:12px;border-radius:6px}.bootstrap-skeleton-avatar{width:52px;height:52px;border-radius:50%}.bootstrap-skeleton-card{height:150px;border:1px solid rgba(255,255,255,.06);border-radius:24px;box-sizing:border-box}.bootstrap-skeleton-activity{height:286px;padding:22px;margin-bottom:14px;background-color:rgba(255,255,255,.025)}.bootstrap-skeleton-line{height:11px;width:56%;border-radius:6px}.bootstrap-skeleton-line.is-short{width:74px}.bootstrap-skeleton-line.is-title{height:24px;width:126px;margin-top:9px}.bootstrap-skeleton-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:26px}.bootstrap-skeleton-stats span{height:54px;border-radius:14px}.bootstrap-skeleton-chart{height:96px;border-radius:18px;margin-top:22px}.bootstrap-skeleton-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.app-bootstrap-status{margin:18px 0 0;text-align:center;color:rgba(255,255,255,.42);font-size:12px}.app-bootstrap-placeholder.is-slow .app-bootstrap-status{color:rgba(255,255,255,.62)}
   @keyframes svgSkeleton{0%{background-position:120% 0}100%{background-position:-120% 0}}
 </style>
-<link rel="stylesheet" href="/style.css?v=29">
-<link rel="stylesheet" href="/product.css?v=29">
+<link rel="stylesheet" href="/style.css?v=30">
+<link rel="stylesheet" href="/product.css?v=30">
 </head>
 <body>
 <section id="web-auth-gate" class="web-auth-gate" aria-labelledby="web-auth-title">
@@ -271,24 +271,13 @@
       </div>
     </section>
 
-    <section class="profile-group" aria-label="Уведомления">
-      <p class="profile-group-title">Уведомления</p>
+    <section class="profile-group" aria-label="Настройки">
+      <p class="profile-group-title">Настройки</p>
       <div class="profile-action-list">
-        <label class="profile-action-row profile-toggle-row">
-          <span class="profile-action-copy"><strong>Запросы в друзья</strong><small>Сообщать о новых запросах</small></span>
-          <span class="ios-switch">
-            <input id="profile-friend-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked, 'friends')">
-            <span class="ios-switch-track" aria-hidden="true"></span>
-          </span>
-        </label>
-        <label class="profile-action-row profile-toggle-row">
-          <span class="profile-action-copy"><strong>Уведомления от бота</strong><small>Расписание, заметки, финансы и системные напоминания</small></span>
-          <span class="ios-switch">
-            <input id="profile-bot-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked, 'bot')">
-            <span class="ios-switch-track" aria-hidden="true"></span>
-          </span>
-        </label>
-        <button type="button" id="open-notification-settings" class="profile-action-row"><span class="profile-action-copy"><strong>Настроить уведомления</strong><small>Выбрать, что присылать в Telegram</small></span><span class="profile-action-meta"><span>›</span></span></button>
+        <button type="button" id="open-notification-settings" class="profile-action-row">
+          <span class="profile-action-copy"><strong>Уведомления</strong><small>Выбрать, какие сообщения отправляет бот</small></span>
+          <span class="profile-action-meta"><span>Настроить ›</span></span>
+        </button>
       </div>
     </section>
 
@@ -351,7 +340,12 @@
   <div class="sheet-panel notification-settings-panel" data-sheet-panel role="dialog" aria-modal="true" aria-label="Настройки уведомлений">
     <div class="sheet-handle"></div>
     <div class="sheet-heading-row"><div><span class="section-label">Telegram · уведомления</span><h3>Что присылать</h3></div><button id="notification-settings-close" type="button" class="sheet-close" aria-label="Закрыть">×</button></div>
-    <p class="notification-settings-intro">Выбирай только нужное. Изменения сохраняются в аккаунте и работают на всех устройствах.</p>
+    <p class="notification-settings-intro">Управляй уведомлениями и приватностью в одном месте. Настройки синхронизируются с аккаунтом.</p>
+    <div class="notification-group notification-master-controls">
+      <div class="notification-group-header"><strong>Основное</strong><small>Общие разрешения на сообщения от бота</small></div>
+      <label class="notification-option"><span class="notification-option-copy"><strong>Уведомления от бота</strong><small>Главный переключатель для всех категорий</small></span><span class="ios-switch"><input id="profile-bot-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked, 'bot')"><span class="ios-switch-track"></span></span></label>
+      <label class="notification-option"><span class="notification-option-copy"><strong>Запросы в друзья</strong><small>Когда кто-то предлагает дружбу</small></span><span class="ios-switch"><input id="profile-friend-notifications-toggle" type="checkbox" onchange="toggleBotNotifications(this.checked, 'friends')"><span class="ios-switch-track"></span></span></label>
+    </div>
     <div id="notification-settings-groups"></div><p id="notification-settings-status" class="notification-settings-status" aria-live="polite"></p>
   </div>
 </div>
@@ -374,6 +368,7 @@
       <button type="button" data-schedule-view="availability" role="tab" aria-selected="false">Свободное время</button>
     </div>
     <p id="schedule-view-caption" class="schedule-view-caption">Только твои личные планы</p>
+    <button type="button" id="schedule-week-template" class="schedule-template-action" onclick="openWeeklyScheduleEditor()"><span class="schedule-template-icon">↻</span><span><strong>Расписание на каждую неделю</strong><small>Выбери дни и время — занятия будут повторяться автоматически</small></span><b>›</b></button>
     <section class="apple-widget schedule-week-card">
       <div class="product-week-head">
         <button type="button" class="calendar-nav-button" onclick="shiftScheduleWeek(-1)" aria-label="Предыдущая неделя"><svg viewBox="0 0 24 24"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg></button>
@@ -800,7 +795,11 @@
       <label class="sheet-field"><span>Окончание</span><input id="schedule-event-end-time" type="time"></label>
     </div>
     <label class="sheet-field"><span>Повтор</span><select id="schedule-event-recurrence"><option value="none">Не повторять</option><option value="daily">Каждый день</option><option value="weekly">Каждую неделю</option><option value="monthly">Каждый месяц</option></select></label>
-    <label class="sheet-field" id="schedule-recurrence-until-field" hidden><span>Повторять до</span><input id="schedule-event-recurrence-until" type="date"></label>
+    <div id="schedule-weekday-field" class="product-field-block" hidden><span>Дни каждой недели</span>
+      <div class="schedule-weekday-grid" id="schedule-weekday-grid" role="group" aria-label="Дни еженедельного повторения"></div>
+      <small class="schedule-weekday-hint">Можно выбрать несколько дней. Событие будет повторяться каждую неделю без ограничения по времени.</small>
+    </div>
+    <label class="sheet-field" id="schedule-recurrence-until-field" hidden><span>Повторять до (необязательно)</span><input id="schedule-event-recurrence-until" type="date"></label>
     <label class="sheet-field"><span>Напомнить</span><select id="schedule-event-reminder"><option value="-1">Не напоминать</option><option value="0">В момент события</option><option value="10">За 10 минут</option><option value="30">За 30 минут</option><option value="60">За 1 час</option><option value="1440">За 1 день</option></select></label>
     <div class="product-field-block"><span>Видимость события</span>
       <div id="schedule-editor-mode" class="editor-mode-switch" role="radiogroup" aria-label="Видимость события">
@@ -827,11 +826,28 @@
     <input id="note-edit-id" type="hidden">
     <label class="sheet-field"><span>Заголовок</span><input id="note-title-input" maxlength="120" autocomplete="off" placeholder="Короткое название"></label>
     <label class="sheet-field"><span>Текст</span><textarea id="note-body-input" rows="8" maxlength="12000" placeholder="Запиши мысль, список или идею"></textarea></label>
+    <section class="note-attachments-section">
+      <div class="note-attachments-head"><strong>Вложения</strong><span id="note-attachment-count">0 файлов</span></div>
+      <p class="note-attachments-help">Фото, аудио, видео, PDF, текст и другие файлы. До 50 МБ на файл.</p>
+      <input id="note-files-input" type="file" multiple hidden onchange="selectNoteFiles(this.files)">
+      <button type="button" class="note-upload-button" onclick="document.getElementById('note-files-input').click()"><span>＋</span> Прикрепить файлы</button>
+      <div id="note-attachments-list" class="note-attachments-list"></div>
+      <p id="note-upload-status" class="note-upload-status" aria-live="polite"></p>
+    </section>
     <label class="product-toggle-row"><span><strong>Закрепить</strong><small>Показывать заметку первой</small></span><span class="ios-switch"><input id="note-pinned-input" type="checkbox"><span class="ios-switch-track"></span></span></label>
     <label class="product-toggle-row"><span><strong>Напомнить</strong><small>Бот пришлёт сообщение</small></span><span class="ios-switch"><input id="note-reminder-enabled" type="checkbox" onchange="toggleNoteReminderField()"><span class="ios-switch-track"></span></span></label>
     <label class="sheet-field" id="note-reminder-field" hidden><span>Дата и время</span><input id="note-reminder-input" type="datetime-local"></label>
     <button type="button" class="sheet-primary-action" onclick="saveNote()">Сохранить</button>
     <button type="button" id="note-delete-button" class="sheet-danger-button" onclick="deleteNote()" hidden>Удалить заметку</button>
+  </div>
+</div>
+
+<div id="note-preview-sheet" class="ios-sheet" hidden onclick="closeNotePreviewOnBackdrop(event)">
+  <div class="sheet-panel note-preview-panel" data-sheet-panel>
+    <div class="sheet-handle"></div>
+    <div class="sheet-heading-row"><div><span class="section-label">Вложение</span><h3 id="note-preview-title">Просмотр</h3></div><button type="button" class="sheet-close" onclick="closeNotePreview()">×</button></div>
+    <div id="note-preview-content" class="note-preview-content"></div>
+    <button type="button" id="note-preview-download" class="sheet-primary-action">Сохранить файл</button>
   </div>
 </div>
 
@@ -1044,7 +1060,7 @@
 })();
 </script>
 <!-- Keep product.js before script.js: it captures original V28 handlers for V27 deploy compatibility. -->
-<script src="/product.js?v=29" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:product-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:product-failed',{level:'error',asset:'/product.js?v=29'})"></script>
-<script src="/script.js?v=29" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=29'})"></script>
+<script src="/product.js?v=30" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:product-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:product-failed',{level:'error',asset:'/product.js?v=30'})"></script>
+<script src="/script.js?v=30" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=30'})"></script>
 </body>
 </html>

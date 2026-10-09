@@ -43,6 +43,7 @@ LOG_DIR = STATE_DIR / "logs"
 DEPLOY_LOG_FILE = LOG_DIR / "deploy.log"
 DEPLOY_LOCK = STATE_DIR / "deploy.lock"
 DB_PATH = PROJECT_ROOT / "svgtracker.db"
+NOTE_FILES_PATH = Path(os.environ.get('SVGTRACKER_ATTACHMENT_DIR') or (PROJECT_ROOT.parent / '.svgtracker-private-note-files'))
 MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
 MAX_EXPANDED_BYTES = 80 * 1024 * 1024
 MAX_FILES = 800
@@ -363,6 +364,7 @@ def create_backup(relpaths: list[Path] | None = None, *, include_db: bool = Fals
         "created_files": [],
         "systemd_units": {},
         "database_snapshot": False,
+        "attachment_files": [],
     }
     with tempfile.TemporaryDirectory(prefix="svgbackup-") as td:
         temp = Path(td)
@@ -382,6 +384,13 @@ def create_backup(relpaths: list[Path] | None = None, *, include_db: bool = Fals
                 manifest["systemd_units"][unit_name] = existed
                 if existed:
                     tf.add(unit_path, arcname=f"systemd/{unit_name}", recursive=False)
+            if manifest["database_snapshot"] and NOTE_FILES_PATH.is_dir():
+                # Private attachments are not served as public assets or deployed
+                # from ZIP, but manual DB backups must include the referenced bytes.
+                for media in sorted(NOTE_FILES_PATH.glob('file_*.bin')):
+                    if media.is_file() and not media.is_symlink():
+                        tf.add(media, arcname=f'data/note-attachments/{media.name}', recursive=False)
+                        manifest['attachment_files'].append(media.name)
             if manifest["database_snapshot"]:
                 tf.add(db_snapshot, arcname="data/svgtracker.db", recursive=False)
             data = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
@@ -457,6 +466,21 @@ def restore_backup(archive: Path, *, restore_db: bool = False) -> dict:
                     shutil.copyfileobj(src, temp)
                     temp_name = temp.name
                 os.replace(temp_name, DB_PATH)
+            if manifest.get('attachment_files'):
+                NOTE_FILES_PATH.mkdir(parents=True, exist_ok=True, mode=0o700)
+                NOTE_FILES_PATH.chmod(0o700)
+                for basename in manifest['attachment_files']:
+                    if not re.fullmatch(r'file_[0-9a-f]{32}\.bin',basename):
+                        continue
+                    try:
+                        file_member=tf.getmember(f'data/note-attachments/{basename}')
+                    except KeyError:
+                        continue
+                    src=tf.extractfile(file_member)
+                    if src:
+                        dest=NOTE_FILES_PATH/basename
+                        with dest.open('wb') as out:shutil.copyfileobj(src,out)
+                        dest.chmod(0o600)
     subprocess.run(["systemctl", "daemon-reload"], check=False)
     return manifest
 

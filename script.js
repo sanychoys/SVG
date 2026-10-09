@@ -4486,3 +4486,9 @@ function saveScheduleEvent(...args) { return svgtrackerCallProductHandler('saveS
 function shiftScheduleWeek(...args) { return svgtrackerCallProductHandler('shiftScheduleWeek', args); }
 function toggleNoteReminderField(...args) { return svgtrackerCallProductHandler('toggleNoteReminderField', args); }
 function toggleScheduleAllDay(...args) { return svgtrackerCallProductHandler('toggleScheduleAllDay', args); }
+
+/* V30 legacy deploy compatibility: new inline HTML handlers. */
+function openWeeklyScheduleEditor(...args) { return svgtrackerCallProductHandler('openWeeklyScheduleEditor',args); }
+function selectNoteFiles(...args) { return svgtrackerCallProductHandler('selectNoteFiles',args); }
+function closeNotePreview(...args) { return svgtrackerCallProductHandler('closeNotePreview',args); }
+function closeNotePreviewOnBackdrop(...args) { return svgtrackerCallProductHandler('closeNotePreviewOnBackdrop',args); }

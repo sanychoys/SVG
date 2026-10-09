@@ -123,3 +123,29 @@ or SQLite databases are included in the update ZIP.
 - Общий переключатель уведомлений бота остаётся главным: когда он выключен, Telegram-уведомления не отправляются, независимо от включённых категорий. Разрешение на просмотр занятости действует независимо от бота.
 - `init_product_db()` автоматически создаёт `notification_preferences` при запуске. Предыдущие SQLite-данные сохраняются, новые предпочтения дополняются значениями по умолчанию.
 - Контроль: тесты `/api/notifications/preferences`, `/api/schedule/availability`, проверки прав доступа, дифференцированных Telegram-уведомлений и проверки JavaScript-сборки.
+
+## V30 · Settings, weekly templates and private note attachments
+
+- Profile → **Настройки** → **Уведомления / Настроить** opens all master,
+  friend and per-category notification/privacy switches. The existing API is unchanged.
+- Calendar → **Расписание на каждую неделю** lets users choose multiple
+  weekdays for an event. Recurrence is stored as weekday offsets relative to
+  the selected start day, plus the event owner's IANA timezone so the local
+  time stays stable across daylight saving time changes. The existing V29
+  schedule database is migrated automatically (no data loss).
+- Notes accept private file attachments (images, audio, video, text, PDF,
+  and other files). The authenticated binary upload uses 512 KiB chunks to
+  stay under the common default Nginx 1 MiB request-body limit.
+- Limits: 50 MiB per file, 25 files per note, 500 MiB completed files per
+  account, and at most three concurrent incomplete upload sessions.
+- Attachments live outside the public web root by default:
+  `PROJECT_ROOT.parent / '.svgtracker-private-note-files'`. Set
+  `SVGTRACKER_ATTACHMENT_DIR` in the systemd environment **before the first
+  upload** to use another persistent directory. Ensure the service account
+  can create/write to this folder; the app restricts it to mode 0700.
+- V30 manual `/backup` snapshots include both the SQLite DB and its private
+  note attachment files. Rollback of code **does not** restore the database
+  or delete private media. Back up the private media directory before manual
+  server migrations, and plan disk space for media backups.
+- Note attachments require authentication for download and are served only
+  through FastAPI, never through a public static URL.

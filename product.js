@@ -1,7 +1,7 @@
 /* SVGTracker product modules v28: schedule + notes.
    This file intentionally owns these domains so the legacy script.js can be
    reduced gradually without changing existing training/finance behavior. */
-window.SVGTRACKER_PRODUCT_VERSION = 29;
+window.SVGTRACKER_PRODUCT_VERSION = 30;
 let scheduleViewMode = 'personal';
 let scheduleEditorMode = 'personal';
 let scheduleEditorFriendIds = new Set();
@@ -17,6 +17,10 @@ let scheduleWeekCursor = null;
 let scheduleSelectedDate = new Date();
 let scheduleEditingId = null;
 let noteEditingId = null;
+let notePendingFiles = [];
+let noteUploadInProgress = false;
+let notePreviewUrl = null;
+let scheduleSelectedWeekdays = new Set([0]);
 
 function productId(prefix) {
   try { if (typeof createEntityId === 'function') return createEntityId(prefix); } catch (_) {}
@@ -60,6 +64,31 @@ function productMonthAdd(date) {
   const next=new Date(date); const day=next.getDate(); next.setDate(1); next.setMonth(next.getMonth()+1);
   const last=new Date(next.getFullYear(),next.getMonth()+1,0).getDate(); next.setDate(Math.min(day,last)); return next;
 }
+/* Recreate a weekly event in the event owner's timezone, retaining its
+   local clock time through daylight-saving changes and for shared users. */
+const productTZFormatters=new Map();
+function productZonedParts(instant,zone){
+  let fmt=productTZFormatters.get(zone);
+  if(!fmt){fmt=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});productTZFormatters.set(zone,fmt);}
+  const parts={};for(const p of fmt.formatToParts(instant))if(p.type!=='literal')parts[p.type]=Number(p.value);
+  return parts;
+}
+function productWeeklyZonedInstant(base,zone,dayShift){
+  if(!zone||zone==='UTC')return new Date(base.getTime()+dayShift*86400000);
+  try{
+    const origin=productZonedParts(base,zone);
+    const intended=Date.UTC(origin.year,origin.month-1,origin.day+dayShift,origin.hour,origin.minute,origin.second);
+    let candidate=intended;
+    for(let i=0;i<4;i++){
+      const actual=productZonedParts(new Date(candidate),zone);
+      const actualWall=Date.UTC(actual.year,actual.month-1,actual.day,actual.hour,actual.minute,actual.second);
+      const difference=intended-actualWall;
+      if(!difference)break;
+      candidate+=difference;
+    }
+    return new Date(candidate);
+  }catch(_){return new Date(base.getTime()+dayShift*86400000);}
+}
 function expandScheduleDefinitions(definitions, rangeStart=null, rangeEnd=null) {
   const startRange=rangeStart || new Date(Date.now()-45*86400000);
   const endRange=rangeEnd || new Date(Date.now()+240*86400000);
@@ -70,7 +99,23 @@ function expandScheduleDefinitions(definitions, rangeStart=null, rangeEnd=null) 
     const baseEnd=event.ends_at ? new Date(event.ends_at) : null;
     const duration=baseEnd && !Number.isNaN(baseEnd.getTime()) ? Math.max(0,baseEnd-base) : 0;
     const recurrence=['daily','weekly','monthly'].includes(event.recurrence)?event.recurrence:'none';
+    const offsets=(Array.isArray(event.repeat_day_offsets)&&event.repeat_day_offsets.length?event.repeat_day_offsets:[0]).filter(n=>Number.isInteger(n)&&n>=0&&n<=6);
     const until=event.recurrence_until?new Date(event.recurrence_until):null;
+    if(recurrence==='weekly'){
+      const fromWeek=Math.max(0,Math.floor((startRange-base)/(7*86400000))-1);
+      for(let w=fromWeek;w<fromWeek+1002;w++){
+        const weekStart=productWeeklyZonedInstant(base,event.recurrence_timezone,w*7);
+        if(weekStart>endRange)break;
+        for(const offset of offsets){
+          const current=productWeeklyZonedInstant(base,event.recurrence_timezone,w*7+offset);
+          if(current<startRange||current>endRange||(until&&current>until))continue;
+          const end=duration?new Date(current.getTime()+duration):null;
+          out.push({...event,occurrenceId:`${event.id}__${current.toISOString()}`,startAt:current.toISOString(),endAt:end?end.toISOString():null,date:productDateKey(current),time:productLocalTimeInput(current),isOccurrence:true});
+        }
+        if(until&&weekStart>until)break;
+      }
+      continue;
+    }
     let current=new Date(base);
     if(recurrence!=='none' && current<startRange){
       if(recurrence==='daily'||recurrence==='weekly'){
@@ -291,35 +336,76 @@ function renderScheduleFriendPicker(event=null){
 }
 function selectedScheduleFriends(){return scheduleEditorMode==='shared'?[...scheduleEditorFriendIds]:[];}
 
+const PRODUCT_WEEKDAY_NAMES=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+function scheduleWeekdayNumber(date){return (date.getDay()+6)%7;}
+function resetScheduleWeekdays(event=null){
+  const base=event?new Date(event.starts_at):new Date(`${document.getElementById('schedule-event-date').value}T12:00:00`);
+  const baseDay=scheduleWeekdayNumber(base);
+  const offsets=Array.isArray(event?.repeat_day_offsets)&&event.repeat_day_offsets.length?event.repeat_day_offsets:[0];
+  scheduleSelectedWeekdays=new Set(offsets.map(offset=>(baseDay+offset)%7));
+  renderScheduleWeekdays();
+}
+function renderScheduleWeekdays(){
+  const root=document.getElementById('schedule-weekday-grid');if(!root)return;
+  root.replaceChildren(...PRODUCT_WEEKDAY_NAMES.map((name,index)=>{
+    const b=document.createElement('button');b.type='button';b.textContent=name;b.className='schedule-weekday-option';
+    const active=scheduleSelectedWeekdays.has(index);b.classList.toggle('is-active',active);b.setAttribute('aria-pressed',String(active));
+    b.onclick=()=>{if(active)scheduleSelectedWeekdays.delete(index);else scheduleSelectedWeekdays.add(index);renderScheduleWeekdays();};return b;
+  }));
+}
+function scheduleOffsetsForEditor(){
+  const date=document.getElementById('schedule-event-date').value;
+  const day=scheduleWeekdayNumber(new Date(`${date}T12:00:00`));
+  return [...scheduleSelectedWeekdays].map(index=>(index-day+7)%7).sort((a,b)=>a-b);
+}
+function openWeeklyScheduleEditor(){
+  openScheduleEditor();
+  const input=document.getElementById('schedule-event-recurrence');if(input)input.value='weekly';
+  const title=document.getElementById('schedule-editor-title');if(title)title.textContent='Еженедельное занятие';
+  toggleScheduleRecurrenceField();
+}
 function openScheduleEditor(eventId=null){
   if(!productHasAuth()){productToast('Сначала войди через Telegram');return;}scheduleEditingId=eventId||null;const event=eventId?scheduleBaseById(eventId):null;const now=new Date();now.setMinutes(Math.ceil(now.getMinutes()/15)*15,0,0);const start=event?new Date(event.starts_at):now;const end=event?.ends_at?new Date(event.ends_at):new Date(start.getTime()+3600000);
-  document.getElementById('schedule-event-id').value=event?.id||'';document.getElementById('schedule-event-title').value=event?.title||'';document.getElementById('schedule-event-date').value=productLocalDateInput(start);document.getElementById('schedule-event-all-day').checked=Boolean(event?.all_day);document.getElementById('schedule-event-time').value=productLocalTimeInput(start);document.getElementById('schedule-event-end-time').value=productLocalTimeInput(end);document.getElementById('schedule-event-recurrence').value=event?.recurrence||'none';document.getElementById('schedule-event-recurrence-until').value=event?.recurrence_until?productLocalDateInput(new Date(event.recurrence_until)):'';document.getElementById('schedule-event-reminder').value=event?.reminder_minutes===null||event?.reminder_minutes===undefined?'-1':String(event.reminder_minutes);document.getElementById('schedule-event-details').value=event?.details||'';document.getElementById('schedule-editor-title').textContent=event?'Событие':'Новое событие';const del=document.getElementById('schedule-delete-button');if(del){del.hidden=!event;del.textContent=event?.is_owner===false?'Убрать у себя':'Удалить событие';}renderScheduleFriendPicker(event);setScheduleEditorMode(event?(scheduleShared(event)?'shared':'personal'):(scheduleViewMode==='shared'?'shared':'personal'));toggleScheduleRecurrenceField();toggleScheduleAllDay();document.getElementById('schedule-editor-sheet').hidden=false;setTimeout(()=>document.getElementById('schedule-event-title')?.focus(),80);
+  document.getElementById('schedule-event-id').value=event?.id||'';document.getElementById('schedule-event-title').value=event?.title||'';document.getElementById('schedule-event-date').value=productLocalDateInput(start);document.getElementById('schedule-event-all-day').checked=Boolean(event?.all_day);document.getElementById('schedule-event-time').value=productLocalTimeInput(start);document.getElementById('schedule-event-end-time').value=productLocalTimeInput(end);document.getElementById('schedule-event-recurrence').value=event?.recurrence||'none';document.getElementById('schedule-event-recurrence-until').value=event?.recurrence_until?productLocalDateInput(new Date(event.recurrence_until)):'';document.getElementById('schedule-event-reminder').value=event?.reminder_minutes===null||event?.reminder_minutes===undefined?'-1':String(event.reminder_minutes);document.getElementById('schedule-event-details').value=event?.details||'';document.getElementById('schedule-editor-title').textContent=event?'Событие':'Новое событие';const del=document.getElementById('schedule-delete-button');if(del){del.hidden=!event;del.textContent=event?.is_owner===false?'Убрать у себя':'Удалить событие';}renderScheduleFriendPicker(event);setScheduleEditorMode(event?(scheduleShared(event)?'shared':'personal'):(scheduleViewMode==='shared'?'shared':'personal'));resetScheduleWeekdays(event);toggleScheduleRecurrenceField();toggleScheduleAllDay();document.getElementById('schedule-editor-sheet').hidden=false;setTimeout(()=>document.getElementById('schedule-event-title')?.focus(),80);
 }
 function closeScheduleEditor(){const s=document.getElementById('schedule-editor-sheet');if(s)s.hidden=true;scheduleEditingId=null;}
-function toggleScheduleRecurrenceField(){const repeat=document.getElementById('schedule-event-recurrence')?.value||'none';const f=document.getElementById('schedule-recurrence-until-field');if(f)f.hidden=repeat==='none';}
+function toggleScheduleRecurrenceField(){const repeat=document.getElementById('schedule-event-recurrence')?.value||'none';const f=document.getElementById('schedule-recurrence-until-field');if(f)f.hidden=repeat==='none';const days=document.getElementById('schedule-weekday-field');if(days)days.hidden=repeat!=='weekly';}
 function toggleScheduleAllDay(){const allDay=Boolean(document.getElementById('schedule-event-all-day')?.checked);const fields=document.getElementById('schedule-time-fields');if(fields)fields.hidden=allDay;}
-document.addEventListener('change',event=>{if(event.target?.id==='schedule-event-recurrence')toggleScheduleRecurrenceField();});
+document.addEventListener('change',event=>{if(event.target?.id==='schedule-event-recurrence')toggleScheduleRecurrenceField();if(event.target?.id==='schedule-event-date')resetScheduleWeekdays();});
 async function saveScheduleEvent(){
   const title=document.getElementById('schedule-event-title').value.trim(),date=document.getElementById('schedule-event-date').value,time=document.getElementById('schedule-event-time').value,endTime=document.getElementById('schedule-event-end-time').value,allDay=Boolean(document.getElementById('schedule-event-all-day')?.checked);if(!title){productToast('Укажи название');return;}if(!date||(!allDay&&!time)){productToast(allDay?'Укажи дату':'Укажи дату и время');return;}
   const start=new Date(`${date}T${allDay?'00:00':time}:00`);const end=!allDay&&endTime?new Date(`${date}T${endTime}:00`):null;if(end&&end<start){productToast('Окончание раньше начала');return;}
   const recurrence=document.getElementById('schedule-event-recurrence').value;const untilRaw=document.getElementById('schedule-event-recurrence-until').value;const reminderRaw=document.getElementById('schedule-event-reminder').value;
-  const payload={title,details:document.getElementById('schedule-event-details').value.trim(),starts_at:start.toISOString(),ends_at:end?end.toISOString():null,all_day:allDay,recurrence,recurrence_until:recurrence!=='none'&&untilRaw?new Date(`${untilRaw}T23:59:59`).toISOString():null,reminder_minutes:Number(reminderRaw)<0?null:Number(reminderRaw),participant_ids:selectedScheduleFriends()};
+  if(recurrence==='weekly'&&!scheduleSelectedWeekdays.size){productToast('Выбери хотя бы один день недели');return;}
+  const payload={title,recurrence_timezone:(scheduleEditingId?scheduleBaseById(scheduleEditingId)?.recurrence_timezone:null)||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC',repeat_day_offsets:recurrence==='weekly'?scheduleOffsetsForEditor():[0],details:document.getElementById('schedule-event-details').value.trim(),starts_at:start.toISOString(),ends_at:end?end.toISOString():null,all_day:allDay,recurrence,recurrence_until:recurrence!=='none'&&untilRaw?new Date(`${untilRaw}T23:59:59`).toISOString():null,reminder_minutes:Number(reminderRaw)<0?null:Number(reminderRaw),participant_ids:selectedScheduleFriends()};
   if(scheduleEditorMode==='shared'&&!selectedScheduleFriends().length){productToast('Выбери хотя бы одного друга');return;}const id=scheduleEditingId;try{const response=await fetch(id?`/api/schedule/events/${encodeURIComponent(id)}`:'/api/schedule/events',{method:id?'PUT':'POST',headers:productHeaders(true),body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Не удалось сохранить событие');closeScheduleEditor();await syncScheduleNotesWithServer(true);renderSchedule();productToast(id?'Событие обновлено':'Событие добавлено');}catch(error){productToast(error?.message||'Ошибка сохранения');}
 }
 function deleteScheduleEvent(){const id=scheduleEditingId;if(!id)return;const event=scheduleBaseById(id);const message=event?.is_owner===false?'Убрать это совместное событие из своего расписания?':'Удалить событие у всех участников?';requestConfirm(message,async()=>{try{const response=await fetch(`/api/schedule/events/${encodeURIComponent(id)}`,{method:'DELETE',headers:productHeaders(false)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Ошибка удаления');closeScheduleEditor();await syncScheduleNotesWithServer(true);renderSchedule();productToast(data.result==='left'?'Событие убрано':'Событие удалено');}catch(error){productToast(error?.message||'Ошибка удаления');}});}
 
 function openNotes(){productCloseOtherScreens();const screen=document.getElementById('notes-screen');if(!screen)return;screen.hidden=false;productLockBody(true);syncScheduleNotesWithServer().finally(renderNotes);}
 function closeNotes(){const s=document.getElementById('notes-screen');if(s)s.hidden=true;productLockBody(false);}
-function renderNotes(){const root=document.getElementById('notes-list');if(!root)return;const q=String(document.getElementById('notes-search-input')?.value||'').trim().toLocaleLowerCase('ru-RU');const items=(notesData||[]).filter(note=>note.archived!==true).filter(note=>!q||`${note.title||''} ${note.body||''}`.toLocaleLowerCase('ru-RU').includes(q)).sort((a,b)=>Number(b.pinned)-Number(a.pinned)||String(b.updated_at||b.updatedAt||'').localeCompare(String(a.updated_at||a.updatedAt||'')));const count=document.getElementById('notes-count');if(count)count.textContent=String(items.length);if(!items.length){const e=document.createElement('p');e.className='product-empty';e.textContent=q?'Ничего не найдено.':'Заметок пока нет. Здесь можно хранить идеи, списки и напоминания.';root.replaceChildren(e);return;}root.replaceChildren(...items.map(note=>{const b=document.createElement('button');b.type='button';b.className='note-row';b.onclick=()=>openNoteEditor(note.id);const copy=document.createElement('span');copy.className='note-row-copy';const title=document.createElement('strong');title.textContent=note.title||'Без названия';const text=document.createElement('small');text.textContent=note.body||'Пустая заметка';copy.append(title,text);const meta=document.createElement('span');meta.className='note-row-meta';if(note.pinned){const pin=document.createElement('span');pin.className='pin-badge';pin.textContent='Закреплено';meta.append(pin);}if(note.reminder_at){const rem=document.createElement('span');rem.className='reminder-badge';rem.textContent='⌁';meta.append(rem);}b.append(copy,meta);return b;}));}
+function renderNotes(){const root=document.getElementById('notes-list');if(!root)return;const q=String(document.getElementById('notes-search-input')?.value||'').trim().toLocaleLowerCase('ru-RU');const items=(notesData||[]).filter(note=>note.archived!==true).filter(note=>!q||`${note.title||''} ${note.body||''}`.toLocaleLowerCase('ru-RU').includes(q)).sort((a,b)=>Number(b.pinned)-Number(a.pinned)||String(b.updated_at||b.updatedAt||'').localeCompare(String(a.updated_at||a.updatedAt||'')));const count=document.getElementById('notes-count');if(count)count.textContent=String(items.length);if(!items.length){const e=document.createElement('p');e.className='product-empty';e.textContent=q?'Ничего не найдено.':'Заметок пока нет. Здесь можно хранить идеи, списки и напоминания.';root.replaceChildren(e);return;}root.replaceChildren(...items.map(note=>{const b=document.createElement('button');b.type='button';b.className='note-row';b.onclick=()=>openNoteEditor(note.id);const copy=document.createElement('span');copy.className='note-row-copy';const title=document.createElement('strong');title.textContent=note.title||'Без названия';const text=document.createElement('small');text.textContent=note.body||((note.attachments||[]).length?`Вложений: ${note.attachments.length}`:'Пустая заметка');copy.append(title,text);const meta=document.createElement('span');meta.className='note-row-meta';if(note.pinned){const pin=document.createElement('span');pin.className='pin-badge';pin.textContent='Закреплено';meta.append(pin);}if((note.attachments||[]).length){const files=document.createElement('span');files.className='attachment-badge';files.textContent=`▣ ${note.attachments.length}`;meta.append(files);}if(note.reminder_at){const rem=document.createElement('span');rem.className='reminder-badge';rem.textContent='⌁';meta.append(rem);}b.append(copy,meta);return b;}));}
 function noteById(id){return (notesData||[]).find(n=>String(n.id)===String(id));}
-function openNoteEditor(noteId=null){if(!productHasAuth()){productToast('Сначала войди через Telegram');return;}noteEditingId=noteId||null;const note=noteId?noteById(noteId):null;document.getElementById('note-edit-id').value=note?.id||'';document.getElementById('note-title-input').value=note?.title||'';document.getElementById('note-body-input').value=note?.body||'';document.getElementById('note-pinned-input').checked=Boolean(note?.pinned);const enabled=Boolean(note?.reminder_at);document.getElementById('note-reminder-enabled').checked=enabled;const reminderInput=document.getElementById('note-reminder-input');if(reminderInput)reminderInput.value=enabled?toDateTimeLocal(new Date(note.reminder_at)):'';document.getElementById('note-editor-title').textContent=note?'Заметка':'Новая заметка';document.getElementById('note-delete-button').hidden=!note;toggleNoteReminderField();document.getElementById('note-editor-sheet').hidden=false;setTimeout(()=>document.getElementById(note?.title?'note-body-input':'note-title-input')?.focus(),80);}
-function closeNoteEditor(){const s=document.getElementById('note-editor-sheet');if(s)s.hidden=true;noteEditingId=null;}
+function openNoteEditor(noteId=null){if(!productHasAuth()){productToast('Сначала войди через Telegram');return;}noteEditingId=noteId||null;const note=noteId?noteById(noteId):null;document.getElementById('note-edit-id').value=note?.id||'';document.getElementById('note-title-input').value=note?.title||'';document.getElementById('note-body-input').value=note?.body||'';document.getElementById('note-pinned-input').checked=Boolean(note?.pinned);const enabled=Boolean(note?.reminder_at);document.getElementById('note-reminder-enabled').checked=enabled;const reminderInput=document.getElementById('note-reminder-input');if(reminderInput)reminderInput.value=enabled?toDateTimeLocal(new Date(note.reminder_at)):'';notePendingFiles=[];const fileInput=document.getElementById('note-files-input');if(fileInput)fileInput.value='';
+  document.getElementById('note-editor-title').textContent=note?'Заметка':'Новая заметка';renderNoteAttachments();document.getElementById('note-delete-button').hidden=!note;toggleNoteReminderField();document.getElementById('note-editor-sheet').hidden=false;setTimeout(()=>document.getElementById(note?.title?'note-body-input':'note-title-input')?.focus(),80);}
+function closeNoteEditor(){if(noteUploadInProgress)return;const s=document.getElementById('note-editor-sheet');if(s)s.hidden=true;noteEditingId=null;notePendingFiles=[];}
 function toDateTimeLocal(date){if(!(date instanceof Date)||Number.isNaN(date.getTime()))return'';return `${productLocalDateInput(date)}T${productLocalTimeInput(date)}`;}
 function toggleNoteReminderField(){const enabled=document.getElementById('note-reminder-enabled')?.checked;const field=document.getElementById('note-reminder-field');if(field)field.hidden=!enabled;if(enabled&&!document.getElementById('note-reminder-input').value){const d=new Date(Date.now()+3600000);d.setMinutes(Math.ceil(d.getMinutes()/15)*15,0,0);document.getElementById('note-reminder-input').value=toDateTimeLocal(d);}}
-async function saveNote(){const title=document.getElementById('note-title-input').value.trim(),body=document.getElementById('note-body-input').value.trim();if(!title&&!body){productToast('Заметка пустая');return;}const reminderEnabled=document.getElementById('note-reminder-enabled').checked;const reminderRaw=document.getElementById('note-reminder-input').value;const payload={title,body,pinned:document.getElementById('note-pinned-input').checked,archived:false,reminder_at:reminderEnabled&&reminderRaw?new Date(reminderRaw).toISOString():null};const id=noteEditingId;try{const response=await fetch(id?`/api/notes/${encodeURIComponent(id)}`:'/api/notes',{method:id?'PUT':'POST',headers:productHeaders(true),body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Не удалось сохранить заметку');closeNoteEditor();await syncScheduleNotesWithServer(true);renderNotes();productToast(id?'Заметка обновлена':'Заметка сохранена');}catch(error){productToast(error?.message||'Ошибка сохранения');}}
+async function saveNote(){const title=document.getElementById('note-title-input').value.trim(),body=document.getElementById('note-body-input').value.trim();if(!title&&!body&&!notePendingFiles.length&&!(noteEditingId&&noteById(noteEditingId)?.attachments?.length)){productToast('Заметка пустая');return;}const reminderEnabled=document.getElementById('note-reminder-enabled').checked;const reminderRaw=document.getElementById('note-reminder-input').value;const payload={title:title||(notePendingFiles[0]?.name||'Вложения'),body,pinned:document.getElementById('note-pinned-input').checked,archived:false,reminder_at:reminderEnabled&&reminderRaw?new Date(reminderRaw).toISOString():null};const id=noteEditingId;try{const response=await fetch(id?`/api/notes/${encodeURIComponent(id)}`:'/api/notes',{method:id?'PUT':'POST',headers:productHeaders(true),body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Не удалось сохранить заметку');const noteId=data.note?.id||id;
+    if(notePendingFiles.length&&noteId){
+      noteEditingId=noteId;noteUploadInProgress=true;
+      const filesToSend=[...notePendingFiles];
+      try{
+        for(let i=0;i<filesToSend.length;i++){
+          await uploadNoteAttachment(noteId,filesToSend[i],i+1,filesToSend.length);
+          notePendingFiles.shift();
+        }
+      }finally{noteUploadInProgress=false;}
+    }
+    closeNoteEditor();await syncScheduleNotesWithServer(true);renderNotes();productToast(id?'Заметка обновлена':'Заметка сохранена');}catch(error){noteUploadStatus(error?.message||'Ошибка сохранения');productToast(error?.message||'Ошибка сохранения');}}
 function deleteNote(){const id=noteEditingId;if(!id)return;requestConfirm('Удалить заметку?',async()=>{try{const response=await fetch(`/api/notes/${encodeURIComponent(id)}`,{method:'DELETE',headers:productHeaders(false)});if(!response.ok)throw new Error('Не удалось удалить заметку');closeNoteEditor();await syncScheduleNotesWithServer(true);renderNotes();productToast('Заметка удалена');}catch(error){productToast(error?.message||'Ошибка удаления');}});}
 
-window.toggleScheduleAllDay=toggleScheduleAllDay;window.openSchedule=openSchedule;window.closeSchedule=closeSchedule;window.shiftScheduleWeek=shiftScheduleWeek;window.selectScheduleDate=selectScheduleDate;window.renderSchedule=renderSchedule;window.openScheduleEditor=openScheduleEditor;window.closeScheduleEditor=closeScheduleEditor;window.saveScheduleEvent=saveScheduleEvent;window.deleteScheduleEvent=deleteScheduleEvent;window.openNotes=openNotes;window.closeNotes=closeNotes;window.renderNotes=renderNotes;window.openNoteEditor=openNoteEditor;window.closeNoteEditor=closeNoteEditor;window.toggleNoteReminderField=toggleNoteReminderField;window.saveNote=saveNote;window.deleteNote=deleteNote;
+window.openWeeklyScheduleEditor=openWeeklyScheduleEditor;window.selectNoteFiles=selectNoteFiles;window.closeNotePreview=closeNotePreview;window.closeNotePreviewOnBackdrop=closeNotePreviewOnBackdrop;window.toggleScheduleAllDay=toggleScheduleAllDay;window.openSchedule=openSchedule;window.closeSchedule=closeSchedule;window.shiftScheduleWeek=shiftScheduleWeek;window.selectScheduleDate=selectScheduleDate;window.renderSchedule=renderSchedule;window.openScheduleEditor=openScheduleEditor;window.closeScheduleEditor=closeScheduleEditor;window.saveScheduleEvent=saveScheduleEvent;window.deleteScheduleEvent=deleteScheduleEvent;window.openNotes=openNotes;window.closeNotes=closeNotes;window.renderNotes=renderNotes;window.openNoteEditor=openNoteEditor;window.closeNoteEditor=closeNoteEditor;window.toggleNoteReminderField=toggleNoteReminderField;window.saveNote=saveNote;window.deleteNote=deleteNote;
 
 /* Preserve the actual V28 implementations before legacy script.js defines its
    validation-compatible forwarding functions. The old V27 deploy preflight
@@ -340,7 +426,11 @@ window.SVGTrackerProductHandlers = Object.freeze({
   saveScheduleEvent,
   shiftScheduleWeek,
   toggleNoteReminderField,
-  toggleScheduleAllDay
+  toggleScheduleAllDay,
+  openWeeklyScheduleEditor,
+  selectNoteFiles,
+  closeNotePreview,
+  closeNotePreviewOnBackdrop
 });
 
 document.addEventListener('DOMContentLoaded',()=>{
@@ -376,6 +466,7 @@ function productNotificationStatus(message){const root=document.getElementById('
 async function openNotificationSettings(){
   if(!productHasAuth()){productToast('Настройки доступны после входа через Telegram');return;}
   if(typeof closeProfileDrawer==='function')closeProfileDrawer(true);
+  if(typeof renderProfileState==='function')renderProfileState();
   const sheet=document.getElementById('notification-settings-sheet');if(!sheet)return;
   sheet.hidden=false;
   productNotificationStatus('Загружаем настройки…');
@@ -416,7 +507,7 @@ function paintNotificationPreferences(){
     return section;
   }));
   const hint=document.createElement('p');hint.className='notification-master-hint';
-  hint.textContent=profileState?.bot_notifications_enabled===false?'Уведомления бота выключены в профиле. Включи общий переключатель, чтобы получать выбранные категории.':'Главный выключатель в профиле отключает все сообщения, независимо от этих настроек.';
+  hint.textContent=profileState?.bot_notifications_enabled===false?'Уведомления бота выключены. Включи главный переключатель вверху, чтобы получать выбранные категории.':'Главный переключатель вверху отключает все сообщения, независимо от отдельных категорий.';
   root.append(hint);
 }
 async function saveNotificationPreference(key,enabled){
@@ -537,3 +628,82 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('[data-editor-mode]').forEach(b=>b.addEventListener('click',()=>setScheduleEditorMode(b.dataset.editorMode)));
   document.getElementById('schedule-friend-search')?.addEventListener('input',paintScheduleFriendPicker);
 });
+
+
+/* V30: private, authenticated, resumable-by-chunks note attachments. */
+const NOTE_UPLOAD_CHUNK=512*1024;
+function noteFileSize(size){return size<1024?`${size} Б`:size<1048576?`${Math.round(size/1024)} КБ`:`${(size/1048576).toFixed(1)} МБ`;}
+function noteFileIcon(type){return type?.startsWith('image/')?'▧':type?.startsWith('video/')?'▷':type?.startsWith('audio/')?'♫':type==='application/pdf'?'PDF':'▤';}
+function noteUploadStatus(text){const el=document.getElementById('note-upload-status');if(el)el.textContent=text||'';}
+function selectNoteFiles(files){
+  const arr=Array.from(files||[]);for(const file of arr){
+    if(file.size>50*1024*1024){productToast(`«${file.name}»: лимит 50 МБ`);continue;}
+    if(!file.size){productToast('Нельзя прикрепить пустой файл');continue;}
+    if((notePendingFiles.length+(noteById(noteEditingId)?.attachments||[]).length)>=25){productToast('Максимум 25 файлов в заметке');break;}
+    notePendingFiles.push(file);
+  }
+  const input=document.getElementById('note-files-input');if(input)input.value='';renderNoteAttachments();
+}
+function renderNoteAttachments(){
+  const root=document.getElementById('note-attachments-list');if(!root)return;
+  const note=noteById(noteEditingId);const stored=note?.attachments||[];
+  const files=[...stored.map(f=>({...f,stored:true})),...notePendingFiles.map((f,i)=>({display_name:f.name,media_type:f.type,byte_size:f.size,pendingIndex:i,stored:false}))];
+  const count=document.getElementById('note-attachment-count');if(count)count.textContent=`${files.length} файлов`;
+  root.replaceChildren(...files.map(file=>{
+    const row=document.createElement('div');row.className='note-attachment-row';
+    const icon=document.createElement('span');icon.className='note-file-icon';icon.textContent=noteFileIcon(file.media_type);
+    const copy=document.createElement('span');copy.className='note-file-copy';const title=document.createElement('strong');title.textContent=file.display_name;
+    const desc=document.createElement('small');desc.textContent=`${noteFileSize(file.byte_size)}${file.stored?' · Сохранено':' · Добавится при сохранении'}`;
+    copy.append(title,desc);
+    if(file.stored){const open=document.createElement('button');open.type='button';open.textContent='Открыть';open.onclick=()=>previewNoteAttachment(note.id,file);row.append(icon,copy,open);}
+    else row.append(icon,copy);
+    const del=document.createElement('button');del.type='button';del.className='note-attachment-remove';del.textContent='×';del.setAttribute('aria-label','Убрать файл');
+    del.onclick=()=>{if(noteUploadInProgress)return;if(file.stored)deleteNoteAttachment(note.id,file.id);else{notePendingFiles.splice(file.pendingIndex,1);renderNoteAttachments();}};
+    row.append(del);return row;
+  }));
+  if(!files.length){const empty=document.createElement('p');empty.className='note-file-empty';empty.textContent='Пока без вложений';root.append(empty);}
+  noteUploadStatus('');
+}
+async function uploadNoteAttachment(noteId,file,index,total){
+  const token=(crypto.randomUUID?crypto.randomUUID().replace(/-/g,''):Array.from(crypto.getRandomValues(new Uint8Array(16))).map(v=>v.toString(16).padStart(2,'0')).join(''));
+  const totalChunks=Math.ceil(file.size/NOTE_UPLOAD_CHUNK);
+  for(let chunk=0;chunk<totalChunks;chunk++){
+    noteUploadStatus(`Загрузка ${index}/${total}: ${file.name} · ${Math.round(100*chunk/totalChunks)}%`);
+    const headers={...productHeaders(false),'X-Upload-Token':token,'X-Chunk-Index':String(chunk),'X-Chunk-Total':String(totalChunks),'X-File-Name':encodeURIComponent(file.name),'X-File-Size':String(file.size),'Content-Type':file.type||'application/octet-stream'};
+    const response=await fetch(`/api/notes/${encodeURIComponent(noteId)}/attachments/chunks`,{method:'POST',headers,body:file.slice(chunk*NOTE_UPLOAD_CHUNK,Math.min(file.size,(chunk+1)*NOTE_UPLOAD_CHUNK))});
+    const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||`Ошибка загрузки файла: HTTP ${response.status}`);
+  }
+  noteUploadStatus(`Загружено ${index} из ${total}`);
+}
+async function deleteNoteAttachment(noteId,fileId){
+  if(!noteId)return;
+  try{const res=await fetch(`/api/notes/${encodeURIComponent(noteId)}/attachments/${encodeURIComponent(fileId)}`,{method:'DELETE',headers:productHeaders(false)});
+    if(!res.ok)throw new Error('Не удалось удалить файл');
+    await syncScheduleNotesWithServer(true);renderNoteAttachments();
+  }catch(e){productToast(e.message||'Ошибка удаления файла');}
+}
+async function previewNoteAttachment(noteId,file){
+  const sheet=document.getElementById('note-preview-sheet');const root=document.getElementById('note-preview-content');if(!sheet||!root)return;
+  closeNotePreview();const title=document.getElementById('note-preview-title');if(title)title.textContent=file.display_name;
+  sheet.hidden=false;root.textContent='Загружаем вложение…';
+  try{
+    const res=await fetch(`/api/notes/${encodeURIComponent(noteId)}/attachments/${encodeURIComponent(file.id)}`,{headers:productHeaders(false),cache:'no-store'});
+    if(!res.ok)throw new Error('Нет доступа к файлу или файл удалён');
+    const blob=await res.blob();if(sheet.hidden)return;
+    if(notePreviewUrl)URL.revokeObjectURL(notePreviewUrl);notePreviewUrl=URL.createObjectURL(blob);root.replaceChildren();
+    const type=file.media_type||'';let media=null;
+    if(['image/png','image/jpeg','image/webp','image/gif'].includes(type)){media=document.createElement('img');media.alt=file.display_name;}
+    else if(['video/mp4','video/webm'].includes(type)){media=document.createElement('video');media.controls=true;media.playsInline=true;}
+    else if(['audio/mpeg','audio/mp4','audio/ogg','audio/wav','audio/webm'].includes(type)){media=document.createElement('audio');media.controls=true;}
+    else if(type==='text/plain'&&blob.size<1024*1024){const text=document.createElement('pre');text.textContent=await blob.text();media=text;}
+    if(media){if(media.tagName!=='PRE')media.src=notePreviewUrl;root.append(media);}
+    else{const info=document.createElement('p');info.textContent='Предпросмотр недоступен — файл можно сохранить на устройство.';root.append(info);}
+    document.getElementById('note-preview-download').onclick=()=>{const link=document.createElement('a');link.href=notePreviewUrl;link.download=file.display_name;document.body.append(link);link.click();link.remove();};
+  }catch(error){root.textContent=error.message||'Не удалось открыть файл';}
+}
+function closeNotePreview(){
+  const sheet=document.getElementById('note-preview-sheet');if(sheet)sheet.hidden=true;
+  const content=document.getElementById('note-preview-content');if(content)content.replaceChildren();
+  if(notePreviewUrl){URL.revokeObjectURL(notePreviewUrl);notePreviewUrl=null;}
+}
+function closeNotePreviewOnBackdrop(event){if(event.target?.id==='note-preview-sheet')closeNotePreview();}
