@@ -1,7 +1,7 @@
 /* SVGTracker product modules v28: schedule + notes.
    This file intentionally owns these domains so the legacy script.js can be
    reduced gradually without changing existing training/finance behavior. */
-window.SVGTRACKER_PRODUCT_VERSION = 31;
+window.SVGTRACKER_PRODUCT_VERSION = 34;
 let scheduleViewMode = 'personal';
 let scheduleEditorMode = 'personal';
 let scheduleEditorFriendIds = new Set();
@@ -43,7 +43,7 @@ function productEscapeText(value) { return String(value ?? ''); }
 function productSetSyncLabel(id, text) { const el=document.getElementById(id); if(el) el.textContent=text; }
 function normalizeProductNote(note) {
   if (!note || typeof note !== 'object') return null;
-  return {...note, createdAt:note.createdAt||note.created_at||null, updatedAt:note.updatedAt||note.updated_at||null, reminderAt:note.reminderAt||note.reminder_at||null};
+  return {...note, tags:Array.isArray(note.tags)?note.tags:[], folder:note.folder||'', favorite:note.favorite===true, createdAt:note.createdAt||note.created_at||null, updatedAt:note.updatedAt||note.updated_at||null, reminderAt:note.reminderAt||note.reminder_at||null};
 }
 function productHeaders(json=false) {
   try { return telegramApiHeaders(json); } catch (_) { return json ? {'Content-Type':'application/json'} : {}; }
@@ -165,7 +165,7 @@ async function syncScheduleNotesWithServer(force=false) {
   try{
     const [scheduleResponse,notesResponse]=await Promise.all([
       fetch('/api/schedule/events',{headers:productHeaders(false),cache:'no-store'}),
-      fetch('/api/notes',{headers:productHeaders(false),cache:'no-store'})
+      fetch('/api/notes?archived=true',{headers:productHeaders(false),cache:'no-store'})
     ]);
     if(!scheduleResponse.ok) throw new Error(`schedule HTTP ${scheduleResponse.status}`);
     if(!notesResponse.ok) throw new Error(`notes HTTP ${notesResponse.status}`);
@@ -384,14 +384,57 @@ function deleteScheduleEvent(){const id=scheduleEditingId;if(!id)return;const ev
 
 function openNotes(){productCloseOtherScreens();const screen=document.getElementById('notes-screen');if(!screen)return;screen.hidden=false;productLockBody(true);syncScheduleNotesWithServer().finally(renderNotes);}
 function closeNotes(){const s=document.getElementById('notes-screen');if(s)s.hidden=true;productLockBody(false);}
-function renderNotes(){const root=document.getElementById('notes-list');if(!root)return;const q=String(document.getElementById('notes-search-input')?.value||'').trim().toLocaleLowerCase('ru-RU');const items=(notesData||[]).filter(note=>note.archived!==true).filter(note=>!q||`${note.title||''} ${note.body||''}`.toLocaleLowerCase('ru-RU').includes(q)).sort((a,b)=>Number(b.pinned)-Number(a.pinned)||String(b.updated_at||b.updatedAt||'').localeCompare(String(a.updated_at||a.updatedAt||'')));const count=document.getElementById('notes-count');if(count)count.textContent=String(items.length);if(!items.length){const e=document.createElement('p');e.className='product-empty';e.textContent=q?'Ничего не найдено.':'Заметок пока нет. Здесь можно хранить идеи, списки и напоминания.';root.replaceChildren(e);return;}root.replaceChildren(...items.map(note=>{const b=document.createElement('button');b.type='button';b.className='note-row';b.onclick=()=>openNoteEditor(note.id);const copy=document.createElement('span');copy.className='note-row-copy';const title=document.createElement('strong');title.textContent=note.title||'Без названия';const text=document.createElement('small');text.textContent=note.body||((note.attachments||[]).length?`Вложений: ${note.attachments.length}`:'Пустая заметка');copy.append(title,text);const meta=document.createElement('span');meta.className='note-row-meta';if(note.pinned){const pin=document.createElement('span');pin.className='pin-badge';pin.textContent='Закреплено';meta.append(pin);}if((note.attachments||[]).length){const files=document.createElement('span');files.className='attachment-badge';files.textContent=`▣ ${note.attachments.length}`;meta.append(files);}if(note.reminder_at){const rem=document.createElement('span');rem.className='reminder-badge';rem.textContent='⌁';meta.append(rem);}b.append(copy,meta);return b;}));}
+let v34NotesFilter='all';
+function setNotesFilter(value){v34NotesFilter=value;renderNotes();}
+function renderNotes(){
+  const root=document.getElementById('notes-list');if(!root)return;
+  const q=String(document.getElementById('notes-search-input')?.value||'').trim().toLocaleLowerCase('ru-RU');
+  const folder=document.getElementById('notes-folder-filter')?.value||'';
+  const folders=[...new Set((notesData||[]).map(n=>n.folder).filter(Boolean))].sort();
+  const select=document.getElementById('notes-folder-filter');if(select){
+    const wanted=select.value;
+    select.replaceChildren(...[['','Все папки'],...folders.map(f=>[f,f])].map(([value,text])=>{const opt=document.createElement('option');opt.value=value;opt.textContent=text;return opt;}));
+    select.value=folders.includes(wanted)?wanted:'';
+  }
+  const items=(notesData||[]).filter(note=>{
+    if(v34NotesFilter==='archive')return note.archived===true;
+    if(note.archived===true)return false;
+    if(v34NotesFilter==='favorites'&&!note.favorite)return false;
+    return true;
+  }).filter(n=>!folder||n.folder===folder)
+    .filter(n=>!q||`${n.title||''} ${n.body||''} ${n.folder||''} ${(n.tags||[]).join(' ')}`.toLocaleLowerCase('ru-RU').includes(q))
+    .sort((a,b)=>Number(b.pinned)-Number(a.pinned)||Number(b.favorite)-Number(a.favorite)||String(b.updated_at||b.updatedAt||'').localeCompare(String(a.updated_at||a.updatedAt||'')));
+  document.querySelectorAll('[data-notes-filter]').forEach(b=>{const on=b.dataset.notesFilter===v34NotesFilter;b.classList.toggle('is-active',on);b.setAttribute('aria-pressed',String(on));});
+  const count=document.getElementById('notes-count');if(count)count.textContent=String(items.length);
+  if(!items.length){const e=document.createElement('p');e.className='product-empty';e.textContent=q?'Ничего не найдено':'Пока здесь пусто';root.replaceChildren(e);return;}
+  root.replaceChildren(...items.map(note=>{
+    const b=document.createElement('button');b.type='button';b.className='note-row';b.onclick=()=>openNoteEditor(note.id);
+    const copy=document.createElement('span');copy.className='note-row-copy';
+    const title=document.createElement('strong');title.textContent=note.title||'Без названия';
+    const excerpt=document.createElement('small');excerpt.textContent=note.body||((note.attachments||[]).length?`Вложений: ${note.attachments.length}`:'Без текста');
+    copy.append(title,excerpt);
+    if(note.folder||(note.tags||[]).length){const labels=document.createElement('span');labels.className='note-tiny-labels';labels.textContent=[note.folder&&`▤ ${note.folder}`,...(note.tags||[]).slice(0,3).map(t=>`#${t}`)].filter(Boolean).join('  ');copy.append(labels);}
+    const meta=document.createElement('span');meta.className='note-row-meta';
+    if(note.favorite){const badge=document.createElement('span');badge.className='pin-badge';badge.textContent='★';meta.append(badge);}
+    if(note.pinned){const pin=document.createElement('span');pin.className='pin-badge';pin.textContent='Закреплено';meta.append(pin);}
+    if((note.attachments||[]).length){const files=document.createElement('span');files.className='attachment-badge';files.textContent=`▣ ${note.attachments.length}`;meta.append(files);}
+    if(note.reminder_at){const rem=document.createElement('span');rem.className='reminder-badge';rem.textContent='⌁';meta.append(rem);}
+    b.append(copy,meta);return b;
+  }));
+}
 function noteById(id){return (notesData||[]).find(n=>String(n.id)===String(id));}
-function openNoteEditor(noteId=null){if(!productHasAuth()){productToast('Сначала войди через Telegram');return;}noteEditingId=noteId||null;const note=noteId?noteById(noteId):null;document.getElementById('note-edit-id').value=note?.id||'';document.getElementById('note-title-input').value=note?.title||'';document.getElementById('note-body-input').value=note?.body||'';document.getElementById('note-pinned-input').checked=Boolean(note?.pinned);const enabled=Boolean(note?.reminder_at);document.getElementById('note-reminder-enabled').checked=enabled;const reminderInput=document.getElementById('note-reminder-input');if(reminderInput)reminderInput.value=enabled?toDateTimeLocal(new Date(note.reminder_at)):'';notePendingFiles=[];const fileInput=document.getElementById('note-files-input');if(fileInput)fileInput.value='';
+function openNoteEditor(noteId=null){if(!productHasAuth()){productToast('Сначала войди через Telegram');return;}noteEditingId=noteId||null;const note=noteId?noteById(noteId):null;document.getElementById('note-edit-id').value=note?.id||'';document.getElementById('note-title-input').value=note?.title||'';document.getElementById('note-body-input').value=note?.body||'';document.getElementById('note-pinned-input').checked=Boolean(note?.pinned);
+  document.getElementById('note-folder-input').value=note?.folder||'';
+  document.getElementById('note-tags-input').value=(note?.tags||[]).join(', ');
+  document.getElementById('note-favorite-input').checked=Boolean(note?.favorite);
+  document.getElementById('note-archived-input').checked=Boolean(note?.archived);
+  const folderList=document.getElementById('note-folder-suggestions');if(folderList){folderList.replaceChildren(...[...new Set((notesData||[]).map(n=>n.folder).filter(Boolean))].sort().map(name=>{const opt=document.createElement('option');opt.value=name;return opt;}));}
+  const enabled=Boolean(note?.reminder_at);document.getElementById('note-reminder-enabled').checked=enabled;const reminderInput=document.getElementById('note-reminder-input');if(reminderInput)reminderInput.value=enabled?toDateTimeLocal(new Date(note.reminder_at)):'';notePendingFiles=[];const fileInput=document.getElementById('note-files-input');if(fileInput)fileInput.value='';
   document.getElementById('note-editor-title').textContent=note?'Заметка':'Новая заметка';renderNoteAttachments();document.getElementById('note-delete-button').hidden=!note;toggleNoteReminderField();document.getElementById('note-editor-sheet').hidden=false;setTimeout(()=>document.getElementById(note?.title?'note-body-input':'note-title-input')?.focus(),80);}
 function closeNoteEditor(){if(noteUploadInProgress)return;const s=document.getElementById('note-editor-sheet');if(s)s.hidden=true;noteEditingId=null;notePendingFiles=[];}
 function toDateTimeLocal(date){if(!(date instanceof Date)||Number.isNaN(date.getTime()))return'';return `${productLocalDateInput(date)}T${productLocalTimeInput(date)}`;}
 function toggleNoteReminderField(){const enabled=document.getElementById('note-reminder-enabled')?.checked;const field=document.getElementById('note-reminder-field');if(field)field.hidden=!enabled;if(enabled&&!document.getElementById('note-reminder-input').value){const d=new Date(Date.now()+3600000);d.setMinutes(Math.ceil(d.getMinutes()/15)*15,0,0);document.getElementById('note-reminder-input').value=toDateTimeLocal(d);}}
-async function saveNote(){const title=document.getElementById('note-title-input').value.trim(),body=document.getElementById('note-body-input').value.trim();if(!title&&!body&&!notePendingFiles.length&&!(noteEditingId&&noteById(noteEditingId)?.attachments?.length)){productToast('Заметка пустая');return;}const reminderEnabled=document.getElementById('note-reminder-enabled').checked;const reminderRaw=document.getElementById('note-reminder-input').value;const payload={title:title||(notePendingFiles[0]?.name||'Вложения'),body,pinned:document.getElementById('note-pinned-input').checked,archived:false,reminder_at:reminderEnabled&&reminderRaw?new Date(reminderRaw).toISOString():null};const id=noteEditingId;try{const response=await fetch(id?`/api/notes/${encodeURIComponent(id)}`:'/api/notes',{method:id?'PUT':'POST',headers:productHeaders(true),body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Не удалось сохранить заметку');const noteId=data.note?.id||id;
+async function saveNote(){const title=document.getElementById('note-title-input').value.trim(),body=document.getElementById('note-body-input').value.trim();if(!title&&!body&&!notePendingFiles.length&&!(noteEditingId&&noteById(noteEditingId)?.attachments?.length)){productToast('Заметка пустая');return;}const reminderEnabled=document.getElementById('note-reminder-enabled').checked;const reminderRaw=document.getElementById('note-reminder-input').value;const payload={title:title||(notePendingFiles[0]?.name||'Вложения'),body,pinned:document.getElementById('note-pinned-input').checked,archived:document.getElementById('note-archived-input').checked,folder:document.getElementById('note-folder-input').value.trim().slice(0,60),tags:[...new Set(document.getElementById('note-tags-input').value.split(',').map(s=>s.trim().replace(/^#/, '').slice(0,32)).filter(Boolean))].slice(0,12),favorite:document.getElementById('note-favorite-input').checked,reminder_at:reminderEnabled&&reminderRaw?new Date(reminderRaw).toISOString():null};const id=noteEditingId;try{const response=await fetch(id?`/api/notes/${encodeURIComponent(id)}`:'/api/notes',{method:id?'PUT':'POST',headers:productHeaders(true),body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Не удалось сохранить заметку');const noteId=data.note?.id||id;
     if(notePendingFiles.length&&noteId){
       noteEditingId=noteId;noteUploadInProgress=true;
       const filesToSend=[...notePendingFiles];
@@ -457,6 +500,10 @@ const PRODUCT_NOTIFICATION_GROUPS = [
     ['note_reminders','Напоминания по заметкам','В указанную дату и время'],
     ['finance_payments','Обязательные платежи','В день оплаты, после 09:00'],
     ['finance_debts','Долги','В день возврата, после 09:00']
+  ]},
+  {title:'Отчёты',desc:'Сводки с отправкой в Telegram в 20:00 по часовому поясу аккаунта',items:[
+    ['daily_report','Ежедневный отчёт','Каждый вечер: финансы, тренировки, календарь, заметки'],
+    ['weekly_report','Еженедельный отчёт','Каждое воскресенье вечером: итоги недели']
   ]},
   {title:'Приватность',desc:'Как друзья видят твоё время',items:[
     ['share_busy','Делиться занятостью','Друзья увидят только «занят», без названий и деталей событий']
@@ -713,3 +760,91 @@ function closeNotePreview(){
   if(notePreviewUrl){URL.revokeObjectURL(notePreviewUrl);notePreviewUrl=null;}
 }
 function closeNotePreviewOnBackdrop(event){if(event.target?.id==='note-preview-sheet')closeNotePreview();}
+
+
+/* V34 · unified authenticated search and report previews. */
+let v34SearchTimer=null, v34SearchSeq=0;
+function v34ShowScreen(id){
+  if(!productHasAuth()){productToast('Войди через Telegram');return false;}
+  closeNotificationSettings();
+  if(typeof closeProfileDrawer==='function')closeProfileDrawer(true);
+  productCloseOtherScreens();
+  ['global-search-screen','reports-screen'].forEach(name=>{const el=document.getElementById(name);if(el)el.hidden=name!==id;});
+  productLockBody(true);return true;
+}
+function openGlobalSearch(){if(!v34ShowScreen('global-search-screen'))return;const q=document.getElementById('global-search-input');if(q){q.value='';q.focus();}const results=document.getElementById('global-search-results');if(results)results.textContent='Введите минимум 2 символа для поиска';}
+function closeGlobalSearch(){v34SearchSeq++;const el=document.getElementById('global-search-screen');if(el)el.hidden=true;productLockBody(false);}
+async function runGlobalSearch(){
+  const root=document.getElementById('global-search-results'),q=document.getElementById('global-search-input')?.value.trim()||'';
+  if(!root)return;
+  clearTimeout(v34SearchTimer);const seq=++v34SearchSeq;
+  if(q.length<2){root.textContent='Введите минимум 2 символа для поиска';return;}
+  root.textContent='Поиск…';
+  v34SearchTimer=setTimeout(async()=>{
+    try{
+      const response=await fetch('/api/search?q='+encodeURIComponent(q),{headers:productHeaders(false),cache:'no-store'});
+      const data=await response.json().catch(()=>({}));if(!response.ok)throw Error(data.detail||'Ошибка поиска');
+      if(seq!==v34SearchSeq||document.getElementById('global-search-screen')?.hidden)return;
+      const results=data.results||[];root.replaceChildren();
+      if(!results.length){root.textContent='Ничего не найдено';return;}
+      for(const item of results){
+        const btn=document.createElement('button');btn.type='button';btn.className='v34-result-row';
+        const label=document.createElement('small');label.textContent=({note:'Заметка',schedule:'Расписание',finance:'Финансы',training:'Тренировки'})[item.kind]||item.kind;
+        const title=document.createElement('strong');title.textContent=item.title;
+        const detail=document.createElement('span');detail.textContent=item.detail;
+        btn.append(label,title,detail);btn.addEventListener('click',async()=>{
+          closeGlobalSearch();
+          if(item.kind==='note'){openNotes();await syncScheduleNotesWithServer(true);if(noteById(item.id))openNoteEditor(item.id);else productToast('Заметка не найдена');}
+          else if(item.kind==='schedule'){openSchedule();await syncScheduleNotesWithServer(true);if(scheduleBaseById(item.id))openScheduleEditor(item.id);else productToast('Событие не найдено');}
+          else if(item.kind==='finance')openFinance();
+          else if(item.kind==='training')openTraining();
+        });
+        root.append(btn);
+      }
+    }catch(error){if(seq===v34SearchSeq)root.textContent=error.message||'Нет соединения';}
+  },250);
+}
+async function showReport(period='daily'){
+  if(!v34ShowScreen('reports-screen'))return;
+  document.querySelectorAll('[data-report-period]').forEach(b=>{const selected=b.dataset.reportPeriod===period;b.classList.toggle('is-active',selected);b.setAttribute('aria-pressed',String(selected));});
+  const root=document.getElementById('reports-results');if(root)root.textContent='Загружаем отчёт…';
+  try{
+    const res=await fetch('/api/reports?period='+encodeURIComponent(period),{headers:productHeaders(false),cache:'no-store'});
+    const payload=await res.json().catch(()=>({}));if(!res.ok)throw Error(payload.detail||'Отчёт недоступен');
+    if(document.getElementById('reports-screen')?.hidden)return;
+    const r=payload.report;root.replaceChildren();
+    const time=document.createElement('p');time.className='v34-report-time';time.textContent=period==='daily'?`Сегодня · ${r.start}`:`Неделя · ${r.start} — ${r.end}`;
+    root.append(time);
+    for(const [name,value] of [['Тренировок',r.workouts],['Минут тренировок',r.training_minutes],['Событий расписания',r.events],['Обновлено заметок',r.notes_updated],['Расходы',`${r.expenses} ₽`],['Доходы',`${r.income} ₽`]]){
+      const card=document.createElement('div');card.className='v34-report-card';const label=document.createElement('span');label.textContent=name;const stat=document.createElement('strong');stat.textContent=String(value);card.append(label,stat);root.append(card);
+    }
+  }catch(error){if(root)root.textContent=error.message||'Не удалось сформировать отчёт';}
+}
+function closeReports(){const el=document.getElementById('reports-screen');if(el)el.hidden=true;productLockBody(false);}
+window.openGlobalSearch=openGlobalSearch;
+window.closeGlobalSearch=closeGlobalSearch;
+window.showReport=showReport;
+window.closeReports=closeReports;
+document.addEventListener('DOMContentLoaded',()=>{
+  document.getElementById('v34-open-search')?.addEventListener('click',openGlobalSearch);
+  document.getElementById('v34-open-reports')?.addEventListener('click',()=>showReport('daily'));
+  document.getElementById('global-search-back')?.addEventListener('click',closeGlobalSearch);
+  document.getElementById('global-search-input')?.addEventListener('input',runGlobalSearch);
+  document.getElementById('reports-back')?.addEventListener('click',closeReports);
+  document.querySelectorAll('[data-report-period]').forEach(b=>b.addEventListener('click',()=>showReport(b.dataset.reportPeriod)));
+  document.querySelectorAll('[data-notes-filter]').forEach(b=>b.addEventListener('click',()=>setNotesFilter(b.dataset.notesFilter)));
+  document.getElementById('notes-folder-filter')?.addEventListener('change',renderNotes);
+  document.getElementById('v34-profile-reports')?.addEventListener('click',()=>showReport('daily'));
+  document.getElementById('v34-note-template')?.addEventListener('change',event=>{
+    const template=event.target.value;
+    const body=document.getElementById('note-body-input');if(!body||!template)return;
+    const templates={
+      checklist:'Задачи\n☐ Первый пункт\n☐ Второй пункт\n\nЗаметки:',
+      journal:'Сегодня\n\nЧто получилось:\n\nЧто хочу запомнить:\n\nПланы:',
+      project:'Цель:\n\nЭтапы:\n1. \n2. \n3. \n\nСледующий шаг:',
+      meeting:'Дата и участники:\n\nТемы:\n\nРешения:\n\nЗадачи:'
+    };
+    if(body.value.trim()&&!window.confirm('Заменить текст заметки шаблоном?')){event.target.value='';return;}
+    body.value=templates[template]||'';body.focus();event.target.value='';
+  });
+});

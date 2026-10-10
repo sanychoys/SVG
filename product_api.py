@@ -11,9 +11,11 @@ import mimetypes
 import re
 from urllib.parse import unquote
 from pathlib import Path
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from fastapi import APIRouter, Header, HTTPException, Request
+
+from insights import build_report, search_user_data
 
 from product_db import (
     create_schedule_event,
@@ -109,9 +111,17 @@ def _clean_note_payload(payload: dict) -> dict:
     body = str(payload.get("body") or "").strip()[:12000]
     if not title and not body:
         raise HTTPException(status_code=422, detail="Заметка не может быть пустой")
+    raw_tags = payload.get('tags', [])
+    if not isinstance(raw_tags,list) or len(raw_tags)>12 or any(not isinstance(t,str) for t in raw_tags):
+        raise HTTPException(status_code=422,detail='Некорректные теги')
+    tags = list(dict.fromkeys(t.strip().lstrip('#')[:32] for t in raw_tags if t.strip()))
+    folder = str(payload.get('folder') or '').strip()[:60]
     return {
         "title": title,
         "body": body,
+        "folder":folder,
+        "tags":tags,
+        "favorite":bool(payload.get('favorite')),
         "pinned": bool(payload.get("pinned")),
         "archived": bool(payload.get("archived")),
         "reminder_at": _clean_iso_datetime(payload.get("reminder_at"), "reminder_at", allow_none=True),
@@ -146,6 +156,24 @@ def build_product_router(*, authenticate, bot, main_keyboard, get_user_settings,
         except ValueError as exc:
             raise HTTPException(status_code=422,detail=str(exc)) from exc
         return {"status":"ok","preferences":result}
+
+    @router.get('/api/reports')
+    def reports(request: Request, period: str = 'daily', date: str | None = None,
+                x_telegram_init_data: str | None = Header(default=None)):
+        _,user_id=authenticate(request,x_telegram_init_data)
+        if period not in ('daily','weekly'):
+            raise HTTPException(status_code=422,detail='Недопустимый период')
+        try:
+            return JSONResponse({'status':'ok','report':build_report(user_id,period,date)}, headers={'Cache-Control':'private, no-store'})
+        except ValueError as exc:
+            raise HTTPException(status_code=422,detail=str(exc)) from exc
+
+    @router.get('/api/search')
+    def global_search(request: Request, q: str = '',
+                      x_telegram_init_data: str | None = Header(default=None)):
+        _,user_id=authenticate(request,x_telegram_init_data)
+        if len(q)>120: raise HTTPException(status_code=422,detail='Слишком длинный запрос')
+        return JSONResponse({'status':'ok','results':search_user_data(user_id,q)}, headers={'Cache-Control':'private, no-store'})
 
     @router.post("/api/schedule/availability")
     def schedule_availability(payload: dict, request: Request, x_telegram_init_data: str | None = Header(default=None)):

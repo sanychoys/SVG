@@ -67,6 +67,7 @@ from finance_db import (
     unblock_user,
 )
 
+from insights import build_report, render_report, collect_due_reports
 from product_api import build_product_router
 from product_db import (
     init_product_db,
@@ -83,7 +84,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "33"
+APP_VERSION = "34"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -2356,6 +2357,14 @@ async def bot_reminder_loop():
                     mark_reminder_sent(item["user_id"], item["key"])
                 except Exception:
                     logger.exception("Failed to send %s reminder to Telegram user %s", kind, item.get("telegram_id"))
+            # Daily / weekly opt-in summaries share persistent deduplication log.
+            for item in collect_due_reports():
+                try:
+                    report = build_report(item['user_id'], item['period'], item['date'])
+                    await bot.send_message(chat_id=item['telegram_id'], text=render_report(report), reply_markup=main_keyboard())
+                    mark_reminder_sent(item['user_id'], item['key'])
+                except Exception:
+                    logger.exception('Failed to send %s report to Telegram user %s',item['period'],item['telegram_id'])
         except asyncio.CancelledError:
             raise
         except Exception:

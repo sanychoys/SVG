@@ -30,8 +30,8 @@
   .bootstrap-skeleton-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.bootstrap-skeleton-copy{display:grid;gap:8px}.bootstrap-skeleton-copy span,.bootstrap-skeleton-copy b,.bootstrap-skeleton-copy i,.bootstrap-skeleton-line,.bootstrap-skeleton-stats span,.bootstrap-skeleton-chart,.bootstrap-skeleton-avatar,.bootstrap-skeleton-card{background:linear-gradient(110deg,rgba(255,255,255,.055) 25%,rgba(255,255,255,.11) 38%,rgba(255,255,255,.055) 52%);background-size:220% 100%;animation:svgSkeleton 1.5s ease-in-out infinite}.bootstrap-skeleton-copy span{width:72px;height:10px;border-radius:5px}.bootstrap-skeleton-copy b{width:138px;height:29px;border-radius:9px}.bootstrap-skeleton-copy i{width:168px;height:12px;border-radius:6px}.bootstrap-skeleton-avatar{width:52px;height:52px;border-radius:50%}.bootstrap-skeleton-card{height:150px;border:1px solid rgba(255,255,255,.06);border-radius:24px;box-sizing:border-box}.bootstrap-skeleton-activity{height:286px;padding:22px;margin-bottom:14px;background-color:rgba(255,255,255,.025)}.bootstrap-skeleton-line{height:11px;width:56%;border-radius:6px}.bootstrap-skeleton-line.is-short{width:74px}.bootstrap-skeleton-line.is-title{height:24px;width:126px;margin-top:9px}.bootstrap-skeleton-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:26px}.bootstrap-skeleton-stats span{height:54px;border-radius:14px}.bootstrap-skeleton-chart{height:96px;border-radius:18px;margin-top:22px}.bootstrap-skeleton-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.app-bootstrap-status{margin:18px 0 0;text-align:center;color:rgba(255,255,255,.42);font-size:12px}.app-bootstrap-placeholder.is-slow .app-bootstrap-status{color:rgba(255,255,255,.62)}
   @keyframes svgSkeleton{0%{background-position:120% 0}100%{background-position:-120% 0}}
 </style>
-<link rel="stylesheet" href="/style.css?v=33">
-<link rel="stylesheet" href="/product.css?v=33">
+<link rel="stylesheet" href="/style.css?v=34">
+<link rel="stylesheet" href="/product.css?v=34">
 </head>
 <body>
 <section id="web-auth-gate" class="web-auth-gate" aria-labelledby="web-auth-title">
@@ -98,6 +98,10 @@
     <div class="home-domain-detail-row" data-home-domain="notes"><span class="home-domain-detail-name">Заметки</span><span class="home-domain-detail-value">Нет изменений</span></div>
   </section>
 
+  <nav class="v34-quick-actions" aria-label="Инструменты">
+    <button type="button" id="v34-open-search"><span>⌕</span> Найти</button>
+    <button type="button" id="v34-open-reports"><span>▥</span> Мои отчёты</button>
+  </nav>
   <section class="glass-card activity-card">
     <div class="activity-head">
       <div>
@@ -329,6 +333,7 @@
       <div class="profile-subpage-intro"><span class="profile-section-kicker">УПРАВЛЕНИЕ</span><h2>Настройки</h2><p>Уведомления, приватность и доступ к аккаунту в одном месте.</p></div>
       <section class="profile-group"><p class="profile-group-title">ПРЕДПОЧТЕНИЯ</p><div class="profile-action-list">
         <button type="button" id="open-notification-settings" class="profile-action-row"><span class="profile-list-symbol">♧</span><span class="profile-action-copy"><strong>Telegram-уведомления</strong><small>Запросы, события, заметки, финансы</small></span><span class="profile-chevron">›</span></button>
+        <button type="button" id="v34-profile-reports" class="profile-action-row"><span class="profile-list-symbol">▥</span><span class="profile-action-copy"><strong>Отчёты</strong><small>Итоги дня и недели</small></span><span class="profile-chevron">›</span></button>
         <button type="button" class="profile-action-row" onclick="showProfileView('privacy')"><span class="profile-list-symbol">◈</span><span class="profile-action-copy"><strong>Приватность</strong><small>Доступность и блокировки</small></span><span class="profile-chevron">›</span></button>
         <button type="button" class="profile-action-row" onclick="showProfileView('security')"><span class="profile-list-symbol">⌘</span><span class="profile-action-copy"><strong>Сеансы на устройствах</strong><small>Управление веб-доступом</small></span><span class="profile-chevron">›</span></button>
         <button type="button" class="profile-action-row" onclick="showProfileView('data')"><span class="profile-list-symbol">⇩</span><span class="profile-action-copy"><strong>Экспорт данных</strong><small>Получить архив информации в JSON</small></span><span class="profile-chevron">›</span></button>
@@ -338,7 +343,7 @@
         <button type="button" class="profile-action-row" onclick="copyProfileTelegramId()"><span class="profile-list-symbol">#</span><span class="profile-action-copy"><strong>Telegram ID</strong><small id="profile-telegram-id">—</small></span><span class="profile-chevron">›</span></button>
         <button type="button" id="profile-website-logout" class="profile-action-row profile-web-logout" onclick="logoutWebSession()" hidden><span class="profile-list-symbol">↗</span><span class="profile-action-copy"><strong>Выйти на этом устройстве</strong><small>Завершить текущий веб-сеанс</small></span><span class="profile-chevron">›</span></button>
       </div></section>
-      <p class="profile-version">SVGTracker · V33<br>Имя и фотография берутся из Telegram.</p>
+      <p class="profile-version">SVGTracker · V34<br>Имя и фотография берутся из Telegram.</p>
     </div>
 
     <div id="profile-privacy-view" class="profile-page profile-subpage" hidden>
@@ -488,6 +493,12 @@
 
     <label class="product-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg><input id="notes-search-input" type="search" placeholder="Поиск по заметкам" autocomplete="off" oninput="renderNotes()"></label>
 
+    <div class="v34-note-controls" role="group" aria-label="Фильтры заметок">
+      <button type="button" class="is-active" data-notes-filter="all">Все</button>
+      <button type="button" data-notes-filter="favorites">Избранное</button>
+      <button type="button" data-notes-filter="archive">Архив</button>
+    </div>
+    <label class="v34-folder-filter"><span>Папка</span><select id="notes-folder-filter"><option value="">Все папки</option></select></label>
     <section class="apple-widget product-list-card notes-list-card">
       <div class="widget-header widget-header--tight product-list-head"><div><span class="section-label">Записи</span><h2>Все заметки</h2></div><span id="notes-count" class="product-count-badge">0</span></div>
       <div id="notes-list" class="notes-list"></div>
@@ -496,6 +507,22 @@
     <button type="button" class="product-primary-button" onclick="openNoteEditor()">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Новая заметка</span>
     </button>
+  </div>
+</section>
+
+<section id="global-search-screen" class="product-screen" hidden>
+  <div class="product-shell">
+    <header class="product-header"><button type="button" id="global-search-back" class="apple-action-button product-back" aria-label="Назад">‹</button><div class="product-header-copy"><span class="section-label">ВСЕ СФЕРЫ</span><h1>Поиск</h1><p>Заметки, расписание, финансы, тренировки</p></div></header>
+    <label class="product-search"><span aria-hidden="true">⌕</span><input id="global-search-input" type="search" maxlength="120" autocomplete="off" placeholder="Что найти?"></label>
+    <div class="v34-results" id="global-search-results" aria-live="polite">Введите минимум 2 символа для поиска</div>
+  </div>
+</section>
+<section id="reports-screen" class="product-screen" hidden>
+  <div class="product-shell">
+    <header class="product-header"><button type="button" id="reports-back" class="apple-action-button product-back" aria-label="Назад">‹</button><div class="product-header-copy"><span class="section-label">ЛИЧНАЯ АНАЛИТИКА</span><h1>Отчёты</h1><p>Данные, сохранённые в SVGTracker</p></div></header>
+    <div class="v34-note-controls"><button type="button" data-report-period="daily" class="is-active">Сегодня</button><button type="button" data-report-period="weekly">Эта неделя</button></div>
+    <div class="v34-report-grid" id="reports-results" aria-live="polite"></div>
+    <p class="v34-report-hint">Чтобы получать отчёты в Telegram в 20:00, включи их в профиле → Уведомления.</p>
   </div>
 </section>
 
@@ -902,7 +929,13 @@
     <div class="sheet-heading-row"><div><span class="section-label">Заметка</span><h3 id="note-editor-title">Новая заметка</h3></div><button type="button" class="sheet-close" onclick="closeNoteEditor()">×</button></div>
     <input id="note-edit-id" type="hidden">
     <label class="sheet-field"><span>Заголовок</span><input id="note-title-input" maxlength="120" autocomplete="off" placeholder="Короткое название"></label>
+    <label class="sheet-field"><span>Шаблон записи</span><select id="v34-note-template"><option value="">Без шаблона</option><option value="checklist">Чек-лист</option><option value="journal">Дневник</option><option value="project">План проекта</option><option value="meeting">Заметки встречи</option></select></label>
     <label class="sheet-field"><span>Текст</span><textarea id="note-body-input" rows="8" maxlength="12000" placeholder="Запиши мысль, список или идею"></textarea></label>
+    <label class="sheet-field"><span>Папка</span><input id="note-folder-input" list="note-folder-suggestions" maxlength="60" placeholder="Например, Учёба"></label>
+    <datalist id="note-folder-suggestions"></datalist>
+    <label class="sheet-field"><span>Теги · через запятую</span><input id="note-tags-input" maxlength="450" placeholder="Идеи, важно, проект"></label>
+    <label class="product-toggle-row"><span><strong>Избранное</strong><small>Быстрый доступ к важным заметкам</small></span><span class="ios-switch"><input id="note-favorite-input" type="checkbox"><span class="ios-switch-track"></span></span></label>
+    <label class="product-toggle-row"><span><strong>В архив</strong><small>Убрать из основных заметок, не удаляя</small></span><span class="ios-switch"><input id="note-archived-input" type="checkbox"><span class="ios-switch-track"></span></span></label>
     <section class="note-attachments-section">
       <div class="note-attachments-head"><strong>Вложения</strong><span id="note-attachment-count">0 файлов</span></div>
       <p class="note-attachments-help">Фото, аудио, видео, PDF, текст и другие файлы. До 50 МБ на файл.</p>
@@ -1137,7 +1170,7 @@
 })();
 </script>
 <!-- Keep product.js before script.js: it captures original V28 handlers for V27 deploy compatibility. -->
-<script src="/product.js?v=33" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:product-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:product-failed',{level:'error',asset:'/product.js?v=33'})"></script>
-<script src="/script.js?v=33" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=33'})"></script>
+<script src="/product.js?v=34" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:product-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:product-failed',{level:'error',asset:'/product.js?v=34'})"></script>
+<script src="/script.js?v=34" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=34'})"></script>
 </body>
 </html>

@@ -133,6 +133,15 @@ def init_product_db():
             db.execute("ALTER TABLE schedule_events ADD COLUMN repeat_day_offsets TEXT NOT NULL DEFAULT '[]'")
         if 'recurrence_timezone' not in columns:
             db.execute("ALTER TABLE schedule_events ADD COLUMN recurrence_timezone TEXT NOT NULL DEFAULT 'UTC'")
+        # V34 notes: additive migration, existing notes and attachments are preserved.
+        note_columns = {r['name'] for r in db.execute('PRAGMA table_info(notes)')}
+        if 'folder' not in note_columns:
+            db.execute("ALTER TABLE notes ADD COLUMN folder TEXT NOT NULL DEFAULT ''")
+        if 'tags_json' not in note_columns:
+            db.execute("ALTER TABLE notes ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'")
+        if 'favorite' not in note_columns:
+            db.execute("ALTER TABLE notes ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
+        db.execute('CREATE INDEX IF NOT EXISTS idx_notes_user_folder ON notes(user_id,folder,archived)')
     ensure_attachment_dir()
     # Clean abandoned partial uploads after an interrupted client session.
     cutoff = (datetime.now(timezone.utc)-timedelta(days=1)).isoformat().replace('+00:00','Z')
@@ -373,6 +382,12 @@ def _attachments_for_note(db, user_id, note_id):
 
 def _note_with_attachments(db, row):
     result = dict(row, pinned=bool(row['pinned']), archived=bool(row['archived']))
+    try:
+        tags = json.loads(row['tags_json'] or '[]')
+    except (ValueError, TypeError):
+        tags = []
+    result['tags'] = tags if isinstance(tags, list) else []
+    result['favorite'] = bool(row['favorite'])
     result['attachments'] = _attachments_for_note(db, row['user_id'], row['id'])
     return result
 
@@ -428,16 +443,19 @@ def save_note(user_id, note_id, payload):
         created_at = existing["created_at"] if existing else now
         db.execute(
             """
-            INSERT INTO notes(id,user_id,title,body,pinned,archived,reminder_at,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?)
+            INSERT INTO notes(id,user_id,title,body,pinned,archived,reminder_at,created_at,updated_at,folder,tags_json,favorite)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title,body=excluded.body,pinned=excluded.pinned,archived=excluded.archived,
-                reminder_at=excluded.reminder_at,updated_at=excluded.updated_at
+                reminder_at=excluded.reminder_at,updated_at=excluded.updated_at,
+                folder=excluded.folder,tags_json=excluded.tags_json,favorite=excluded.favorite
             """,
             (
                 note_id,user_id,payload.get("title", ""),payload.get("body", ""),
                 1 if payload.get("pinned") else 0,1 if payload.get("archived") else 0,
                 payload.get("reminder_at"),created_at,now,
+                payload.get('folder',''),json.dumps(payload.get('tags',[]),ensure_ascii=False),
+                1 if payload.get('favorite') else 0,
             ),
         )
         row = db.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
@@ -688,6 +706,7 @@ NOTIFICATION_DEFAULTS = {
     "note_reminders": True, "finance_payments": True, "finance_debts": True,
     "shared_created": True, "shared_updated": True, "shared_removed": True,
     "friend_accepted": True,
+    "daily_report": False, "weekly_report": False,
     "share_busy": False,  # Friends see occupancy only after explicit opt-in
 }
 
