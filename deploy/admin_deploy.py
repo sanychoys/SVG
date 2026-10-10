@@ -429,6 +429,10 @@ def restore_backup(archive: Path, *, restore_db: bool = False) -> dict:
             if src:
                 with dst.open("wb") as out:
                     shutil.copyfileobj(src, out)
+                if rel.parts == (rel.name,) and rel.suffix.lower() in {'.html','.css','.js','.svg','.png','.jpg','.jpeg','.webp','.ico'}:
+                    dst.chmod(0o644)
+                else:
+                    dst.chmod(0o600)
         for rel_name in manifest.get("created_files", []):
             try:
                 rel = safe_rel_path(rel_name)
@@ -508,6 +512,12 @@ def apply_release(extracted: Path, relpaths: list[Path]) -> list[str]:
         dst.parent.mkdir(parents=True, exist_ok=True)
         tmp = dst.with_name(dst.name + ".deploying")
         shutil.copy2(src, tmp)
+        # With UMask=0077 all fresh deploy files are private by default.
+        # Explicitly grant Nginx read access ONLY to public client assets.
+        if rel.parts == (rel.name,) and rel.suffix.lower() in {'.html','.css','.js','.svg','.png','.jpg','.jpeg','.webp','.ico'}:
+            tmp.chmod(0o644)
+        else:
+            tmp.chmod(0o600)
         os.replace(tmp, dst)
         changed.append(rel.as_posix())
     unit_changed = False

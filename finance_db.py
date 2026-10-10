@@ -41,8 +41,21 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Close SQLite handles on context exit, not just commit/rollback.
+
+    sqlite3.Connection.__exit__ alone does NOT close a connection. This fixes
+    connection descriptor leaks on common API paths which use `with connect()`.
+    """
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def connect():
-    db = sqlite3.connect(DB_PATH, timeout=30)
+    db = sqlite3.connect(DB_PATH, timeout=30, factory=_ClosingConnection)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
     db.execute("PRAGMA busy_timeout = 5000")

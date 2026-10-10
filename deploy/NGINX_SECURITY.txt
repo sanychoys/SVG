@@ -1,0 +1,32 @@
+# SVGTracker V36 — Nginx security policy template (NOT applied automatically)
+# Include the following location blocks inside the EXISTING TLS server {}
+# for starslix.ru, after adapting the document root as needed. Keep your
+# existing listen 443 ssl / ssl_certificate / ssl_certificate_key settings.
+# Do NOT paste an entire server {} block without reviewing live config.
+#
+# Upstream FastAPI is now bound to 127.0.0.1:8000 by default.
+#
+# Prefix API routes are proxied; never serve them as files.
+location ^~ /api/ {
+    client_max_body_size 2m; # chunks < 768 KiB; other API data <= 2 MiB
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 60s;
+    add_header X-Content-Type-Options nosniff always;
+}
+# Deny hidden files and any unexpected path. Do not use "try_files $uri"
+# as catch-all: project root contains SQLite, deployment helpers and secrets.
+location = / { try_files /index.html =404; }
+location = /index.html { try_files /index.html =404; add_header Cache-Control 'no-store' always; }
+location ~ ^/(?:script|product)\.js$ { try_files $uri =404; add_header X-Content-Type-Options nosniff always; }
+location ~ ^/(?:style|product)\.css$ { try_files $uri =404; add_header X-Content-Type-Options nosniff always; }
+# Adapt this allowlist ONLY when a genuinely required static asset is added.
+location / { return 404; }
+# For Telegram Mini App do not force X-Frame-Options DENY on HTML without
+# testing embedding. Set web-page CSP separately after inline JS refactoring.
+# Deploy manually (with a backup): sudo nginx -t && sudo systemctl reload nginx
+# Verify responses: /svgtracker.db, /config.py, /.env, /.git/config,
+# /deploy/admin_deploy.py, /venv/pyvenv.cfg must all return 403 or 404.

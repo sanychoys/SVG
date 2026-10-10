@@ -2,6 +2,7 @@ import asyncio
 import ctypes
 import gc
 import resource
+import stat
 import hashlib
 import hmac
 import json
@@ -18,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlsplit
 from urllib import request as urllib_request
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -85,7 +86,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "34"
+APP_VERSION = "36"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -962,18 +963,49 @@ def finance_state_for_shortcut(user_id):
     return state
 
 
+def protect_account_files() -> dict:
+    """Block accidental reads by the web server OS account after startup.
+
+    This complements Nginx denial rules; SQLite remains unencrypted on disk.
+    """
+    protected = ("config.py", ".env", "svgtracker.db", "svgtracker.db-wal", "svgtracker.db-shm")
+    base = Path(__file__).resolve().parent
+    results = {"secured": [], "errors": []}
+    for filename in protected:
+        path = base / filename
+        try:
+            if path.is_symlink():
+                results["errors"].append(filename + ': symlink is not permitted for private files')
+                continue
+            if path.is_file():
+                os.chmod(path, 0o600)
+                results["secured"].append(filename)
+        except OSError as exc:
+            results["errors"].append(filename + ': ' + type(exc).__name__)
+    for issue in results['errors']:
+        logger.warning('Private file protection: %s', issue)
+    return results
+
+
 def verify_telegram_init_data(init_data: str):
     if not init_data:
         raise HTTPException(status_code=401, detail="Telegram init data is required")
+    if len(init_data) > 8192:
+        raise HTTPException(status_code=401, detail="Invalid Telegram init data")
 
     try:
-        values = dict(parse_qsl(init_data, keep_blank_values=True))
+        pairs = parse_qsl(init_data, keep_blank_values=True, strict_parsing=True, max_num_fields=40)
+        values = dict(pairs)
+        if len(values) != len(pairs):
+            raise ValueError('Duplicate Telegram init data parameter')
         received_hash = values.pop("hash")
+        if len(received_hash) != 64 or any(c not in '0123456789abcdefABCDEF' for c in received_hash):
+            raise ValueError('Invalid signature format')
         auth_date = int(values.get("auth_date", "0"))
     except (KeyError, TypeError, ValueError):
         raise HTTPException(status_code=401, detail="Invalid Telegram init data")
 
-    if not auth_date or abs(int(time.time()) - auth_date) > INIT_DATA_MAX_AGE_SECONDS:
+    if not auth_date or not (-60 <= int(time.time()) - auth_date <= INIT_DATA_MAX_AGE_SECONDS):
         raise HTTPException(status_code=401, detail="Telegram init data has expired")
 
     data_check_string = "\n".join(f"{key}={values[key]}" for key in sorted(values))
@@ -990,7 +1022,7 @@ def verify_telegram_init_data(init_data: str):
     except (KeyError, TypeError, json.JSONDecodeError):
         raise HTTPException(status_code=401, detail="Telegram user is missing")
 
-    if not isinstance(user, dict) or "id" not in user:
+    if not isinstance(user, dict) or type(user.get('id')) is not int or user['id'] <= 0:
         raise HTTPException(status_code=401, detail="Telegram user is invalid")
     return user
 
@@ -1041,6 +1073,56 @@ def web_user_payload(record: dict) -> dict:
         "last_name": record.get("last_name"),
         "photo_url": record.get("photo_url"),
     }
+
+
+def _allowed_website_origin(value: str) -> bool:
+    """Check the actual Origin/Referer against configured public site origin."""
+    if not value or len(value) > 2048:
+        return False
+    try:
+        parts = urlsplit(value)
+        expected = urlsplit(PUBLIC_BASE_URL)
+        if parts.username or parts.password or parts.fragment or parts.scheme != expected.scheme:
+            return False
+        return parts.netloc.lower() == expected.netloc.lower() and parts.scheme in ('https', 'http')
+    except (TypeError, ValueError):
+        return False
+
+
+@app.middleware("http")
+async def secure_http_requests(request: Request, call_next):
+    """Server-side controls for cookie sessions and sensitive API responses."""
+    path = request.url.path
+    is_api = path.startswith('/api/')
+    unsafe = request.method.upper() in ('POST', 'PUT', 'PATCH', 'DELETE')
+    # Only cookie-authenticated writes require CSRF protection. Signed Telegram
+    # initData or a Shortcut Bearer header is unaffected.
+    if (is_api and unsafe and request.cookies.get(WEB_SESSION_COOKIE)
+            and not request.headers.get('x-telegram-init-data')
+            and not request.headers.get('authorization', '').startswith('Bearer ')):
+        source = request.headers.get('origin') or request.headers.get('referer', '')
+        if not _allowed_website_origin(source):
+            return JSONResponse(status_code=403, content={'detail': 'Origin check failed'},
+                                headers={'Cache-Control': 'no-store'})
+    # Reject obviously oversized API JSON bodies before FastAPI parses them.
+    if is_api and unsafe and '/attachments/chunks' not in path:
+        content_length = request.headers.get('content-length')
+        if content_length:
+            try:
+                if int(content_length) < 0:
+                    raise ValueError()
+                if int(content_length) > 2 * 1024 * 1024:
+                    return JSONResponse(status_code=413, content={'detail': 'Payload too large'})
+            except ValueError:
+                return JSONResponse(status_code=400, content={'detail': 'Invalid Content-Length'})
+    response = await call_next(request)
+    if is_api:
+        response.headers['Cache-Control'] = 'private, no-store'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['Referrer-Policy'] = 'no-referrer'
+        response.headers['Content-Security-Policy'] = "default-src 'none'; frame-ancestors 'none'"
+    return response
 
 
 @app.middleware("http")
@@ -2416,6 +2498,7 @@ async def main():
     init_db()
     init_product_db()
     init_intelligence_db()
+    protect_account_files()
     logger.info("SVGTracker starting")
 
     # Keep thread pools deliberately small. FastAPI/AnyIO otherwise may retain
@@ -2430,7 +2513,7 @@ async def main():
 
     await setup_bot_commands()
 
-    api_config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
+    api_config = uvicorn.Config(app, host=os.environ.get('SVGTRACKER_BIND_HOST', '127.0.0.1'), port=8000, log_level="info", server_header=False)
     api_server = uvicorn.Server(api_config)
     bot_task = asyncio.create_task(dp.start_polling(bot), name="telegram-polling")
     api_task = asyncio.create_task(api_server.serve(), name="uvicorn-api")
