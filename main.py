@@ -86,7 +86,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "36"
+APP_VERSION = "37"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -1140,6 +1140,21 @@ async def monitor_http_errors(request: Request, call_next):
 
 @app.get("/api/test")
 def api_test():
+    """Deploy readiness: HTTP alone is insufficient if SQLite init failed.
+
+    Use read-only queries so repeated watchdog/deploy checks do not mutate
+    user records or hold SQLite write locks.
+    """
+    try:
+        with connect() as db:
+            for table in (
+                "users", "user_settings", "training_state", "finance_state",
+                "schedule_events", "notes", "automation_rules",
+            ):
+                db.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+    except sqlite3.Error as exc:
+        logger.warning("Health check: SQLite is not ready (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Database is not ready") from exc
     return {"status": "ok", "service": "SVGTracker API", "version": APP_VERSION}
 
 

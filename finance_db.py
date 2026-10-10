@@ -202,49 +202,59 @@ def init_db():
 
 
 def get_or_create_user(data):
+    """Idempotently resolve a Telegram account under concurrent API requests.
+
+    Telegram Mini App starts several HTTP requests in parallel. A SELECT then
+    unguarded INSERT races when the account is new: both requests observe no
+    row and one hits UNIQUE(users.telegram_id). Use an atomic SQLite UPSERT.
+
+    Most requests supply the same profile metadata; use a read-only fast path
+    for those to avoid unnecessary SQLite write locks on every API GET.
+    The write path stays atomic even if another request inserts the user after
+    the fast-path SELECT.
+    """
     telegram_id = str(data["id"])
+    fields = ("username", "first_name", "last_name", "photo_url")
+    attrs = tuple(data.get(name) for name in fields)
+
     with connect() as db:
         row = db.execute(
-            "SELECT id FROM users WHERE telegram_id=?", (telegram_id,)
+            """SELECT u.id, u.username, u.first_name, u.last_name, u.photo_url,
+                      s.user_id AS settings_user_id
+               FROM users AS u
+               LEFT JOIN user_settings AS s ON s.user_id = u.id
+               WHERE u.telegram_id = ?""",
+            (telegram_id,),
         ).fetchone()
-        now = utc_now()
-        if row:
-            db.execute(
-                """
-                UPDATE users SET
-                    username=COALESCE(?, username),
-                    first_name=COALESCE(?, first_name),
-                    last_name=COALESCE(?, last_name),
-                    photo_url=COALESCE(?, photo_url)
-                WHERE id=?
-                """,
-                (
-                    data.get("username"),
-                    data.get("first_name"),
-                    data.get("last_name"),
-                    data.get("photo_url"),
-                    row["id"],
-                ),
-            )
-            db.execute(
-                "INSERT OR IGNORE INTO user_settings(user_id, bot_notifications, friend_request_notifications, updated_at) VALUES(?,1,1,?)",
-                (row["id"], now),
-            )
+        if row and row["settings_user_id"] is not None and all(
+            value is None or value == row[name]
+            for name, value in zip(fields, attrs)
+        ):
             return row["id"]
-        cur = db.execute(
-            "INSERT INTO users(telegram_id,username,first_name,last_name,photo_url,created_at) VALUES(?,?,?,?,?,?)",
-            (
-                telegram_id,
-                data.get("username"),
-                data.get("first_name"),
-                data.get("last_name"),
-                data.get("photo_url"),
-                now,
-            ),
-        )
-        user_id = cur.lastrowid
+
+        now = utc_now()
+        # SQLite serializes conflicting UPSERT statements on the unique
+        # telegram_id index. Unlike the old SELECT/INSERT split this cannot
+        # raise UNIQUE constraint errors from two normal Mini App requests.
         db.execute(
-            "INSERT INTO user_settings(user_id, bot_notifications, friend_request_notifications, updated_at) VALUES(?,1,1,?)",
+            """INSERT INTO users
+                 (telegram_id, username, first_name, last_name, photo_url, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(telegram_id) DO UPDATE SET
+                   username = COALESCE(excluded.username, users.username),
+                   first_name = COALESCE(excluded.first_name, users.first_name),
+                   last_name = COALESCE(excluded.last_name, users.last_name),
+                   photo_url = COALESCE(excluded.photo_url, users.photo_url)""",
+            (telegram_id, *attrs, now),
+        )
+        user_id = db.execute(
+            "SELECT id FROM users WHERE telegram_id = ?", (telegram_id,)
+        ).fetchone()["id"]
+        db.execute(
+            """INSERT INTO user_settings
+                 (user_id, bot_notifications, friend_request_notifications, updated_at)
+               VALUES (?, 1, 1, ?)
+               ON CONFLICT(user_id) DO NOTHING""",
             (user_id, now),
         )
         return user_id
