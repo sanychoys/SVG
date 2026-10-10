@@ -33,6 +33,7 @@ import uvicorn
 from config import BOT_TOKEN
 from key import main_keyboard
 from finance_db import (
+    connect,
     block_user,
     create_friend_request,
     cancel_friend_request,
@@ -45,6 +46,8 @@ from finance_db import (
     revoke_web_session,
     get_or_create_user,
     get_profile_data,
+    list_user_web_sessions,
+    revoke_user_web_sessions,
     get_user_by_shortcut_token,
     get_training_state,
     get_finance_state,
@@ -70,6 +73,9 @@ from product_db import (
     collect_due_reminders,
     mark_reminder_sent,
     notification_enabled,
+    get_notification_preferences,
+    list_schedule_events,
+    list_notes,
     reset_product_data_for_telegram,
 )
 
@@ -77,7 +83,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "31"
+APP_VERSION = "33"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -1393,6 +1399,54 @@ async def api_shortcut_finance_transaction(
 def api_profile(request: Request, x_telegram_init_data: str | None = Header(default=None)):
     _, user_id = authenticated_user(request, x_telegram_init_data)
     return {"status": "ok", **get_profile_data(user_id)}
+
+@app.get("/api/profile/security")
+def api_profile_security(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    user, user_id = authenticated_user(request, x_telegram_init_data)
+    sessions = list_user_web_sessions(user_id, request.cookies.get(WEB_SESSION_COOKIE, ""))
+    return {"status": "ok", "sessions": sessions, "count": len(sessions)}
+
+
+@app.post("/api/profile/sessions/revoke")
+def api_profile_revoke_sessions(payload: dict, request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(request, x_telegram_init_data)
+    mode = payload.get("mode")
+    try:
+        count = revoke_user_web_sessions(user_id, mode=mode, session_id=payload.get("session_id"),
+                                         current_token=request.cookies.get(WEB_SESSION_COOKIE, ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"status": "ok", "revoked": count}
+
+
+@app.get("/api/profile/export")
+def api_profile_export(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    """Owner-only JSON backup. Never expose token hashes, credentials or file bytes."""
+    user, user_id = authenticated_user(request, x_telegram_init_data)
+    training = get_training_state(user_id)
+    finance = get_finance_state(user_id)
+    with connect() as db:
+        record = db.execute('SELECT created_at FROM users WHERE id=?',(user_id,)).fetchone()
+    body = {
+        'format': 'svgtracker-export-v1',
+        'exported_at': datetime.now(timezone.utc).isoformat(),
+        'account': {'telegram_id': user.get('id'), 'username':user.get('username'),
+                    'first_name':user.get('first_name'), 'last_name':user.get('last_name'),
+                    'created_at':record['created_at'] if record else None},
+        'settings': get_user_settings(user_id),
+        'notification_preferences':get_notification_preferences(user_id),
+        'friends': get_profile_data(user_id),
+        'training':training['state'] if training else None,
+        'finance':finance['state'] if finance else None,
+        'schedule':list_schedule_events(user_id),
+        'notes':list_notes(user_id,include_archived=True),
+        'attachment_notice':'Included: attachment metadata only, not file contents.'
+    }
+    return JSONResponse(body, headers={
+        'Cache-Control':'no-store, private',
+        'Content-Disposition':'attachment; filename="svgtracker-account-export.json"',
+        'X-Content-Type-Options':'nosniff',
+    })
 
 
 @app.put("/api/profile/notifications")

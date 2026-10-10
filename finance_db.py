@@ -498,6 +498,43 @@ def revoke_web_session(token):
         return cur.rowcount > 0
 
 
+def list_user_web_sessions(user_id, current_token=''):
+    """Public, privacy-minimised web session inventory for its owner."""
+    current_hash = hashlib.sha256(str(current_token).encode('utf-8')).hexdigest() if current_token else None
+    now = utc_now()
+    with connect() as db:
+        rows = db.execute(
+            """SELECT session_hash, created_at, last_seen_at, expires_at
+               FROM web_sessions WHERE user_id=? AND revoked_at IS NULL AND expires_at>?
+               ORDER BY COALESCE(last_seen_at,created_at) DESC LIMIT 100""",
+            (user_id, now),
+        ).fetchall()
+    return [{"id": row['session_hash'][:20], "created_at":row['created_at'],
+             "last_seen_at":row['last_seen_at'],"expires_at":row['expires_at'],
+             "current":row['session_hash']==current_hash} for row in rows]
+
+
+def revoke_user_web_sessions(user_id, mode='others', session_id=None, current_token=''):
+    """Revoke only the caller's sessions. One-session IDs are a hash prefix, not tokens."""
+    current_hash = hashlib.sha256(str(current_token).encode('utf-8')).hexdigest() if current_token else None
+    if mode not in {'others', 'one'}:
+        raise ValueError('Invalid revocation mode')
+    if mode == 'one' and (not isinstance(session_id,str) or len(session_id)!=20 or any(c not in '0123456789abcdef' for c in session_id)):
+        raise ValueError('Invalid session identifier')
+    now=utc_now()
+    with connect() as db:
+        if mode == 'others':
+            if current_hash:
+                result=db.execute("UPDATE web_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL AND expires_at>? AND session_hash!=?",(now,user_id,now,current_hash))
+            else:
+                result=db.execute("UPDATE web_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL AND expires_at>?",(now,user_id,now))
+        else:
+            if current_hash and session_id==current_hash[:20]:
+                raise ValueError('Current session must use logout')
+            result=db.execute("UPDATE web_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL AND expires_at>? AND substr(session_hash,1,20)=?",(now,user_id,now,session_id))
+        return result.rowcount
+
+
 def get_user_settings(user_id):
     with connect() as db:
         row = db.execute(

@@ -518,7 +518,13 @@ async function saveNotificationPreference(key,enabled){
     const res=await fetch('/api/notifications/preferences',{method:'PUT',headers:productHeaders(true),body:JSON.stringify({preferences:{[key]:enabled}})});
     const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.detail||'Не удалось сохранить');
     notificationPreferencesCache=data.preferences;productNotificationStatus('Сохранено');
-    if(key==='share_busy'&&scheduleViewMode==='availability')loadScheduleAvailability();
+    if(key==='share_busy'){
+      // Keep the dedicated profile privacy view in sync with this shared preference.
+      if(typeof profilePrivacyPreferences!=='undefined')profilePrivacyPreferences={...notificationPreferencesCache};
+      const summary=document.getElementById('profile-privacy-summary');
+      if(summary)summary.textContent=enabled?'Друзья видят занятость':'Занятость скрыта от друзей';
+      if(scheduleViewMode==='availability')loadScheduleAvailability();
+    }
   }catch(error){notificationPreferencesCache[key]=previous;productNotificationStatus(error?.message||'Не удалось сохранить');productToast('Настройки не сохранены');}
   finally{notificationSettingsBusy=false;paintNotificationPreferences();}
 }
