@@ -3393,14 +3393,103 @@ async function loadProfileData(force = false) {
   }
 }
 
+let profilePreviousFocus = null;
+let profileActiveView = 'home';
+function showProfileView(view='home') {
+  const home=document.getElementById('profile-home-view');
+  const settings=document.getElementById('profile-settings-view');
+  const panel=document.querySelector('#profile-drawer .profile-drawer-panel');
+  if(!home||!settings||!panel)return;
+  profileActiveView=view==='settings'?'settings':'home';
+  home.hidden=profileActiveView!=='home';
+  settings.hidden=profileActiveView!=='settings';
+  const title=document.getElementById('profile-view-title');
+  if(title)title.textContent=profileActiveView==='settings'?'Настройки':'Профиль';
+  const shortcut=document.getElementById('profile-settings-shortcut');
+  if(shortcut)shortcut.hidden=profileActiveView==='settings';
+  const back=document.getElementById('profile-back');
+  if(back)back.setAttribute('aria-label',profileActiveView==='settings'?'Вернуться к профилю':'Закрыть профиль');
+  panel.scrollTop=0;
+  renderProfileState();
+}
+function profileBackNavigation(){
+  if(profileActiveView==='settings')showProfileView('home');
+  else closeProfileDrawer();
+}
+function profileOpenNotificationSettings(){
+  if(typeof window.openNotificationSettings==='function')window.openNotificationSettings();
+  else showToast('Настройки уведомлений временно недоступны');
+}
+function profileOpenSection(section){
+  const destinations={schedule:'openSchedule',notes:'openNotes',training:'openTraining',finance:'openFinance'};
+  const handler=window[destinations[section]];
+  if(typeof handler!=='function'){showToast('Раздел временно недоступен');return;}
+  closeProfileDrawer(true);
+  handler();
+}
+function toggleProfileDomains(){
+  const details=document.getElementById('profile-domain-breakdown');
+  const toggle=document.getElementById('profile-domains-toggle');
+  if(!details||!toggle)return;
+  details.hidden=!details.hidden;
+  toggle.setAttribute('aria-expanded',String(!details.hidden));
+  if(!details.hidden)renderProfileState();
+}
+function renderProfileOverview(){
+  const today=new Date();
+  let domains=[];
+  try { domains=getTodayActiveDomainDetails(today); } catch(error) { svgDiag('profile:activity-error',{level:'warning',message:error?.message||String(error)}); }
+  const active=domains.filter(domain=>domain.count>0).length;
+  for(const domain of domains){
+    const row=document.querySelector(`[data-profile-domain="${domain.id}"]`);
+    if(!row)continue;
+    row.classList.toggle('is-active',domain.count>0);
+    const result=row.querySelector('.profile-domain-result');
+    if(result)result.textContent=domain.detail;
+  }
+  const friends=(profileState.friends||[]).length;
+  const notes=(Array.isArray(notesData)?notesData:[]).filter(note=>note?.archived!==true).length;
+  const updates={
+    'profile-active-count':`${active}/4`,
+    'profile-friends-metric':String(friends),
+    'profile-notes-metric':String(notes),
+    'profile-mini-schedule':(domains.find(d=>d.id==='schedule')?.detail||'На сегодня событий нет'),
+    'profile-mini-notes':notes?`${notes} ${notes===1?'заметка':notes<5?'заметки':'заметок'}`:'Нет заметок',
+    'profile-mini-training':(domains.find(d=>d.id==='training')?.detail||'Нет тренировок'),
+    'profile-mini-finance':`Сегодня ${formatRubles(Math.abs(Number(financeCashSpentForDateV28(today))||0))}`
+  };
+  for(const [id,value] of Object.entries(updates)){
+    const element=document.getElementById(id);if(element)element.textContent=value;
+  }
+  const incoming=(profileState.incoming||[]).length;
+  const banner=document.getElementById('profile-incoming-banner');
+  const label=document.getElementById('profile-incoming-label');
+  if(banner)banner.hidden=incoming===0;
+  if(label)label.textContent=`${incoming} ${incoming===1?'запрос ожидает':'запроса ожидают'} ответа`;
+  const notif=document.getElementById('profile-notification-summary');
+  if(notif)notif.textContent=profileState.bot_notifications_enabled===false?'Все уведомления выключены':'Выбрать категории уведомлений';
+  const handle=document.getElementById('profile-settings-handle');
+  const user=window.SVG_TELEGRAM_USER;
+  if(handle)handle.textContent=user?.username?`@${user.username}`:'Username не указан';
+  const copy=document.getElementById('profile-settings-username');
+  if(copy)copy.disabled=!user?.username;
+  const logout=document.getElementById('profile-website-logout');
+  if(logout)logout.hidden=!document.documentElement.classList.contains('svg-web');
+}
 function openProfileDrawer() {
   const drawer = document.getElementById('profile-drawer');
   if (!drawer) return;
+  if(!drawer.hidden)return;
+  profilePreviousFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
+  closeSheets();
   drawer.hidden = false;
   document.body.classList.add('profile-drawer-open');
-  requestAnimationFrame(() => drawer.classList.add('is-open'));
-  renderProfileState();
+  showProfileView('home');
+  requestAnimationFrame(() => { drawer.classList.add('is-open'); document.getElementById('profile-back')?.focus({preventScroll:true}); });
   loadProfileData(true);
+  if(typeof syncScheduleNotesWithServer==='function')syncScheduleNotesWithServer().finally(()=>{
+    if(!drawer.hidden)renderProfileState();
+  });
 }
 
 function closeProfileDrawer(immediate = false) {
@@ -3408,6 +3497,7 @@ function closeProfileDrawer(immediate = false) {
   if (!drawer || drawer.hidden) return;
   drawer.classList.remove('is-open');
   document.body.classList.remove('profile-drawer-open');
+  if(profilePreviousFocus?.isConnected && !immediate)profilePreviousFocus.focus({preventScroll:true});
   if (immediate) drawer.hidden = true;
   else setTimeout(() => { if (!drawer.classList.contains('is-open')) drawer.hidden = true; }, 220);
 }
@@ -4463,6 +4553,7 @@ function renderProfileState() {
     if(user?.photo_url){const image=document.createElement('img');image.src=user.photo_url;image.alt='';image.onerror=()=>{image.remove();avatar.textContent=letter;};avatar.replaceChildren(image);}
   }
   if(status)status.textContent=!hasServerAuth()?'Требуется авторизация через Telegram':incoming?`${incoming} ${incoming===1?'запрос ждёт ответа':'запроса ждут ответа'}`:'Профиль синхронизирован с Telegram';
+  renderProfileOverview();
 }
 
 async function copyTextV15(text) {
@@ -4572,3 +4663,21 @@ function openWeeklyScheduleEditor(...args) { return svgtrackerCallProductHandler
 function selectNoteFiles(...args) { return svgtrackerCallProductHandler('selectNoteFiles',args); }
 function closeNotePreview(...args) { return svgtrackerCallProductHandler('closeNotePreview',args); }
 function closeNotePreviewOnBackdrop(...args) { return svgtrackerCallProductHandler('closeNotePreviewOnBackdrop',args); }
+
+/* Profile screen keyboard navigation. Notification and social dialogs handle their own dismissal. */
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Escape'||document.getElementById('profile-drawer')?.hidden)return;
+  if(Array.from(document.querySelectorAll('.ios-sheet')).some(sheet=>!sheet.hidden))return;
+  event.preventDefault();profileBackNavigation();
+});
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Tab')return;
+  const drawer=document.getElementById('profile-drawer');
+  if(!drawer||drawer.hidden)return;
+  const controls=[...drawer.querySelectorAll('button:not([disabled]):not([hidden])')]
+    .filter(node=>!node.closest('[hidden]')&&node.getClientRects().length>0);
+  if(!controls.length)return;
+  const first=controls[0],last=controls[controls.length-1];
+  if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+  else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+});
