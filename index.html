@@ -259,115 +259,90 @@
       </button>
     </nav>
 
-    <div id="profile-home-view" class="profile-page">
-      <header class="profile-identity">
+    <div id="profile-home-view" class="profile-page profile-home-v33">
+      <header class="profile-identity profile-identity-v33">
         <div id="profile-drawer-avatar" class="profile-drawer-avatar" aria-hidden="true">S</div>
-        <span class="profile-identity-tag">ЛИЧНЫЙ АККАУНТ</span>
-        <h2 id="profile-drawer-title">Пользователь</h2>
-        <button type="button" id="profile-drawer-username" class="profile-username-copy" onclick="copyProfileUsername()" aria-label="Скопировать Telegram username">Telegram</button>
-        <p class="profile-identity-status"><span aria-hidden="true"></span><span id="profile-drawer-status">Синхронизация с Telegram</span></p>
+        <div class="profile-id-copy">
+          <span class="profile-section-kicker">АККАУНТ TELEGRAM</span>
+          <h2 id="profile-drawer-title">Пользователь</h2>
+          <button type="button" id="profile-drawer-username" class="profile-username-copy" onclick="copyProfileUsername()" aria-label="Скопировать Telegram username">Telegram</button>
+        </div>
       </header>
-
-      <section class="profile-overview" aria-label="Твои показатели">
-        <span class="profile-section-kicker">ТВОЙ ДЕНЬ</span>
-        <div class="profile-overview-grid">
-          <button type="button" id="profile-domains-toggle" class="profile-metric" onclick="toggleProfileDomains()" aria-expanded="false" aria-controls="profile-domain-breakdown" aria-label="Показать активность по сферам">
-            <strong id="profile-active-count">—</strong><small>Активные сферы</small>
-          </button>
-          <button type="button" class="profile-metric" onclick="openFriendsSheet()" aria-label="Открыть друзей">
-            <strong id="profile-friends-metric">—</strong><small>Друзья</small>
-          </button>
-          <button type="button" class="profile-metric" onclick="profileOpenSection('notes')" aria-label="Открыть заметки">
-            <strong id="profile-notes-metric">—</strong><small>Заметки</small>
+      <div class="profile-account-tools">
+        <button type="button" id="profile-invite-button" class="profile-invite-button" onclick="shareProfileContact()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5V3.5m0 0L7.5 8m4.5-4.5L16.5 8M4.5 14.5v4A2 2 0 0 0 6.5 20.5h11a2 2 0 0 0 2-2v-4"/></svg>
+          <span>Поделиться контактом</span>
+        </button>
+        <div class="profile-sync-line">
+          <span id="profile-drawer-status" aria-live="polite">Проверяем подключение…</span>
+          <button type="button" id="profile-refresh-button" onclick="refreshProfileAccount()" aria-label="Обновить профиль" title="Обновить профиль">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 8.5A8.5 8.5 0 1 0 20.5 13M20 4.5v4h-4"/></svg>
           </button>
         </div>
-        <div id="profile-domain-breakdown" class="profile-domain-breakdown" aria-label="Активность по сферам" hidden>
-          <div data-profile-domain="training"><span>Тренировки</span><span class="profile-domain-result">—</span></div>
-          <div data-profile-domain="finance"><span>Финансы</span><span class="profile-domain-result">—</span></div>
-          <div data-profile-domain="schedule"><span>Расписание</span><span class="profile-domain-result">—</span></div>
-          <div data-profile-domain="notes"><span>Заметки</span><span class="profile-domain-result">—</span></div>
-        </div>
-        <p class="profile-overview-footnote">Нажми «Активные сферы», чтобы посмотреть подробности.</p>
-      </section>
+      </div>
 
       <button type="button" id="profile-incoming-banner" class="profile-incoming-banner" onclick="openFriendsSheet()" hidden>
         <span class="profile-incoming-mark" aria-hidden="true">+</span>
-        <span><strong>Новые запросы в друзья</strong><small id="profile-incoming-label">Ожидают ответа</small></span>
+        <span><strong>Запросы в друзья</strong><small id="profile-incoming-label">Ожидают ответа</small></span>
         <span class="profile-chevron" aria-hidden="true">›</span>
       </button>
 
-      <section class="profile-quick" aria-labelledby="profile-quick-title">
-        <div class="profile-section-heading"><h3 id="profile-quick-title">Мои разделы</h3><span>Быстрый доступ</span></div>
-        <div class="profile-quick-grid">
-          <button type="button" class="profile-quick-tile" onclick="profileOpenSection('schedule')">
-            <span class="profile-quick-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M7.5 3.4v3.4M16.5 3.4v3.4M3.5 10h17"/></svg></span>
-            <strong>Расписание</strong><small id="profile-mini-schedule">Сегодня событий нет</small>
-          </button>
-          <button type="button" class="profile-quick-tile" onclick="profileOpenSection('notes')">
-            <span class="profile-quick-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h8l4 4v12A1.5 1.5 0 0 1 17.5 21h-11A1.5 1.5 0 0 1 5 19.5v-14A2 2 0 0 1 7 3.5Z"/><path d="M15 3.5v5h4M8.5 13h7M8.5 17h5"/></svg></span>
-            <strong>Заметки</strong><small id="profile-mini-notes">Нет заметок</small>
-          </button>
-          <button type="button" class="profile-quick-tile" onclick="profileOpenSection('training')">
-            <span class="profile-quick-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 10v4M6 8v8M18 8v8M20.5 10v4M6 12h12"/></svg></span>
-            <strong>Тренировки</strong><small id="profile-mini-training">Нет активности</small>
-          </button>
-          <button type="button" class="profile-quick-tile" onclick="profileOpenSection('finance')">
-            <span class="profile-quick-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5.5" width="18" height="14" rx="3"/><path d="M3 10h18M16.5 15h2"/></svg></span>
-            <strong>Финансы</strong><small id="profile-mini-finance">Сегодня 0 ₽</small>
-          </button>
-        </div>
-      </section>
-
-      <section class="profile-group" aria-label="Сообщество">
-        <p class="profile-group-title">ЛЮДИ</p>
+      <section class="profile-group" aria-label="Друзья">
+        <p class="profile-group-title">ОБЩЕНИЕ</p>
         <div class="profile-action-list">
           <button type="button" class="profile-action-row" onclick="openFriendsSheet()">
             <span class="profile-list-symbol" aria-hidden="true">◎</span>
-            <span class="profile-action-copy"><strong>Мои друзья</strong><small id="profile-friends-summary">Друзей пока нет</small></span>
+            <span class="profile-action-copy"><strong>Друзья</strong><small id="profile-friends-summary">Управление контактами</small></span>
             <span class="profile-action-meta"><b id="profile-friends-count">0</b><span class="profile-chevron">›</span></span>
           </button>
           <button type="button" class="profile-action-row" onclick="openAddFriendSheet()">
             <span class="profile-list-symbol" aria-hidden="true">＋</span>
-            <span class="profile-action-copy"><strong>Добавить друга</strong><small>По Telegram username</small></span>
+            <span class="profile-action-copy"><strong>Добавить друга</strong><small>По имени @username в Telegram</small></span>
             <span class="profile-action-meta"><span class="profile-chevron">›</span></span>
           </button>
         </div>
       </section>
-      <section class="profile-group" aria-label="Управление">
-        <p class="profile-group-title">УПРАВЛЕНИЕ</p>
+      <section class="profile-group" aria-label="Управление профилем">
+        <p class="profile-group-title">ПРОФИЛЬ</p>
         <div class="profile-action-list">
           <button type="button" class="profile-action-row" onclick="showProfileView('settings')">
             <span class="profile-list-symbol" aria-hidden="true">⚙</span>
             <span class="profile-action-copy"><strong>Настройки</strong><small>Уведомления, приватность, аккаунт</small></span>
             <span class="profile-action-meta"><span class="profile-chevron">›</span></span>
           </button>
+          <button type="button" class="profile-action-row" onclick="showProfileView('help')">
+            <span class="profile-list-symbol" aria-hidden="true">?</span>
+            <span class="profile-action-copy"><strong>Помощь</strong><small>Как работают друзья и совместное расписание</small></span>
+            <span class="profile-action-meta"><span class="profile-chevron">›</span></span>
+          </button>
         </div>
       </section>
+      <p class="profile-version profile-home-version">SVGTracker · V33</p>
     </div>
 
     <div id="profile-settings-view" class="profile-page profile-settings-view" hidden>
-      <div class="profile-settings-intro"><span class="profile-section-kicker">ПЕРСОНАЛИЗАЦИЯ</span><h2>Настройки</h2><p>Управляй уведомлениями, приватностью и доступом к SVGTracker.</p></div>
+      <div class="profile-settings-intro"><span class="profile-section-kicker">УПРАВЛЕНИЕ</span><h2>Настройки</h2><p>Только параметры аккаунта и приложения. Твои записи остаются в своих разделах.</p></div>
       <section class="profile-group" aria-label="Уведомления">
         <p class="profile-group-title">TELEGRAM</p>
         <div class="profile-action-list">
           <button type="button" id="open-notification-settings" class="profile-action-row">
             <span class="profile-list-symbol" aria-hidden="true">♧</span>
-            <span class="profile-action-copy"><strong>Уведомления</strong><small id="profile-notification-summary">Настроить категории</small></span>
-            <span class="profile-action-meta"><span class="profile-action-link">Настроить</span><span class="profile-chevron">›</span></span>
+            <span class="profile-action-copy"><strong>Уведомления</strong><small id="profile-notification-summary">Выбрать категории</small></span>
+            <span class="profile-action-meta"><span class="profile-chevron">›</span></span>
           </button>
         </div>
       </section>
       <section class="profile-group" aria-label="Приватность">
-        <p class="profile-group-title">КОНФИДЕНЦИАЛЬНОСТЬ</p>
+        <p class="profile-group-title">ПРИВАТНОСТЬ</p>
         <div class="profile-action-list">
           <button type="button" class="profile-action-row" onclick="profileOpenNotificationSettings()">
             <span class="profile-list-symbol" aria-hidden="true">◷</span>
-            <span class="profile-action-copy"><strong>Доступность для друзей</strong><small>Кому показывать занятое время</small></span>
+            <span class="profile-action-copy"><strong>Занятость для друзей</strong><small>Управлять видимостью свободного времени</small></span>
             <span class="profile-action-meta"><span class="profile-chevron">›</span></span>
           </button>
           <button type="button" class="profile-action-row" onclick="openBlockedUsersSheet()">
             <span class="profile-list-symbol" aria-hidden="true">⊘</span>
-            <span class="profile-action-copy"><strong>Заблокированные</strong><small>Управление ограничениями</small></span>
+            <span class="profile-action-copy"><strong>Заблокированные</strong><small>Ограничить доступ к контактам</small></span>
             <span class="profile-action-meta"><b id="profile-blocked-count">0</b><span class="profile-chevron">›</span></span>
           </button>
         </div>
@@ -377,17 +352,38 @@
         <div class="profile-action-list">
           <button type="button" id="profile-settings-username" class="profile-action-row" onclick="copyProfileUsername()">
             <span class="profile-list-symbol" aria-hidden="true">@</span>
-            <span class="profile-action-copy"><strong>Telegram</strong><small id="profile-settings-handle">Username не указан</small></span>
+            <span class="profile-action-copy"><strong>Telegram username</strong><small id="profile-settings-handle">Username не указан</small></span>
             <span class="profile-action-meta"><span class="profile-chevron">›</span></span>
+          </button>
+          <button type="button" id="profile-account-id-button" class="profile-action-row" onclick="copyProfileAccountId()">
+            <span class="profile-list-symbol" aria-hidden="true">#</span>
+            <span class="profile-action-copy"><strong>Telegram ID</strong><small id="profile-account-id">—</small></span>
+            <span class="profile-action-meta"><span class="profile-chevron">›</span></span>
+          </button>
+          <button type="button" id="profile-timezone-button" class="profile-action-row" onclick="profileSyncTimezone()">
+            <span class="profile-list-symbol" aria-hidden="true">◷</span>
+            <span class="profile-action-copy"><strong>Часовой пояс</strong><small id="profile-timezone-name">Определяется устройством</small></span>
+            <span class="profile-action-meta"><span class="profile-action-link">Обновить</span><span class="profile-chevron">›</span></span>
           </button>
           <button type="button" id="profile-website-logout" class="profile-action-row profile-web-logout" onclick="logoutWebSession()" hidden>
             <span class="profile-list-symbol" aria-hidden="true">↗</span>
-            <span class="profile-action-copy"><strong>Выйти с этого устройства</strong><small>Завершить веб-сессию</small></span>
+            <span class="profile-action-copy"><strong>Выйти с устройства</strong><small>Завершить веб-сессию</small></span>
             <span class="profile-action-meta"><span class="profile-chevron">›</span></span>
           </button>
         </div>
       </section>
-      <p class="profile-version">SVGTracker · V32<br>Данные аккаунта синхронизируются через Telegram.</p>
+      <p class="profile-version">SVGTracker · V33<br>Данные профиля синхронизируются с Telegram.</p>
+    </div>
+
+    <div id="profile-help-view" class="profile-page profile-help-view" hidden>
+      <div class="profile-settings-intro"><span class="profile-section-kicker">ПОДСКАЗКИ</span><h2>Помощь</h2><p>Самое важное о совместной работе и личных данных.</p></div>
+      <section class="profile-help-list" aria-label="Частые вопросы">
+        <div class="profile-help-item"><h3>Как добавить друга?</h3><p>Открой «Друзья» → «Добавить друга», введи его Telegram @username и дождись принятия запроса.</p></div>
+        <div class="profile-help-item"><h3>Личное и общее расписание</h3><p>Личные события хранятся в разделе «Моё». Общие события с участниками — во вкладке «Общее».</p></div>
+        <div class="profile-help-item"><h3>Кто видит мою занятость?</h3><p>В настройках приватности можно разрешить друзьям видеть занятые интервалы. Названия личных событий при этом не передаются.</p></div>
+        <div class="profile-help-item"><h3>Где отключить уведомления?</h3><p>В «Настройках» → «Уведомления» можно отключить отдельные категории сообщений от бота.</p></div>
+      </section>
+      <button type="button" class="profile-help-link" onclick="showProfileView('settings')">Перейти в настройки <span aria-hidden="true">›</span></button>
     </div>
   </section>
 </div>

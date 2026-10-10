@@ -3378,6 +3378,8 @@ async function loadProfileData(force = false) {
       blocked: Array.isArray(payload.blocked) ? payload.blocked : []
     };
     profileLoaded = true;
+    profileLastSyncAt = Date.now();
+    profileSyncError = '';
     renderProfileState();
     const friendsSheet=document.getElementById('friends-sheet');
     const blockedSheet=document.getElementById('blocked-users-sheet');
@@ -3385,8 +3387,8 @@ async function loadProfileData(force = false) {
     if(blockedSheet && !blockedSheet.hidden) renderBlockedUsersSheet();
     return profileState;
   } catch (error) {
-    const status = document.getElementById('profile-drawer-status');
-    if (status) status.textContent = error?.message || 'Профиль временно недоступен';
+    profileSyncError = error?.message || 'Профиль временно недоступен';
+    renderProfileState();
     return profileState;
   } finally {
     profileLoading = false;
@@ -3395,86 +3397,70 @@ async function loadProfileData(force = false) {
 
 let profilePreviousFocus = null;
 let profileActiveView = 'home';
+let profileLastSyncAt = 0;
+let profileSyncError = '';
 function showProfileView(view='home') {
-  const home=document.getElementById('profile-home-view');
-  const settings=document.getElementById('profile-settings-view');
+  const views = {
+    home: document.getElementById('profile-home-view'),
+    settings: document.getElementById('profile-settings-view'),
+    help: document.getElementById('profile-help-view')
+  };
   const panel=document.querySelector('#profile-drawer .profile-drawer-panel');
-  if(!home||!settings||!panel)return;
-  profileActiveView=view==='settings'?'settings':'home';
-  home.hidden=profileActiveView!=='home';
-  settings.hidden=profileActiveView!=='settings';
+  if(!panel || Object.values(views).some(item=>!item))return;
+  profileActiveView=Object.prototype.hasOwnProperty.call(views,view)?view:'home';
+  for(const [key,node] of Object.entries(views))node.hidden=key!==profileActiveView;
   const title=document.getElementById('profile-view-title');
-  if(title)title.textContent=profileActiveView==='settings'?'Настройки':'Профиль';
+  if(title)title.textContent={home:'Профиль',settings:'Настройки',help:'Помощь'}[profileActiveView];
   const shortcut=document.getElementById('profile-settings-shortcut');
-  if(shortcut)shortcut.hidden=profileActiveView==='settings';
+  if(shortcut)shortcut.hidden=profileActiveView!=='home';
   const back=document.getElementById('profile-back');
-  if(back)back.setAttribute('aria-label',profileActiveView==='settings'?'Вернуться к профилю':'Закрыть профиль');
+  if(back)back.setAttribute('aria-label',profileActiveView==='home'?'Закрыть профиль':'Вернуться к профилю');
   panel.scrollTop=0;
   renderProfileState();
 }
 function profileBackNavigation(){
-  if(profileActiveView==='settings')showProfileView('home');
+  if(profileActiveView!=='home')showProfileView('home');
   else closeProfileDrawer();
 }
 function profileOpenNotificationSettings(){
   if(typeof window.openNotificationSettings==='function')window.openNotificationSettings();
   else showToast('Настройки уведомлений временно недоступны');
 }
-function profileOpenSection(section){
-  const destinations={schedule:'openSchedule',notes:'openNotes',training:'openTraining',finance:'openFinance'};
-  const handler=window[destinations[section]];
-  if(typeof handler!=='function'){showToast('Раздел временно недоступен');return;}
-  closeProfileDrawer(true);
-  handler();
-}
-function toggleProfileDomains(){
-  const details=document.getElementById('profile-domain-breakdown');
-  const toggle=document.getElementById('profile-domains-toggle');
-  if(!details||!toggle)return;
-  details.hidden=!details.hidden;
-  toggle.setAttribute('aria-expanded',String(!details.hidden));
-  if(!details.hidden)renderProfileState();
-}
-function renderProfileOverview(){
-  const today=new Date();
-  let domains=[];
-  try { domains=getTodayActiveDomainDetails(today); } catch(error) { svgDiag('profile:activity-error',{level:'warning',message:error?.message||String(error)}); }
-  const active=domains.filter(domain=>domain.count>0).length;
-  for(const domain of domains){
-    const row=document.querySelector(`[data-profile-domain="${domain.id}"]`);
-    if(!row)continue;
-    row.classList.toggle('is-active',domain.count>0);
-    const result=row.querySelector('.profile-domain-result');
-    if(result)result.textContent=domain.detail;
+async function shareProfileContact(){
+  const username=String(window.SVG_TELEGRAM_USER?.username||'').trim().replace(/^@/,'');
+  if(!/^[a-zA-Z0-9_]{5,32}$/.test(username)){showToast('Добавь username в настройках Telegram, чтобы делиться контактом');return;}
+  const message=`Мой контакт в Telegram: @${username}\nДобавь меня в SVGTracker через «Друзья» → «Добавить друга».`;
+  if(typeof navigator.share==='function'){
+    try {await navigator.share({text:message});return;}
+    catch(error){if(error?.name==='AbortError')return;}
   }
-  const friends=(profileState.friends||[]).length;
-  const notes=(Array.isArray(notesData)?notesData:[]).filter(note=>note?.archived!==true).length;
-  const updates={
-    'profile-active-count':`${active}/4`,
-    'profile-friends-metric':String(friends),
-    'profile-notes-metric':String(notes),
-    'profile-mini-schedule':(domains.find(d=>d.id==='schedule')?.detail||'На сегодня событий нет'),
-    'profile-mini-notes':notes?`${notes} ${notes===1?'заметка':notes<5?'заметки':'заметок'}`:'Нет заметок',
-    'profile-mini-training':(domains.find(d=>d.id==='training')?.detail||'Нет тренировок'),
-    'profile-mini-finance':`Сегодня ${formatRubles(Math.abs(Number(financeCashSpentForDateV28(today))||0))}`
-  };
-  for(const [id,value] of Object.entries(updates)){
-    const element=document.getElementById(id);if(element)element.textContent=value;
-  }
-  const incoming=(profileState.incoming||[]).length;
-  const banner=document.getElementById('profile-incoming-banner');
-  const label=document.getElementById('profile-incoming-label');
-  if(banner)banner.hidden=incoming===0;
-  if(label)label.textContent=`${incoming} ${incoming===1?'запрос ожидает':'запроса ожидают'} ответа`;
-  const notif=document.getElementById('profile-notification-summary');
-  if(notif)notif.textContent=profileState.bot_notifications_enabled===false?'Все уведомления выключены':'Выбрать категории уведомлений';
-  const handle=document.getElementById('profile-settings-handle');
-  const user=window.SVG_TELEGRAM_USER;
-  if(handle)handle.textContent=user?.username?`@${user.username}`:'Username не указан';
-  const copy=document.getElementById('profile-settings-username');
-  if(copy)copy.disabled=!user?.username;
-  const logout=document.getElementById('profile-website-logout');
-  if(logout)logout.hidden=!document.documentElement.classList.contains('svg-web');
+  const copied=await copyTextV15(message);
+  showToast(copied?'Приглашение скопировано':'Не удалось поделиться контактом');
+}
+async function refreshProfileAccount(){
+  if(!hasServerAuth()){showToast('Авторизуйся через Telegram для обновления профиля');return;}
+  if(profileLoading){showToast('Профиль уже обновляется');return;}
+  const button=document.getElementById('profile-refresh-button');
+  if(button)button.disabled=true;
+  try {
+    await loadProfileData(true);
+    showToast(profileSyncError?'Не удалось обновить данные профиля':'Данные профиля обновлены');
+  } finally {if(button)button.disabled=false;}
+}
+async function copyProfileAccountId(){
+  const id=window.SVG_TELEGRAM_USER?.id;
+  if(id===undefined||id===null||!String(id).trim()){showToast('Telegram ID недоступен');return;}
+  const copied=await copyTextV15(String(id));
+  showToast(copied?'Telegram ID скопирован':'Не удалось скопировать ID');
+}
+async function profileSyncTimezone(){
+  if(!hasServerAuth()){showToast('Авторизуйся через Telegram');return;}
+  const button=document.getElementById('profile-timezone-button');
+  if(button)button.disabled=true;
+  try {
+    const updated=await syncDeviceTimezone(true);
+    showToast(updated?'Часовой пояс синхронизирован':'Не удалось обновить часовой пояс');
+  } finally {if(button)button.disabled=false;renderProfileState();}
 }
 function openProfileDrawer() {
   const drawer = document.getElementById('profile-drawer');
@@ -3485,7 +3471,9 @@ function openProfileDrawer() {
   drawer.hidden = false;
   document.body.classList.add('profile-drawer-open');
   showProfileView('home');
-  requestAnimationFrame(() => { drawer.classList.add('is-open'); document.getElementById('profile-back')?.focus({preventScroll:true}); });
+  const finishProfileOpen=()=>{if(drawer.hidden||drawer.classList.contains('is-open'))return;drawer.classList.add('is-open');document.getElementById('profile-back')?.focus({preventScroll:true});};
+  requestAnimationFrame(finishProfileOpen);
+  setTimeout(finishProfileOpen,80);
   loadProfileData(true);
   if(typeof syncScheduleNotesWithServer==='function')syncScheduleNotesWithServer().finally(()=>{
     if(!drawer.hidden)renderProfileState();
@@ -4541,7 +4529,7 @@ function renderProfileState() {
   const incoming=profileState.incoming?.length||0;
   if(count)count.textContent=String(friendsCount);
   if(blockedCount)blockedCount.textContent=String(profileState.blocked?.length||0);
-  if(friendSummary)friendSummary.textContent=incoming?`${incoming} ${incoming===1?'новый запрос':'новых запроса'}`:(friendsCount?`${friendsCount} ${friendsCount===1?'друг':'друзей'}`:'Друзей пока нет');
+  if(friendSummary){const word=friendsCount%10===1&&friendsCount%100!==11?'друг':([2,3,4].includes(friendsCount%10)&&![12,13,14].includes(friendsCount%100))?'друга':'друзей';friendSummary.textContent=friendsCount?`${friendsCount} ${word}`:'Друзей пока нет';}
   if(friendToggle){friendToggle.checked=profileState.friend_request_notifications_enabled!==false;friendToggle.disabled=!hasServerAuth();}
   if(botToggle){botToggle.checked=profileState.bot_notifications_enabled!==false;botToggle.disabled=!hasServerAuth();}
   const user=window.SVG_TELEGRAM_USER;
@@ -4552,8 +4540,27 @@ function renderProfileState() {
     avatar.replaceChildren();avatar.textContent=letter;
     if(user?.photo_url){const image=document.createElement('img');image.src=user.photo_url;image.alt='';image.onerror=()=>{image.remove();avatar.textContent=letter;};avatar.replaceChildren(image);}
   }
-  if(status)status.textContent=!hasServerAuth()?'Требуется авторизация через Telegram':incoming?`${incoming} ${incoming===1?'запрос ждёт ответа':'запроса ждут ответа'}`:'Профиль синхронизирован с Telegram';
-  renderProfileOverview();
+  if(status)status.textContent=!hasServerAuth()?'Требуется авторизация Telegram':profileSyncError?'Не удалось обновить профиль':profileLastSyncAt?`Обновлено в ${new Date(profileLastSyncAt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}`:'Подключение к Telegram…';
+  const incomingBanner=document.getElementById('profile-incoming-banner');
+  const incomingLabel=document.getElementById('profile-incoming-label');
+  if(incomingBanner)incomingBanner.hidden=incoming===0;
+  if(incomingLabel)incomingLabel.textContent=`${incoming} ${incoming===1?'запрос ожидает':'запроса ожидают'} ответа`;
+  const handle=document.getElementById('profile-settings-handle');
+  const accountId=document.getElementById('profile-account-id');
+  const idButton=document.getElementById('profile-account-id-button');
+  const shareButton=document.getElementById('profile-invite-button');
+  const handleButton=document.getElementById('profile-settings-username');
+  const timezone=document.getElementById('profile-timezone-name');
+  const notif=document.getElementById('profile-notification-summary');
+  if(notif)notif.textContent=profileState.bot_notifications_enabled===false?'Все уведомления выключены':'Настроить категории сообщений';
+  if(handle)handle.textContent=user?.username?`@${user.username}`:'Username не указан';
+  if(handleButton)handleButton.disabled=!user?.username;
+  if(shareButton){shareButton.disabled=!/^[a-zA-Z0-9_]{5,32}$/.test(String(user?.username||''));shareButton.title=shareButton.disabled?'Укажи username в Telegram':'Поделиться Telegram-контактом';const label=shareButton.querySelector('span');if(label)label.textContent=shareButton.disabled?'Для приглашений нужен @username':'Поделиться контактом';}
+  if(accountId)accountId.textContent=user?.id!==undefined&&user?.id!==null?String(user.id):'Недоступен';
+  if(idButton)idButton.disabled=user?.id===undefined||user?.id===null;
+  if(timezone){const data=getDeviceTimezonePayload();timezone.textContent=data.timezone_name||`UTC${data.offset_minutes>=0?'+':''}${(data.offset_minutes/60).toFixed(1)}`;}
+  const logout=document.getElementById('profile-website-logout');
+  if(logout)logout.hidden=!document.documentElement.classList.contains('svg-web');
 }
 
 async function copyTextV15(text) {
