@@ -30,8 +30,8 @@
   .bootstrap-skeleton-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.bootstrap-skeleton-copy{display:grid;gap:8px}.bootstrap-skeleton-copy span,.bootstrap-skeleton-copy b,.bootstrap-skeleton-copy i,.bootstrap-skeleton-line,.bootstrap-skeleton-stats span,.bootstrap-skeleton-chart,.bootstrap-skeleton-avatar,.bootstrap-skeleton-card{background:linear-gradient(110deg,rgba(255,255,255,.055) 25%,rgba(255,255,255,.11) 38%,rgba(255,255,255,.055) 52%);background-size:220% 100%;animation:svgSkeleton 1.5s ease-in-out infinite}.bootstrap-skeleton-copy span{width:72px;height:10px;border-radius:5px}.bootstrap-skeleton-copy b{width:138px;height:29px;border-radius:9px}.bootstrap-skeleton-copy i{width:168px;height:12px;border-radius:6px}.bootstrap-skeleton-avatar{width:52px;height:52px;border-radius:50%}.bootstrap-skeleton-card{height:150px;border:1px solid rgba(255,255,255,.06);border-radius:24px;box-sizing:border-box}.bootstrap-skeleton-activity{height:286px;padding:22px;margin-bottom:14px;background-color:rgba(255,255,255,.025)}.bootstrap-skeleton-line{height:11px;width:56%;border-radius:6px}.bootstrap-skeleton-line.is-short{width:74px}.bootstrap-skeleton-line.is-title{height:24px;width:126px;margin-top:9px}.bootstrap-skeleton-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:26px}.bootstrap-skeleton-stats span{height:54px;border-radius:14px}.bootstrap-skeleton-chart{height:96px;border-radius:18px;margin-top:22px}.bootstrap-skeleton-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.app-bootstrap-status{margin:18px 0 0;text-align:center;color:rgba(255,255,255,.42);font-size:12px}.app-bootstrap-placeholder.is-slow .app-bootstrap-status{color:rgba(255,255,255,.62)}
   @keyframes svgSkeleton{0%{background-position:120% 0}100%{background-position:-120% 0}}
 </style>
-<link rel="stylesheet" href="/style.css?v=34">
-<link rel="stylesheet" href="/product.css?v=34">
+<link rel="stylesheet" href="/style.css?v=35">
+<link rel="stylesheet" href="/product.css?v=35">
 </head>
 <body>
 <section id="web-auth-gate" class="web-auth-gate" aria-labelledby="web-auth-title">
@@ -97,11 +97,6 @@
     <div class="home-domain-detail-row" data-home-domain="schedule"><span class="home-domain-detail-name">Расписание</span><span class="home-domain-detail-value">Нет событий</span></div>
     <div class="home-domain-detail-row" data-home-domain="notes"><span class="home-domain-detail-name">Заметки</span><span class="home-domain-detail-value">Нет изменений</span></div>
   </section>
-
-  <nav class="v34-quick-actions" aria-label="Инструменты">
-    <button type="button" id="v34-open-search"><span>⌕</span> Найти</button>
-    <button type="button" id="v34-open-reports"><span>▥</span> Мои отчёты</button>
-  </nav>
   <section class="glass-card activity-card">
     <div class="activity-head">
       <div>
@@ -284,20 +279,20 @@
       <button type="button" id="profile-incoming-banner" class="profile-incoming-banner" onclick="openFriendsSheet()" hidden>
         <span class="profile-incoming-mark" aria-hidden="true">+</span>
         <span><strong>Запросы на дружбу</strong><small id="profile-incoming-label">Ожидают ответа</small></span>
-        <span class="profile-chevron" aria-hidden="true">›</span>
+        <span class="profile-chevron" aria-hidden="true"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span>
       </button>
       <section class="profile-group" aria-label="Люди и общение">
         <p class="profile-group-title">СВЯЗИ</p>
         <div class="profile-action-list">
           <button type="button" class="profile-action-row" onclick="openFriendsSheet()">
-            <span class="profile-list-symbol" aria-hidden="true">◎</span>
+            <span class="profile-list-symbol" aria-hidden="true"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5.5a3 3 0 0 1 0 5.5M18 15a4 4 0 0 1 3 4"/></svg></span>
             <span class="profile-action-copy"><strong>Друзья и приглашения</strong><small id="profile-friends-summary">Мои контакты в SVGTracker</small></span>
-            <span class="profile-action-meta"><b id="profile-friends-count">0</b><span class="profile-chevron">›</span></span>
+            <span class="profile-action-meta"><b id="profile-friends-count">0</b><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></span>
           </button>
           <button type="button" class="profile-action-row" onclick="openAddFriendSheet()">
-            <span class="profile-list-symbol" aria-hidden="true">＋</span>
+            <span class="profile-list-symbol" aria-hidden="true"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M19 8v8M15 12h8"/></svg></span>
             <span class="profile-action-copy"><strong>Пригласить друга</strong><small>Добавить по Telegram username</small></span>
-            <span class="profile-chevron">›</span>
+            <span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span>
           </button>
         </div>
       </section>
@@ -305,24 +300,24 @@
         <p class="profile-group-title">УПРАВЛЕНИЕ</p>
         <div class="profile-action-list">
           <button type="button" class="profile-action-row" onclick="showProfileView('privacy')">
-            <span class="profile-list-symbol" aria-hidden="true">◈</span>
+            <span class="profile-list-symbol" aria-hidden="true"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 1 1 8 0v3"/></svg></span>
             <span class="profile-action-copy"><strong>Приватность</strong><small id="profile-privacy-summary">Кто видит занятость, блокировки</small></span>
-            <span class="profile-chevron">›</span>
+            <span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span>
           </button>
           <button type="button" class="profile-action-row" onclick="profileOpenNotificationSettings()">
-            <span class="profile-list-symbol" aria-hidden="true">♧</span>
+            <span class="profile-list-symbol" aria-hidden="true"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></span>
             <span class="profile-action-copy"><strong>Уведомления</strong><small id="profile-notification-summary">Категории и напоминания</small></span>
-            <span class="profile-chevron">›</span>
+            <span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span>
           </button>
           <button type="button" class="profile-action-row" onclick="showProfileView('security')">
-            <span class="profile-list-symbol" aria-hidden="true">⌘</span>
+            <span class="profile-list-symbol" aria-hidden="true"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 4v5c0 6-4 9-9 11-5-2-9-5-9-11V6z"/><path d="m9 12 2 2 4-4"/></svg></span>
             <span class="profile-action-copy"><strong>Безопасность и устройства</strong><small id="profile-sessions-summary">Активные веб-сеансы</small></span>
-            <span class="profile-chevron">›</span>
+            <span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span>
           </button>
           <button type="button" class="profile-action-row" onclick="showProfileView('data')">
-            <span class="profile-list-symbol" aria-hidden="true">⇩</span>
+            <span class="profile-list-symbol" aria-hidden="true"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 17v3h16v-3"/></svg></span>
             <span class="profile-action-copy"><strong>Мои данные</strong><small>Экспорт личной информации</small></span>
-            <span class="profile-chevron">›</span>
+            <span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span>
           </button>
         </div>
       </section>
@@ -332,18 +327,24 @@
     <div id="profile-settings-view" class="profile-page profile-subpage" hidden>
       <div class="profile-subpage-intro"><span class="profile-section-kicker">УПРАВЛЕНИЕ</span><h2>Настройки</h2><p>Уведомления, приватность и доступ к аккаунту в одном месте.</p></div>
       <section class="profile-group"><p class="profile-group-title">ПРЕДПОЧТЕНИЯ</p><div class="profile-action-list">
-        <button type="button" id="open-notification-settings" class="profile-action-row"><span class="profile-list-symbol">♧</span><span class="profile-action-copy"><strong>Telegram-уведомления</strong><small>Запросы, события, заметки, финансы</small></span><span class="profile-chevron">›</span></button>
-        <button type="button" id="v34-profile-reports" class="profile-action-row"><span class="profile-list-symbol">▥</span><span class="profile-action-copy"><strong>Отчёты</strong><small>Итоги дня и недели</small></span><span class="profile-chevron">›</span></button>
-        <button type="button" class="profile-action-row" onclick="showProfileView('privacy')"><span class="profile-list-symbol">◈</span><span class="profile-action-copy"><strong>Приватность</strong><small>Доступность и блокировки</small></span><span class="profile-chevron">›</span></button>
-        <button type="button" class="profile-action-row" onclick="showProfileView('security')"><span class="profile-list-symbol">⌘</span><span class="profile-action-copy"><strong>Сеансы на устройствах</strong><small>Управление веб-доступом</small></span><span class="profile-chevron">›</span></button>
-        <button type="button" class="profile-action-row" onclick="showProfileView('data')"><span class="profile-list-symbol">⇩</span><span class="profile-action-copy"><strong>Экспорт данных</strong><small>Получить архив информации в JSON</small></span><span class="profile-chevron">›</span></button>
+        <button type="button" id="open-notification-settings" class="profile-action-row"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></span><span class="profile-action-copy"><strong>Telegram-уведомления</strong><small>Запросы, события, заметки, финансы</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
+        <button type="button" id="v34-profile-reports" class="profile-action-row"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V9M10 20V4M16 20v-8M22 20v-12M2 20h22"/></svg></span><span class="profile-action-copy"><strong>Отчёты</strong><small>Итоги дня и недели</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
+        <button type="button" class="profile-action-row" onclick="showProfileView('privacy')"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 1 1 8 0v3"/></svg></span><span class="profile-action-copy"><strong>Приватность</strong><small>Доступность и блокировки</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
+        <button type="button" class="profile-action-row" onclick="showProfileView('security')"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 4v5c0 6-4 9-9 11-5-2-9-5-9-11V6z"/><path d="m9 12 2 2 4-4"/></svg></span><span class="profile-action-copy"><strong>Сеансы на устройствах</strong><small>Управление веб-доступом</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
+        <button type="button" class="profile-action-row" onclick="showProfileView('data')"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 17v3h16v-3"/></svg></span><span class="profile-action-copy"><strong>Экспорт данных</strong><small>Получить архив информации в JSON</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
+      </div></section>
+      <section class="profile-group"><p class="profile-group-title">ИНСТРУМЕНТЫ</p><div class="profile-action-list">
+        <button type="button" class="profile-action-row" onclick="openGlobalSearch()"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.8" cy="10.8" r="6.5"/><path d="m16 16 5 5"/></svg></span><span class="profile-action-copy"><strong>Глобальный поиск</strong><small>Найти записи во всех сферах</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
+        <button type="button" class="profile-action-row" onclick="openActivityAnalytics()"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V9M10 20V4M16 20v-8M22 20v-12M2 20h22"/></svg></span><span class="profile-action-copy"><strong>Центр аналитики</strong><small>Активность, динамика, отчёты</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
+        <button type="button" class="profile-action-row" onclick="openAutomations()"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m13 2-9 11h7l-1 9 10-12h-7z"/></svg></span><span class="profile-action-copy"><strong>Автоматизации</strong><small>Твои правила уведомлений</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
+        <button type="button" class="profile-action-row" onclick="openSVGAssistant()"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 2.3 7.7L22 12l-7.7 2.3L12 22l-2.3-7.7L2 12l7.7-2.3z"/></svg></span><span class="profile-action-copy"><strong>SVG Assistant</strong><small>Помощник без нейросетей</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
       </div></section>
       <section class="profile-group"><p class="profile-group-title">ТВОЙ АККАУНТ</p><div class="profile-action-list">
-        <button type="button" id="profile-settings-username" class="profile-action-row" onclick="copyProfileUsername()"><span class="profile-list-symbol">@</span><span class="profile-action-copy"><strong>Telegram username</strong><small id="profile-settings-handle">Username не указан</small></span><span class="profile-chevron">›</span></button>
-        <button type="button" class="profile-action-row" onclick="copyProfileTelegramId()"><span class="profile-list-symbol">#</span><span class="profile-action-copy"><strong>Telegram ID</strong><small id="profile-telegram-id">—</small></span><span class="profile-chevron">›</span></button>
-        <button type="button" id="profile-website-logout" class="profile-action-row profile-web-logout" onclick="logoutWebSession()" hidden><span class="profile-list-symbol">↗</span><span class="profile-action-copy"><strong>Выйти на этом устройстве</strong><small>Завершить текущий веб-сеанс</small></span><span class="profile-chevron">›</span></button>
+        <button type="button" id="profile-settings-username" class="profile-action-row" onclick="copyProfileUsername()"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M16.2 9v5a2 2 0 0 0 4 0v-2a8.5 8.5 0 1 0-3 6.4"/><circle cx="12" cy="12" r="4"/></svg></span><span class="profile-action-copy"><strong>Telegram username</strong><small id="profile-settings-handle">Username не указан</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
+        <button type="button" class="profile-action-row" onclick="copyProfileTelegramId()"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3 6 21M18 3l-3 18M3 9h18M2 15h18"/></svg></span><span class="profile-action-copy"><strong>Telegram ID</strong><small id="profile-telegram-id">—</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
+        <button type="button" id="profile-website-logout" class="profile-action-row profile-web-logout" onclick="logoutWebSession()" hidden><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5M13 8l4 4-4 4M8 12h9"/></svg></span><span class="profile-action-copy"><strong>Выйти на этом устройстве</strong><small>Завершить текущий веб-сеанс</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
       </div></section>
-      <p class="profile-version">SVGTracker · V34<br>Имя и фотография берутся из Telegram.</p>
+      <p class="profile-version">SVGTracker · V35<br>Имя и фотография берутся из Telegram.</p>
     </div>
 
     <div id="profile-privacy-view" class="profile-page profile-subpage" hidden>
@@ -353,8 +354,8 @@
         <p id="profile-privacy-status" class="profile-help" role="status">Загружаем настройку…</p>
       </section>
       <section class="profile-group"><p class="profile-group-title">КОНТАКТЫ</p><div class="profile-action-list">
-        <button type="button" class="profile-action-row" onclick="openBlockedUsersSheet()"><span class="profile-list-symbol">⊘</span><span class="profile-action-copy"><strong>Заблокированные</strong><small>Список пользователей с ограничением доступа</small></span><span class="profile-action-meta"><b id="profile-blocked-count">0</b><span class="profile-chevron">›</span></span></button>
-        <button type="button" class="profile-action-row" onclick="openFriendsSheet()"><span class="profile-list-symbol">◎</span><span class="profile-action-copy"><strong>Друзья и запросы</strong><small>Управление контактами</small></span><span class="profile-chevron">›</span></button>
+        <button type="button" class="profile-action-row" onclick="openBlockedUsersSheet()"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.7 18.3 18.3 5.7"/></svg></span><span class="profile-action-copy"><strong>Заблокированные</strong><small>Список пользователей с ограничением доступа</small></span><span class="profile-action-meta"><b id="profile-blocked-count">0</b><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></span></button>
+        <button type="button" class="profile-action-row" onclick="openFriendsSheet()"><span class="profile-list-symbol"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5.5a3 3 0 0 1 0 5.5M18 15a4 4 0 0 1 3 4"/></svg></span><span class="profile-action-copy"><strong>Друзья и запросы</strong><small>Управление контактами</small></span><span class="profile-chevron"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span></button>
       </div></section>
       <p class="profile-help">Изменение сохраняется в аккаунте и применяется к совместному просмотру свободного времени.</p>
     </div>
@@ -370,7 +371,7 @@
 
     <div id="profile-data-view" class="profile-page profile-subpage" hidden>
       <div class="profile-subpage-intro"><span class="profile-section-kicker">МОИ ДАННЫЕ</span><h2>Экспорт</h2><p>Сохрани себе личные данные SVGTracker в машиночитаемом формате.</p></div>
-      <section class="profile-export-card"><span class="profile-export-symbol" aria-hidden="true">⇩</span><h3>Копия данных аккаунта</h3><p>В выгрузку входят тренировки, финансы, личные и общие события, заметки и настройки. Прикреплённые к заметкам файлы не входят в JSON.</p><button type="button" id="profile-export-action" class="profile-export-button" onclick="exportProfileData()">Скачать JSON</button><p id="profile-export-status" class="profile-help" role="status"></p></section>
+      <section class="profile-export-card"><span class="profile-export-symbol" aria-hidden="true"><svg class="v35-icon" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 17v3h16v-3"/></svg></span><h3>Копия данных аккаунта</h3><p>В выгрузку входят тренировки, финансы, личные и общие события, заметки и настройки. Прикреплённые к заметкам файлы не входят в JSON.</p><button type="button" id="profile-export-action" class="profile-export-button" onclick="exportProfileData()">Скачать JSON</button><p id="profile-export-status" class="profile-help" role="status"></p></section>
       <p class="profile-help">Файл может содержать конфиденциальную информацию. Храни его в защищённом месте. Этот экспорт не удаляет данные с сервера.</p>
     </div>
   </section>
@@ -450,7 +451,7 @@
       <button type="button" data-schedule-view="availability" role="tab" aria-selected="false">Свободное время</button>
     </div>
     <p id="schedule-view-caption" class="schedule-view-caption">Только твои личные планы</p>
-    <button type="button" id="schedule-week-template" class="schedule-template-action" onclick="openWeeklyScheduleEditor()"><span class="schedule-template-icon">↻</span><span><strong>Расписание на каждую неделю</strong><small>Выбери дни и время — занятия будут повторяться автоматически</small></span><b>›</b></button>
+    <button type="button" id="schedule-week-template" class="schedule-template-action" onclick="openWeeklyScheduleEditor()"><span class="schedule-template-icon"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 9a7 7 0 0 1 12-2l2 5M4 12l2 5a7 7 0 0 0 12-2"/></svg></span><span><strong>Расписание на каждую неделю</strong><small>Выбери дни и время — занятия будут повторяться автоматически</small></span><b>›</b></button>
     <section class="apple-widget schedule-week-card">
       <div class="product-week-head">
         <button type="button" class="calendar-nav-button" onclick="shiftScheduleWeek(-1)" aria-label="Предыдущая неделя"><svg viewBox="0 0 24 24"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg></button>
@@ -512,19 +513,47 @@
 
 <section id="global-search-screen" class="product-screen" hidden>
   <div class="product-shell">
-    <header class="product-header"><button type="button" id="global-search-back" class="apple-action-button product-back" aria-label="Назад">‹</button><div class="product-header-copy"><span class="section-label">ВСЕ СФЕРЫ</span><h1>Поиск</h1><p>Заметки, расписание, финансы, тренировки</p></div></header>
-    <label class="product-search"><span aria-hidden="true">⌕</span><input id="global-search-input" type="search" maxlength="120" autocomplete="off" placeholder="Что найти?"></label>
+    <header class="product-header"><button type="button" id="global-search-back" class="apple-action-button product-back" aria-label="Назад"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7"/></svg></button><div class="product-header-copy"><span class="section-label">ВСЕ СФЕРЫ</span><h1>Поиск</h1><p>Заметки, расписание, финансы, тренировки</p></div></header>
+    <label class="product-search"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.8" cy="10.8" r="6.5"/><path d="m16 16 5 5"/></svg><input id="global-search-input" type="search" maxlength="120" autocomplete="off" placeholder="Что найти?"></label>
     <div class="v34-results" id="global-search-results" aria-live="polite">Введите минимум 2 символа для поиска</div>
   </div>
 </section>
 <section id="reports-screen" class="product-screen" hidden>
   <div class="product-shell">
-    <header class="product-header"><button type="button" id="reports-back" class="apple-action-button product-back" aria-label="Назад">‹</button><div class="product-header-copy"><span class="section-label">ЛИЧНАЯ АНАЛИТИКА</span><h1>Отчёты</h1><p>Данные, сохранённые в SVGTracker</p></div></header>
+    <header class="product-header"><button type="button" id="reports-back" class="apple-action-button product-back" aria-label="Назад"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7"/></svg></button><div class="product-header-copy"><span class="section-label">ЛИЧНАЯ АНАЛИТИКА</span><h1>Отчёты</h1><p>Данные, сохранённые в SVGTracker</p></div></header>
     <div class="v34-note-controls"><button type="button" data-report-period="daily" class="is-active">Сегодня</button><button type="button" data-report-period="weekly">Эта неделя</button></div>
     <div class="v34-report-grid" id="reports-results" aria-live="polite"></div>
     <p class="v34-report-hint">Чтобы получать отчёты в Telegram в 20:00, включи их в профиле → Уведомления.</p>
   </div>
 </section>
+
+<section id="activity-analytics-screen" class="product-screen v35-screen" hidden>
+  <div class="product-shell"><header class="product-header"><button type="button" class="apple-action-button product-back" onclick="closeV35Screen('activity-analytics-screen')" aria-label="Назад"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7"/></svg></button><div class="product-header-copy"><span class="section-label">SVGTRACKER</span><h1>Аналитика</h1><p>Последние семь дней</p></div></header>
+    <div id="v35-activity-summary" class="v35-stat-grid" aria-live="polite"></div>
+    <section class="apple-widget v35-panel"><h2>Активность по дням</h2><p>Записи в сферах и события календаря</p><div id="v35-activity-chart" class="v35-bars" role="img" aria-label="Активность за неделю"></div></section>
+    <div class="v35-navigation"><button type="button" onclick="v35OpenReport('daily')"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/></svg> Отчёт за день</button><button type="button" onclick="v35OpenReport('weekly')"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V9M10 20V4M16 20v-8M22 20v-12M2 20h22"/></svg> Отчёт за неделю</button><button type="button" onclick="openFinancialAnalytics()"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V9M10 20V4M16 20v-8M22 20v-12M2 20h22"/></svg> Финансовая аналитика</button></div>
+    <p class="v35-hint">Статистика строится только из сохранённых данных. Плановые события учитываются отдельно от выполненных действий.</p>
+  </div></section>
+<section id="finance-analytics-screen" class="product-screen v35-screen" hidden>
+  <div class="product-shell"><header class="product-header"><button type="button" class="apple-action-button product-back" onclick="closeFinancialAnalytics()" aria-label="Назад"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7"/></svg></button><div class="product-header-copy"><span class="section-label">ФИНАНСЫ</span><h1>Аналитика</h1><p>Операции и категории</p></div></header>
+    <label class="v35-month-picker"><span>Месяц</span><input type="month" id="v35-finance-month" aria-label="Месяц для аналитики"></label>
+    <div id="v35-finance-stats" class="v35-stat-grid" aria-live="polite"></div>
+    <section class="apple-widget v35-panel"><h2>Расходы по категориям</h2><div id="v35-category-list" class="v35-category-list"></div></section>
+    <section class="apple-widget v35-panel"><h2>Динамика за 6 месяцев</h2><div id="v35-finance-chart" class="v35-bars" role="img" aria-label="Расходы за шесть месяцев"></div></section>
+    <p class="v35-hint">Учитываются записанные расходы и оплаченные обязательные платежи. Плановый бюджет не считается фактическим доходом.</p>
+  </div></section>
+<section id="automations-screen" class="product-screen v35-screen" hidden>
+  <div class="product-shell"><header class="product-header"><button type="button" class="apple-action-button product-back" onclick="closeV35Screen('automations-screen')" aria-label="Назад"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7"/></svg></button><div class="product-header-copy"><span class="section-label">ПРАВИЛА</span><h1>Автоматизации</h1><p>Уведомления через Telegram</p></div></header>
+    <p class="v35-hint">Все правила изначально выключены. Включённые правила проверяются сервером вечером по часовому поясу аккаунта, если разрешены уведомления бота.</p>
+    <div id="v35-rules" class="v35-rule-list" aria-live="polite"></div>
+  </div></section>
+<section id="svg-assistant-screen" class="product-screen v35-screen" hidden>
+  <div class="product-shell"><header class="product-header"><button type="button" class="apple-action-button product-back" onclick="closeV35Screen('svg-assistant-screen')" aria-label="Назад"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7"/></svg></button><div class="product-header-copy"><span class="section-label">БЕЗ AI</span><h1>SVG Assistant</h1><p>Ответы на основе твоих данных</p></div></header>
+    <div class="v35-assistant-intro"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 2.3 7.7L22 12l-7.7 2.3L12 22l-2.3-7.7L2 12l7.7-2.3z"/></svg><p>Я отвечаю по заранее заданным правилам: анализирую сохранённые записи, но не вызываю нейросети и не храню историю вопросов.</p></div>
+    <div class="v35-prompt-chips" id="v35-assistant-chips"><button type="button" data-question="Что сегодня?">Что сегодня?</button><button type="button" data-question="Итоги недели">Итоги недели</button><button type="button" data-question="Сколько потратил?">Сколько потратил?</button><button type="button" data-question="Что по бюджету?">Что по бюджету?</button></div>
+    <div id="v35-assistant-messages" class="v35-assistant-messages" role="log" aria-live="polite"></div>
+    <form id="v35-assistant-form" class="v35-assistant-form"><input id="v35-assistant-input" maxlength="240" autocomplete="off" placeholder="Спроси про свои данные" aria-label="Вопрос помощнику" required><button type="submit" aria-label="Отправить"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></button></form>
+  </div></section>
 
 <section id="finance-screen" class="single-training-screen" hidden>
   <div class="training-overlay-shell finance-shell">
@@ -535,9 +564,9 @@
       <div class="header-copy">
         <h1>Финансы</h1>
         <div class="finance-month-nav" aria-label="Навигация по месяцам">
-          <button type="button" onclick="shiftFinanceMonth(-1)" aria-label="Предыдущий месяц">‹</button>
+          <button type="button" onclick="shiftFinanceMonth(-1)" aria-label="Предыдущий месяц"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button>
           <p id="finance-month-label">Текущий месяц</p>
-          <button type="button" id="finance-month-next" onclick="shiftFinanceMonth(1)" aria-label="Следующий месяц">›</button>
+          <button type="button" id="finance-month-next" onclick="shiftFinanceMonth(1)" aria-label="Следующий месяц"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button>
         </div>
         <span class="finance-sync-status" data-status="local" aria-live="polite">Локально</span>
       </div>
@@ -558,6 +587,8 @@
         <article><small>Потрачено сегодня</small><strong id="finance-today-spent">0 ₽</strong><span id="finance-today-status">Расходов пока нет</span></article>
       </div>
     </section>
+
+    <button type="button" class="v35-finance-analytics-link" onclick="openFinancialAnalytics()"><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V9M10 20V4M16 20v-8M22 20v-12M2 20h22"/></svg><span><strong>Финансовая аналитика</strong><small>Категории, месяцы, динамика и сравнение</small></span><svg class="v35-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></button>
 
     <section class="apple-widget finance-spending-widget">
       <div class="widget-header widget-header--tight finance-widget-head">
@@ -1170,7 +1201,7 @@
 })();
 </script>
 <!-- Keep product.js before script.js: it captures original V28 handlers for V27 deploy compatibility. -->
-<script src="/product.js?v=34" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:product-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:product-failed',{level:'error',asset:'/product.js?v=34'})"></script>
-<script src="/script.js?v=34" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=34'})"></script>
+<script src="/product.js?v=35" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:product-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:product-failed',{level:'error',asset:'/product.js?v=35'})"></script>
+<script src="/script.js?v=35" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=35'})"></script>
 </body>
 </html>

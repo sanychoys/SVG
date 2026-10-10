@@ -68,6 +68,7 @@ from finance_db import (
 )
 
 from insights import build_report, render_report, collect_due_reports
+from intelligence import init_intelligence_db, collect_due_automations, list_rules
 from product_api import build_product_router
 from product_db import (
     init_product_db,
@@ -1441,6 +1442,7 @@ def api_profile_export(request: Request, x_telegram_init_data: str | None = Head
         'finance':finance['state'] if finance else None,
         'schedule':list_schedule_events(user_id),
         'notes':list_notes(user_id,include_archived=True),
+        'automation_rules':list_rules(user_id),
         'attachment_notice':'Included: attachment metadata only, not file contents.'
     }
     return JSONResponse(body, headers={
@@ -2357,6 +2359,13 @@ async def bot_reminder_loop():
                     mark_reminder_sent(item["user_id"], item["key"])
                 except Exception:
                     logger.exception("Failed to send %s reminder to Telegram user %s", kind, item.get("telegram_id"))
+            # V35 explicit opt-in deterministic automations; deduplicated per rule/period.
+            for item in collect_due_automations():
+                try:
+                    await bot.send_message(chat_id=item['telegram_id'], text=item['text'], reply_markup=main_keyboard())
+                    mark_reminder_sent(item['user_id'], item['key'])
+                except Exception:
+                    logger.exception('Failed to deliver automation %s to user %s', item['key'], item['user_id'])
             # Daily / weekly opt-in summaries share persistent deduplication log.
             for item in collect_due_reports():
                 try:
@@ -2406,6 +2415,7 @@ async def reset_data_cancel(callback: CallbackQuery):
 async def main():
     init_db()
     init_product_db()
+    init_intelligence_db()
     logger.info("SVGTracker starting")
 
     # Keep thread pools deliberately small. FastAPI/AnyIO otherwise may retain

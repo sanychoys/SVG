@@ -54,7 +54,7 @@ function productRenderDashboard() {
   try { renderHomeTrainingSummary(); } catch (_) {}
 }
 function productCloseOtherScreens() {
-  for (const id of ['training-screen','finance-screen','schedule-screen','notes-screen']) {
+  for (const id of ['training-screen','finance-screen','schedule-screen','notes-screen','global-search-screen','reports-screen','activity-analytics-screen','finance-analytics-screen','automations-screen','svg-assistant-screen']) {
     const el=document.getElementById(id); if(el) el.hidden=true;
   }
 }
@@ -769,7 +769,7 @@ function v34ShowScreen(id){
   closeNotificationSettings();
   if(typeof closeProfileDrawer==='function')closeProfileDrawer(true);
   productCloseOtherScreens();
-  ['global-search-screen','reports-screen'].forEach(name=>{const el=document.getElementById(name);if(el)el.hidden=name!==id;});
+  ['global-search-screen','reports-screen','activity-analytics-screen','finance-analytics-screen','automations-screen','svg-assistant-screen'].forEach(name=>{const el=document.getElementById(name);if(el)el.hidden=name!==id;});
   productLockBody(true);return true;
 }
 function openGlobalSearch(){if(!v34ShowScreen('global-search-screen'))return;const q=document.getElementById('global-search-input');if(q){q.value='';q.focus();}const results=document.getElementById('global-search-results');if(results)results.textContent='Введите минимум 2 символа для поиска';}
@@ -820,14 +820,12 @@ async function showReport(period='daily'){
     }
   }catch(error){if(root)root.textContent=error.message||'Не удалось сформировать отчёт';}
 }
-function closeReports(){const el=document.getElementById('reports-screen');if(el)el.hidden=true;productLockBody(false);}
+function closeReports(){const el=document.getElementById('reports-screen');if(el)el.hidden=true;productLockBody(false);if(v35ReportReturn){v35ReportReturn=false;openActivityAnalytics();}}
 window.openGlobalSearch=openGlobalSearch;
 window.closeGlobalSearch=closeGlobalSearch;
 window.showReport=showReport;
 window.closeReports=closeReports;
 document.addEventListener('DOMContentLoaded',()=>{
-  document.getElementById('v34-open-search')?.addEventListener('click',openGlobalSearch);
-  document.getElementById('v34-open-reports')?.addEventListener('click',()=>showReport('daily'));
   document.getElementById('global-search-back')?.addEventListener('click',closeGlobalSearch);
   document.getElementById('global-search-input')?.addEventListener('input',runGlobalSearch);
   document.getElementById('reports-back')?.addEventListener('click',closeReports);
@@ -847,4 +845,169 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(body.value.trim()&&!window.confirm('Заменить текст заметки шаблоном?')){event.target.value='';return;}
     body.value=templates[template]||'';body.focus();event.target.value='';
   });
+});
+
+/* SVGTracker V35: accessible tools, with no external AI provider. */
+let v35RequestSeq=0;
+let v35FinanceReturn='home';
+let v35ReportReturn=false;
+const v35Money=value=>`${Math.round(Number(value)||0).toLocaleString('ru-RU')} ₽`;
+function v35Node(tag,css='',text=''){
+  const node=document.createElement(tag);if(css)node.className=css;
+  if(text!==undefined)node.textContent=String(text);return node;
+}
+async function v35Fetch(url,options={}){
+  const response=await fetch(url,{...options,headers:{...productHeaders(Boolean(options.body)),...(options.headers||{})},cache:'no-store'});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(data.detail||'Не удалось загрузить данные');
+  return data;
+}
+function v35StatGrid(root,items){
+  root.replaceChildren();
+  items.forEach(([label,value,description])=>{
+    const card=v35Node('article','v35-stat');
+    card.append(v35Node('span','',label),v35Node('strong','',value));
+    if(description)card.append(v35Node('small','',description));
+    root.append(card);
+  });
+}
+function v35BarChart(root,items){
+  root.replaceChildren();
+  const peak=Math.max(1,...items.map(x=>Number(x.value)||0));
+  for(const entry of items){
+    const col=v35Node('div','v35-bar-column');
+    const amount=v35Node('span','v35-bar-amount',entry.display||String(entry.value||0));
+    const track=v35Node('div','v35-bar-track');
+    const bar=v35Node('div','v35-bar-fill');bar.style.height=`${Math.max(2,Math.min(100,Math.round((Number(entry.value)||0)/peak*100)))}%`;
+    track.append(bar);col.append(amount,track,v35Node('small','',entry.label));root.append(col);
+  }
+}
+function closeV35Screen(id){
+  v35RequestSeq++;
+  const el=document.getElementById(id);if(el)el.hidden=true;
+  productLockBody(false);
+}
+async function openActivityAnalytics(){
+  if(!v34ShowScreen('activity-analytics-screen'))return;
+  const seq=++v35RequestSeq,stats=document.getElementById('v35-activity-summary');
+  stats.textContent='Загрузка данных…';document.getElementById('v35-activity-chart').replaceChildren();
+  try{
+    const response=await v35Fetch('/api/analytics/activity');
+    if(seq!==v35RequestSeq||document.getElementById('activity-analytics-screen').hidden)return;
+    const data=response.analytics;
+    v35StatGrid(stats,[['Активных дней',`${data.active_days} из 7`,'Сферы с записями или событиями'],['Тренировки',data.totals.workouts,`${data.totals.training_minutes} минут`],['Расписание',data.totals.events,'Запланировано событий'],['Заметки',data.totals.notes_updated,'Обновления записей'],['Расходы',v35Money(data.totals.expenses),'По операциям'],['Доходы',v35Money(data.totals.income),'По операциям']]);
+    const bars=data.days.map(d=>({label:d.start.slice(5),value:d.workouts+d.events+d.notes_updated+d.expense_count+d.income_count,display:String(d.workouts+d.events+d.notes_updated+d.expense_count+d.income_count)}));
+    v35BarChart(document.getElementById('v35-activity-chart'),bars);
+  }catch(error){if(seq===v35RequestSeq)stats.textContent=error.message;}
+}
+function v35OpenReport(period){v35ReportReturn=true;showReport(period);}
+async function openFinancialAnalytics(){
+  const fromFinance=!document.getElementById('finance-screen')?.hidden;
+  const fromActivity=!document.getElementById('activity-analytics-screen')?.hidden;
+  v35FinanceReturn=fromFinance?'finance':fromActivity?'activity':'home';
+  if(!v34ShowScreen('finance-analytics-screen'))return;
+  const input=document.getElementById('v35-finance-month');
+  if(!input.value){const today=new Date();input.value=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;}
+  await v35LoadFinance();
+}
+function closeFinancialAnalytics(){
+  const destination=v35FinanceReturn;v35FinanceReturn='home';
+  closeV35Screen('finance-analytics-screen');
+  if(destination==='finance')openFinance();
+  if(destination==='activity')openActivityAnalytics();
+}
+async function v35LoadFinance(){
+  const seq=++v35RequestSeq,month=document.getElementById('v35-finance-month').value;
+  const stats=document.getElementById('v35-finance-stats');stats.textContent='Загрузка…';
+  document.getElementById('v35-category-list').replaceChildren();document.getElementById('v35-finance-chart').replaceChildren();
+  try{
+    const data=(await v35Fetch('/api/analytics/finance?month='+encodeURIComponent(month))).analytics;
+    if(seq!==v35RequestSeq||document.getElementById('finance-analytics-screen').hidden)return;
+    const r=data.current,previous=data.previous;
+    v35StatGrid(stats,[['Всего расходов',v35Money(r.total_spent),`${r.expense_count} записей`],['Обязательные оплаченные',v35Money(r.paid_mandatory),'Уже учтены в общих расходах'],['Записано доходов',v35Money(r.income),'Без планового бюджета'],['Плановый бюджет',r.budget?v35Money(r.budget):'Не задан','Не является фактическим доходом'],['Расходы прошлого месяца',v35Money(previous.total_spent),'Для сравнения'],['Остаток по плану',r.budget?v35Money(r.available):'—','С учётом доходов и расходов']]);
+    const categories=document.getElementById('v35-category-list');
+    if(!r.categories.length)categories.textContent='За этот месяц расходы не записаны.';
+    for(const category of r.categories){
+      const row=v35Node('div','v35-category-row');const head=v35Node('div','v35-category-head');
+      head.append(v35Node('span','',category.name),v35Node('strong','',v35Money(category.amount)));
+      const track=v35Node('div','v35-category-track'),fill=v35Node('div','v35-category-fill');
+      fill.style.width=`${Math.min(100,category.amount/Math.max(1,r.total_spent)*100)}%`;
+      track.append(fill);row.append(head,track);categories.append(row);
+    }
+    v35BarChart(document.getElementById('v35-finance-chart'),data.trend.map(x=>({label:x.month.slice(5),value:x.spent,display:v35Money(x.spent)})));
+  }catch(error){if(seq===v35RequestSeq)stats.textContent=error.message;}
+}
+async function openAutomations(){
+  if(!v34ShowScreen('automations-screen'))return;
+  const root=document.getElementById('v35-rules'),seq=++v35RequestSeq;root.textContent='Загрузка правил…';
+  try{
+    const data=await v35Fetch('/api/automations');
+    if(seq!==v35RequestSeq||document.getElementById('automations-screen').hidden)return;
+    v35RenderRules(data.rules);
+  }catch(error){if(seq===v35RequestSeq)root.textContent=error.message;}
+}
+function v35RenderRules(rules){
+  const root=document.getElementById('v35-rules');root.replaceChildren();
+  rules.forEach(rule=>{
+    const block=v35Node('section','v35-rule');
+    const head=v35Node('div','v35-rule-head');const copy=v35Node('div','v35-rule-copy');
+    copy.append(v35Node('strong','',rule.label),v35Node('small','',rule.type==='tomorrow_events'?'Оповещение в вечернее время':'Срабатывает при достижении порога'));
+    const label=v35Node('label','ios-switch'),check=document.createElement('input');
+    check.type='checkbox';check.checked=Boolean(rule.enabled);check.setAttribute('aria-label','Включить '+rule.label);
+    label.append(check,v35Node('span','ios-switch-track'));head.append(copy,label);block.append(head);
+    const field=v35Node('label','v35-rule-field');field.append(v35Node('span','','Порог ('+rule.unit+')'));
+    const input=document.createElement('input');input.type='number';input.inputMode='numeric';
+    input.min=String(rule.min);input.max=String(rule.max);input.step='1';input.value=String(rule.threshold);
+    input.disabled=rule.type==='tomorrow_events';input.setAttribute('aria-label','Порог '+rule.label);
+    field.append(input);block.append(field);
+    const feedback=v35Node('p','v35-rule-feedback','');block.append(feedback);
+    let saving=false;
+    const save=async()=>{
+      if(saving)return;
+      const threshold=Number(input.value);
+      if(!Number.isInteger(threshold)||threshold<rule.min||threshold>rule.max){feedback.textContent=`Введи число от ${rule.min} до ${rule.max}`;check.checked=rule.enabled;return;}
+      saving=true;check.disabled=true;input.disabled=true;feedback.textContent='Сохраняем…';
+      try{
+        await v35Fetch('/api/automations/'+encodeURIComponent(rule.type),{method:'PUT',body:JSON.stringify({enabled:check.checked,threshold})});
+        rule.enabled=check.checked;rule.threshold=threshold;feedback.textContent='Сохранено';
+      }catch(error){check.checked=rule.enabled;input.value=String(rule.threshold);feedback.textContent=error.message;}
+      finally{saving=false;check.disabled=false;input.disabled=rule.type==='tomorrow_events';}
+    };
+    check.addEventListener('change',save);input.addEventListener('change',save);
+    root.append(block);
+  });
+}
+function openSVGAssistant(){
+  if(!v34ShowScreen('svg-assistant-screen'))return;
+  ++v35RequestSeq;
+  document.getElementById('v35-assistant-messages').replaceChildren();
+  document.getElementById('v35-assistant-input').value='';
+}
+async function v35AskAssistant(text){
+  const question=String(text||'').trim();if(!question)return;
+  const messages=document.getElementById('v35-assistant-messages');
+  messages.append(v35Node('div','v35-message is-user',question));
+  const answer=v35Node('div','v35-message is-assistant','Смотрю сохранённые записи…');messages.append(answer);
+  const seq=v35RequestSeq;
+  const input=document.getElementById('v35-assistant-input');input.disabled=true;
+  try{
+    const response=await v35Fetch('/api/assistant',{method:'POST',body:JSON.stringify({question})});
+    if(seq===v35RequestSeq)answer.textContent=response.answer;
+  }catch(error){if(seq===v35RequestSeq)answer.textContent=error.message;}
+  finally{input.disabled=false;messages.scrollTop=messages.scrollHeight;}
+}
+window.openActivityAnalytics=openActivityAnalytics;
+window.openFinancialAnalytics=openFinancialAnalytics;
+window.closeFinancialAnalytics=closeFinancialAnalytics;
+window.openAutomations=openAutomations;
+window.openSVGAssistant=openSVGAssistant;
+window.closeV35Screen=closeV35Screen;
+window.v35OpenReport=v35OpenReport;
+document.addEventListener('DOMContentLoaded',()=>{
+  document.getElementById('v35-finance-month')?.addEventListener('change',v35LoadFinance);
+  document.getElementById('v35-assistant-form')?.addEventListener('submit',event=>{
+    event.preventDefault();const input=document.getElementById('v35-assistant-input');
+    const text=input.value.trim();if(!text)return;input.value='';v35AskAssistant(text);
+  });
+  document.querySelectorAll('#v35-assistant-chips button').forEach(button=>button.addEventListener('click',()=>v35AskAssistant(button.dataset.question)));
 });

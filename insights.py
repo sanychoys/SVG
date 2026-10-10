@@ -2,6 +2,7 @@
 No external services or personal data are needed for report generation.
 """
 import json
+from contextlib import closing
 from datetime import datetime, date, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from finance_db import connect
@@ -48,7 +49,7 @@ def build_report(user_id, period='daily', anchor=None, now=None):
     if period not in ('daily','weekly'):
         raise ValueError('Unknown report period')
     now = now or datetime.now(timezone.utc)
-    with connect() as db:
+    with closing(connect()) as db, db:
         settings=db.execute('SELECT timezone_name,timezone_offset_minutes FROM user_settings WHERE user_id=?',(user_id,)).fetchone()
         if not settings: raise ValueError('User not found')
         tz=_timezone_for_row(settings)
@@ -104,7 +105,7 @@ def render_report(report):
 def collect_due_reports(now=None):
     now=now or datetime.now(timezone.utc)
     due=[]
-    with connect() as db:
+    with closing(connect()) as db, db:
         users=db.execute('''SELECT s.user_id,s.timezone_name,s.timezone_offset_minutes,u.telegram_id
                 FROM user_settings s JOIN users u ON u.id=s.user_id
                 WHERE s.bot_notifications=1''').fetchall()
@@ -132,7 +133,7 @@ def search_user_data(user_id, query, limit=60):
         detail=str(detail or '').strip()
         if query in (title+' '+detail).casefold() and len(results)<limit:
             results.append({'kind':kind,'id':str(ident),'title':title[:150],'detail':detail[:200]})
-    with connect() as db:
+    with closing(connect()) as db, db:
         for r in db.execute('''SELECT n.id,n.title,n.body,n.folder,n.tags_json,n.archived,
                   (SELECT group_concat(a.display_name,' ') FROM note_attachments a
                    WHERE a.note_id=n.id AND a.user_id=n.user_id) AS files

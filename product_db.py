@@ -696,6 +696,7 @@ def reset_product_data_for_telegram(telegram_id):
         db.execute("DELETE FROM notes WHERE user_id=?", (user_id,))
         db.execute("DELETE FROM bot_reminder_log WHERE user_id=?", (user_id,))
         db.execute("DELETE FROM notification_preferences WHERE user_id=?", (user_id,))
+        db.execute("DELETE FROM automation_rules WHERE user_id=?", (user_id,))
     for name in names:
         (ATTACHMENT_DIR / name).unlink(missing_ok=True)
     return True

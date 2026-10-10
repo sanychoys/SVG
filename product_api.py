@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from insights import build_report, search_user_data
+from intelligence import activity_analytics, financial_analytics, assistant_answer, list_rules, update_rule
 
 from product_db import (
     create_schedule_event,
@@ -174,6 +175,40 @@ def build_product_router(*, authenticate, bot, main_keyboard, get_user_settings,
         _,user_id=authenticate(request,x_telegram_init_data)
         if len(q)>120: raise HTTPException(status_code=422,detail='Слишком длинный запрос')
         return JSONResponse({'status':'ok','results':search_user_data(user_id,q)}, headers={'Cache-Control':'private, no-store'})
+
+    @router.get('/api/analytics/activity')
+    def activity_overview(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+        _, user_id = authenticate(request, x_telegram_init_data)
+        return JSONResponse({'status':'ok','analytics':activity_analytics(user_id)},headers={'Cache-Control':'private, no-store'})
+
+    @router.get('/api/analytics/finance')
+    def finance_overview(request: Request, month: str | None = None,
+                         x_telegram_init_data: str | None = Header(default=None)):
+        _, user_id = authenticate(request, x_telegram_init_data)
+        try: result=financial_analytics(user_id,month)
+        except ValueError as exc: raise HTTPException(status_code=422,detail=str(exc)) from exc
+        return JSONResponse({'status':'ok','analytics':result},headers={'Cache-Control':'private, no-store'})
+
+    @router.get('/api/automations')
+    def automations_list(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+        _, user_id = authenticate(request, x_telegram_init_data)
+        return JSONResponse({'status':'ok','rules':list_rules(user_id)},headers={'Cache-Control':'private, no-store'})
+
+    @router.put('/api/automations/{rule_type}')
+    def automations_update(rule_type: str, payload: dict, request: Request,
+                           x_telegram_init_data: str | None = Header(default=None)):
+        _, user_id = authenticate(request, x_telegram_init_data)
+        try: result=update_rule(user_id,rule_type,payload.get('threshold'),payload.get('enabled'))
+        except ValueError as exc: raise HTTPException(status_code=422,detail=str(exc)) from exc
+        return {'status':'ok','rules':result}
+
+    @router.post('/api/assistant')
+    def assistant_query(payload: dict,request: Request,
+                        x_telegram_init_data: str | None = Header(default=None)):
+        _,user_id=authenticate(request,x_telegram_init_data)
+        try: answer=assistant_answer(user_id,payload.get('question'))
+        except ValueError as exc:raise HTTPException(status_code=422,detail=str(exc)) from exc
+        return JSONResponse({'status':'ok',**answer},headers={'Cache-Control':'private, no-store'})
 
     @router.post("/api/schedule/availability")
     def schedule_availability(payload: dict, request: Request, x_telegram_init_data: str | None = Header(default=None)):
