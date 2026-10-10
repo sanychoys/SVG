@@ -5197,3 +5197,73 @@ html.svg-web:not(.web-authenticated) .app-shell,html.svg-web:not(.web-authentica
 html.svg-web.web-authenticated .web-auth-gate{display:none!important}
 .profile-web-logout strong{color:#ff6961}
 @media(max-width:430px){.web-auth-gate{padding:18px}.web-auth-card{border-radius:26px;padding:30px 22px 24px}.web-auth-card h1{font-size:28px}}
+
+/* V31: transparent, real-day activity breakdown on the home screen. */
+.home-activity-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  line-height: 1.45;
+}
+.home-activity-status::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  margin-left: 1px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: translateY(-1px) rotate(45deg);
+  transition: transform .18s ease;
+  flex: 0 0 auto;
+}
+.home-activity-status[aria-expanded="true"]::after {transform: translateY(2px) rotate(225deg)}
+.home-activity-status:focus-visible {outline: 2px solid rgba(255,255,255,.65);outline-offset: 4px;border-radius: 4px}
+.home-status-details {
+  margin: -4px 0 14px;
+  padding: 12px 14px 10px;
+  background: rgba(255,255,255,.045);
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: 17px;
+}
+.home-status-details[hidden] {display:none !important}
+.home-status-details h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255,255,255,.83);
+}
+.home-domain-detail-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid rgba(255,255,255,.06);
+  font-size: 11px;
+  color: rgba(225,232,240,.58);
+}
+.home-domain-detail-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 87px;
+  flex: 0 0 auto;
+}
+.home-domain-detail-name::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 100%;
+  background: rgba(255,255,255,.22);
+}
+.home-domain-detail-row.is-active .home-domain-detail-name::before {background: #e5f7ed;box-shadow: 0 0 6px rgba(229,247,237,.38)}
+.home-domain-detail-row.is-active {color: rgba(255,255,255,.88)}
+.home-domain-detail-value {text-align: right;min-width: 0;overflow-wrap: anywhere}

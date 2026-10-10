@@ -1,7 +1,7 @@
 /* SVGTracker product modules v28: schedule + notes.
    This file intentionally owns these domains so the legacy script.js can be
    reduced gradually without changing existing training/finance behavior. */
-window.SVGTRACKER_PRODUCT_VERSION = 30;
+window.SVGTRACKER_PRODUCT_VERSION = 31;
 let scheduleViewMode = 'personal';
 let scheduleEditorMode = 'personal';
 let scheduleEditorFriendIds = new Set();

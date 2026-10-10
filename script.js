@@ -2746,11 +2746,77 @@ function renderHomeTrainingSummary(nowMs = Date.now()) {
   renderHomeDomainCards(new Date(nowMs));
   const status = document.querySelector('.subtle-status');
   if (!status) return;
-  const today = getDashboardActivityBreakdown(new Date(nowMs), nowMs);
-  const activeDomains = [today.training > 0, today.finance > 0, today.schedule > 0, today.notes > 0].filter(Boolean).length;
-  if (state.activeWorkout) status.textContent = `Тренировка идёт · ${formatWorkoutDuration(getWorkoutElapsedSeconds(state.activeWorkout, nowMs))}`;
-  else if (activeDomains) status.textContent = `Сегодня активны ${activeDomains} из 4 сфер`;
-  else status.textContent = 'Сегодня можно начать с любого раздела';
+  // The four active domains represent actual dated records, not the
+  // progress/discipline score (a configured budget can score > 0 with no activity).
+  const domains = getTodayActiveDomainDetails(new Date(nowMs));
+  const activeDomains = domains.filter(domain => domain.count > 0).length;
+  status.textContent = `Сегодня активны ${activeDomains} из 4 сфер`;
+  status.setAttribute('aria-label', `${status.textContent}. Нажми, чтобы увидеть подробности.`);
+  status.title = domains.map(domain => `${domain.label}: ${domain.detail}`).join('\n');
+  for (const domain of domains) {
+    const row = document.querySelector(`[data-home-domain="${domain.id}"]`);
+    if (!row) continue;
+    row.classList.toggle('is-active', domain.count > 0);
+    const value = row.querySelector('.home-domain-detail-value');
+    if (value) value.textContent = domain.detail;
+  }
+}
+
+/** Determine actual day-level activity from the four persisted data sets.
+ *  Future planned workouts, empty budgets and old notes never count as activity.
+ *  Calendar events are considered active for the day they are scheduled. */
+function getTodayActiveDomainDetails(date = new Date()) {
+  const key = getDateKey(date);
+  const workouts = getCompletedWorkoutsForDate(date).length;
+  const activeWorkout = state.activeWorkout &&
+    ((state.activeWorkout.dateKey || getLocalDateKeyFromValue(state.activeWorkout.started)) === key ||
+     key === getDateKey(new Date())) ? 1 : 0;
+  const goalEntries = (state.goals || []).reduce((total, goal) => {
+    const history = Array.isArray(goal?.history) ? goal.history : [];
+    return total + history.filter(entry =>
+      (entry?.kind === 'result' || entry?.kind === 'progress') &&
+      getLocalDateKeyFromValue(entry.date || entry.recordedAt || entry.updatedAt) === key
+    ).length;
+  }, 0);
+  const trainingCount = workouts + activeWorkout + goalEntries;
+
+
+  const expensesAndPayments = getFinanceEntriesForDate(date).length;
+  const incomes = (financeData.incomes || []).filter(item => item?.date === key).length;
+  const debts = (financeData.debts || []).filter(item =>
+    item?.date === key || getLocalDateKeyFromValue(item?.updatedAt) === key
+  ).length;
+  const financeCount = expensesAndPayments + incomes + debts;
+
+  const scheduleCount = getScheduleEventsForDate(date).length;
+  const noteCount = getNotesForDate(date).length;
+  const plural = (n, one, few, many) => {
+    const num = Math.abs(n) % 100;
+    const last = num % 10;
+    return num > 10 && num < 20 ? many : last === 1 ? one : last >= 2 && last <= 4 ? few : many;
+  };
+  const trainingParts = [];
+  if (workouts + activeWorkout) trainingParts.push(`${workouts + activeWorkout} ${plural(workouts + activeWorkout, 'тренировка', 'тренировки', 'тренировок')}`);
+  if (goalEntries) trainingParts.push(`${goalEntries} ${plural(goalEntries, 'результат', 'результата', 'результатов')}`);
+  return [
+    {id:'training', label:'Тренировки', count:trainingCount,
+      detail:trainingParts.join(' · ') || 'Нет тренировок или новых результатов'},
+    {id:'finance', label:'Финансы', count:financeCount,
+      detail:financeCount ? `${financeCount} ${plural(financeCount,'операция','операции','операций')}` : 'Нет финансовых операций'},
+    {id:'schedule', label:'Расписание', count:scheduleCount,
+      detail:scheduleCount ? `${scheduleCount} ${plural(scheduleCount,'событие','события','событий')} на сегодня` : 'На сегодня событий нет'},
+    {id:'notes', label:'Заметки', count:noteCount,
+      detail:noteCount ? `${noteCount} ${plural(noteCount,'заметка','заметки','заметок')} за сегодня` : 'Сегодня заметки не менялись'},
+  ];
+}
+
+function toggleHomeDomainStatusDetails() {
+  const details = document.getElementById('home-domain-status-details');
+  const button = document.getElementById('home-activity-status');
+  if (!details || !button) return;
+  details.hidden = !details.hidden;
+  button.setAttribute('aria-expanded', String(!details.hidden));
+  if (!details.hidden) renderHomeTrainingSummary();
 }
 
 
@@ -4364,7 +4430,7 @@ function getDashboardActivityBreakdown(date, nowMs = Date.now()) {
 }
 function renderHomeDomainCards(now = new Date()) {
   const stats=financeMonthStatsV15(now);const financePrimary=document.getElementById('home-finance-primary');const financeSecondary=document.getElementById('home-finance-secondary');
-  const cashToday=financeCashSpentForDateV28(now);if(financePrimary)financePrimary.textContent=cashToday?`−${formatRubles(cashToday)} сегодня`:'0 ₽ сегодня';
+  const cashToday=financeCashSpentForDateV28(now);if(financePrimary)financePrimary.textContent=cashToday?`${formatRubles(cashToday)} сегодня`:'0 ₽ сегодня';
   if(financeSecondary)financeSecondary.textContent=stats.income>0?(stats.remainingToday<0?`Перерасход ${formatRubles(Math.abs(stats.remainingToday))}`:`Можно ещё ${formatRubles(stats.remainingToday)}`):'Настрой месячный бюджет';
   const next=getNextScheduleEvent(now);const schedulePrimary=document.getElementById('home-schedule-primary');const scheduleSecondary=document.getElementById('home-schedule-secondary');if(next){const isToday=getDateKey(next.date)===getDateKey(now);if(schedulePrimary)schedulePrimary.textContent=String(next.event.title||next.event.name||'Событие');if(scheduleSecondary){const when=next.event?.all_day?'Весь день':new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(next.date);scheduleSecondary.textContent=`${isToday?'Сегодня':new Intl.DateTimeFormat('ru-RU',{weekday:'short',day:'numeric',month:'short'}).format(next.date)} · ${when}`;}}else{if(schedulePrimary)schedulePrimary.textContent='Событий нет';if(scheduleSecondary)scheduleSecondary.textContent='Расписание пока пустое';}
   const notes=notesData.filter(note=>note?.archived!==true);const notesPrimary=document.getElementById('home-notes-primary');const notesSecondary=document.getElementById('home-notes-secondary');if(notesPrimary)notesPrimary.textContent=notes.length?`${notes.length} ${notes.length===1?'заметка':notes.length<5?'заметки':'заметок'}`:'Заметок нет';if(notesSecondary){const last=[...notes].sort((a,b)=>new Date(b.updatedAt||b.createdAt||0)-new Date(a.updatedAt||a.createdAt||0))[0];notesSecondary.textContent=last?String(last.title||last.text||'Последняя запись').slice(0,54):'Новые записи появятся здесь';}
@@ -4412,13 +4478,27 @@ async function copyProfileUsername() {
 function renderHomeActivity(nowMs = Date.now()) {
   const now=new Date(nowMs);const monday=getWeekMonday(now);const days=Array.from({length:7},(_,index)=>{const day=new Date(monday);day.setDate(monday.getDate()+index);return day;});const breakdowns=days.map(day=>getDashboardActivityBreakdown(day,nowMs));const todayIndex=Math.max(0,Math.min(6,Math.round((startOfDay(now)-startOfDay(monday))/86400000)));const elapsed=breakdowns.slice(0,todayIndex+1);const weekScore=elapsed.length?Math.round(elapsed.reduce((sum,item)=>sum+item.score,0)/elapsed.length):0;
   const spentEl=document.getElementById('home-finance-spent');const workoutEl=document.getElementById('home-last-workout');const scheduleEl=document.getElementById('home-next-schedule');const scheduleLabel=document.getElementById('home-next-schedule-label');const progress=document.getElementById('home-activity-progress');const line=document.getElementById('home-activity-line');const area=document.getElementById('home-activity-area');const points=document.getElementById('home-activity-points');
-  const todayStats=financeMonthStatsV15(now);const cashToday=financeCashSpentForDateV28(now);if(spentEl)spentEl.textContent=cashToday?`−${formatRubles(cashToday)}`:'0 ₽';const lastWorkout=getLastCompletedWorkout(now);if(workoutEl)workoutEl.textContent=lastWorkout?formatDashboardDuration(normalizeWorkoutSeconds(lastWorkout.duration)):'—';const next=getNextScheduleEvent(now);if(scheduleEl)scheduleEl.textContent=next?(next.event?.all_day?'Весь день':new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(next.date)):'—';if(scheduleLabel)scheduleLabel.textContent=next?String(next.event.title||next.event.name||'Следующее').slice(0,22):'Следующее';if(progress){const value=progress.querySelector('b');const label=progress.querySelector('small');progress.classList.remove('is-live');if(value)value.textContent=`${weekScore}%`;if(label)label.textContent='общей активности';}
+  const todayStats=financeMonthStatsV15(now);const cashToday=financeCashSpentForDateV28(now);if(spentEl)spentEl.textContent=cashToday?formatRubles(cashToday):'0 ₽';const lastWorkout=getLastCompletedWorkout(now);if(workoutEl)workoutEl.textContent=lastWorkout?formatDashboardDuration(normalizeWorkoutSeconds(lastWorkout.duration)):'—';const next=getNextScheduleEvent(now);if(scheduleEl)scheduleEl.textContent=next?(next.event?.all_day?'Весь день':new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(next.date)):'—';if(scheduleLabel)scheduleLabel.textContent=next?String(next.event.title||next.event.name||'Следующее').slice(0,22):'Следующее';if(progress){const value=progress.querySelector('b');const label=progress.querySelector('small');progress.classList.remove('is-live');if(value)value.textContent=`${weekScore}%`;if(label)label.textContent='общей активности';}
   if(!line||!area||!points)return;const baselineY=124,topY=28;const coords=breakdowns.map((item,index)=>({x:Number((index*(336/6)).toFixed(1)),y:Number((baselineY-Math.max(0,Math.min(100,item.score))/100*(baselineY-topY)).toFixed(1))}));const path=buildSmoothPath(coords);line.setAttribute('d',path);area.setAttribute('d',`${path} L336 142 L0 142 Z`);points.replaceChildren();coords.forEach((point,index)=>{const day=days[index],data=breakdowns[index];const group=document.createElementNS('http://www.w3.org/2000/svg','g');group.setAttribute('tabindex','0');group.setAttribute('role','button');const hit=document.createElementNS('http://www.w3.org/2000/svg','circle');hit.setAttribute('cx',point.x);hit.setAttribute('cy',point.y);hit.setAttribute('r','13');hit.setAttribute('fill','transparent');hit.setAttribute('class','home-point-hit');const circle=document.createElementNS('http://www.w3.org/2000/svg','circle');circle.setAttribute('cx',point.x);circle.setAttribute('cy',point.y);circle.setAttribute('r',getDateKey(day)===getDateKey(now)?'2.2':'1.8');circle.setAttribute('class','home-point-dot');const label=new Intl.DateTimeFormat('ru-RU',{weekday:'short',day:'numeric',month:'short'}).format(day);const detail=`${data.score}% · тренировки ${formatDashboardDuration(data.trainingSeconds)} · финансы ${Math.round(data.finance)}/25 · расписание ${data.scheduleCount} · заметки ${data.noteCount}`;group.setAttribute('aria-label',`${label}: ${detail}`);const announce=()=>showToast(`${label} · ${detail}`);group.addEventListener('click',announce);group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();announce();}});group.append(hit,circle);points.appendChild(group);});
 }
 
 window.addEventListener('online',()=>syncFinanceWithServerV15());
 window.addEventListener('offline',()=>financeSetSyncStatusV15('offline','Офлайн · сохранено локально'));
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&hasServerAuth()){syncFinanceWithServerV15();syncDeviceTimezone(false);}});
+let lastDashboardLocalDay = getDateKey(new Date());
+function refreshDashboardForLocalDayChange() {
+  const currentDay = getDateKey(new Date());
+  if (currentDay === lastDashboardLocalDay) return;
+  lastDashboardLocalDay = currentDay;
+  renderHomeTrainingSummary();
+}
+window.setInterval(refreshDashboardForLocalDayChange, 60000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    refreshDashboardForLocalDayChange();
+    renderHomeTrainingSummary();
+  }
+});
 document.addEventListener('DOMContentLoaded',()=>{window.SVGTRACKER_BOOT_STAGE='finance:init';svgDiag('finance:init:start');financeData=normalizeFinanceDataV15(financeData);localStorage.setItem(STORAGE.finance,JSON.stringify(financeData));renderFinance();renderHomeTrainingSummary();svgDiag('finance:init:done');});
 
 // Authentication-aware bootstrap: keep neutral placeholders visible until the
