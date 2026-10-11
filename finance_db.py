@@ -351,6 +351,20 @@ def create_shortcut_token(user_id):
     return token
 
 
+def shortcut_token_status(user_id):
+    """Expose only non-secret metadata for the account that owns the token."""
+    with connect() as db:
+        row = db.execute(
+            """SELECT created_at, last_used_at FROM shortcut_tokens
+               WHERE user_id=? AND revoked_at IS NULL
+               ORDER BY id DESC LIMIT 1""",
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return {"active": False, "created_at": None, "last_used_at": None}
+    return {"active": True, "created_at": row["created_at"], "last_used_at": row["last_used_at"]}
+
+
 def revoke_shortcut_tokens(user_id):
     now = utc_now()
     with connect() as db:

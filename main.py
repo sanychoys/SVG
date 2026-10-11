@@ -39,6 +39,7 @@ from finance_db import (
     create_friend_request,
     cancel_friend_request,
     create_shortcut_token,
+    shortcut_token_status,
     create_web_auth_request,
     approve_web_auth_request,
     consume_web_auth_request,
@@ -86,7 +87,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "37"
+APP_VERSION = "38"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -119,6 +120,8 @@ ADMIN_PENDING_DEPLOYS: dict[str, dict] = {}
 ADMIN_ERROR_COOLDOWN: dict[str, float] = {}
 ADMIN_MAX_ZIP_BYTES = 20 * 1024 * 1024
 PUBLIC_BASE_URL = os.environ.get("SVGTRACKER_PUBLIC_URL", "https://starslix.ru").rstrip("/")
+# Optional real, manually published Apple Shortcuts template; never invent links.
+SHORTCUT_ICLOUD_URL = os.environ.get("SVGTRACKER_SHORTCUT_ICLOUD_URL", "").strip()
 ADMIN_LOG_DIR = ADMIN_STATE_DIR / "logs"
 FRONTEND_LOG_FILE = ADMIN_LOG_DIR / "frontend.log"
 FRONTEND_RATE_WINDOW_SECONDS = 60
@@ -1366,6 +1369,53 @@ def api_save_finance_state(
 
 
 
+def published_shortcut_url() -> str | None:
+    """Accept only Apple iCloud Shortcut links; prevent arbitrary redirects."""
+    from urllib.parse import urlparse
+    if not SHORTCUT_ICLOUD_URL or len(SHORTCUT_ICLOUD_URL) > 200:
+        return None
+    try:
+        parsed = urlparse(SHORTCUT_ICLOUD_URL)
+        parts = parsed.path.strip('/').split('/')
+        if (parsed.scheme != 'https' or parsed.netloc.lower() != 'www.icloud.com'
+                or parsed.params or parsed.query or parsed.fragment or parsed.username or parsed.password
+                or len(parts) != 2 or parts[0] != 'shortcuts'
+                or not (16 <= len(parts[1]) <= 64)
+                or not all(c in '0123456789abcdefABCDEF-' for c in parts[1])):
+            return None
+        return SHORTCUT_ICLOUD_URL
+    except ValueError:
+        return None
+
+
+@app.get("/api/shortcut/setup")
+def api_shortcut_setup(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    """Safe onboarding metadata. Never return an existing bearer token."""
+    _, user_id = authenticated_user(request, x_telegram_init_data)
+    return {
+        "status": "ok",
+        **shortcut_token_status(user_id),
+        "options_url": f"{PUBLIC_BASE_URL}/api/shortcut/finance/options",
+        "transaction_url": f"{PUBLIC_BASE_URL}/api/shortcut/finance/transaction",
+        "icloud_url": published_shortcut_url(),
+    }
+
+
+@app.post("/api/shortcut/token")
+def api_shortcut_issue_token(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    """Rotate API credential; the raw value is returned only once."""
+    _, user_id = authenticated_user(request, x_telegram_init_data)
+    token = create_shortcut_token(user_id)
+    return {"status": "ok", "token": token, **shortcut_token_status(user_id)}
+
+
+@app.post("/api/shortcut/revoke")
+def api_shortcut_revoke_token(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    _, user_id = authenticated_user(request, x_telegram_init_data)
+    revoke_shortcut_tokens(user_id)
+    return {"status": "ok", **shortcut_token_status(user_id)}
+
+
 @app.get("/api/shortcut/finance/options")
 def api_shortcut_finance_options(authorization: str | None = Header(default=None)):
     user = shortcut_user(authorization)
@@ -1797,7 +1847,9 @@ async def shortcut_setup(message: Message):
     await message.answer(
         "Токен для iPhone Action Button создан.\n\n"
         f"{token}\n\n"
-        "Скопируй токен в свою команду Shortcuts. Никому его не отправляй. "
+        "Скопируй токен в заголовок Authorization (Bearer <токен>) своей команды. "
+        "Пошаговая инструкция: SVGTracker → Финансы → Команды iPhone. "
+        "Никому его не отправляй. "
         "Повторная команда /shortcut автоматически отключит предыдущий токен. "
         "Для отключения используй /shortcut_revoke."
     )

@@ -3406,7 +3406,7 @@ let profileSessions = [];
 let profileSessionsLoaded = false;
 let profileSessionsBusy = false;
 let profileFetchGeneration = 0;
-const PROFILE_VIEWS = {home:'Профиль',settings:'Настройки',privacy:'Приватность',security:'Устройства',data:'Мои данные'};
+const PROFILE_VIEWS = {home:'Профиль',settings:'Настройки',shortcuts:'Команды iPhone',privacy:'Приватность',security:'Устройства',data:'Мои данные'};
 
 function showProfileView(view='home', fromBack=false) {
   if(!Object.prototype.hasOwnProperty.call(PROFILE_VIEWS,view))view='home';
@@ -3416,6 +3416,7 @@ function showProfileView(view='home', fromBack=false) {
     if(view==='home')profileViewHistory=[];
     else profileViewHistory.push(profileActiveView);
   }
+  if(profileActiveView==='shortcuts' && view!=='shortcuts'){shortcutSetupGeneration++;clearShortcutToken();}
   profileActiveView=view;
   for(const name of Object.keys(PROFILE_VIEWS)){
     const page=document.getElementById(`profile-${name}-view`);
@@ -3431,7 +3432,102 @@ function showProfileView(view='home', fromBack=false) {
   renderProfileState();
   if(view==='privacy')loadProfilePrivacy(true);
   if(view==='security')loadProfileSessions();
+  if(view==='shortcuts')loadShortcutSetup();
 }
+/* V38: iPhone Shortcuts onboarding; never persist the bearer in storage. */
+let shortcutSetupState = null;
+let shortcutSecret = '';
+let shortcutSetupBusy = false;
+let shortcutSetupGeneration = 0;
+
+function clearShortcutToken(){
+  shortcutSecret='';
+  const credential=document.getElementById('shortcut-once-token');
+  const value=document.getElementById('shortcut-token-value');
+  if(value)value.textContent='';
+  if(credential)credential.hidden=true;
+}
+function shortcutFeedback(message){
+  const node=document.getElementById('shortcut-setup-message');
+  if(node)node.textContent=message||'';
+}
+function renderShortcutSetup(){
+  const state=shortcutSetupState||{};
+  const indicator=document.getElementById('shortcut-setup-indicator');
+  if(indicator)indicator.textContent=!hasServerAuth()?'Требуется вход через Telegram':!shortcutSetupState?'Подключаемся…':state.active?'Ключ активен':'Ключ ещё не создан';
+  const create=document.getElementById('shortcut-create-token');
+  if(create){create.disabled=shortcutSetupBusy||!hasServerAuth();create.textContent=state.active?'Заменить ключ':'Создать ключ';}
+  const revoke=document.getElementById('shortcut-revoke-token');
+  if(revoke){revoke.hidden=!state.active;revoke.disabled=shortcutSetupBusy;}
+  const options=document.getElementById('shortcut-options-url');
+  const transaction=document.getElementById('shortcut-transaction-url');
+  if(options)options.textContent=state.options_url||`${location.origin}/api/shortcut/finance/options`;
+  if(transaction)transaction.textContent=state.transaction_url||`${location.origin}/api/shortcut/finance/transaction`;
+  const template=document.getElementById('shortcut-icloud-link');
+  if(template){const url=state.icloud_url||'';template.hidden=!url;if(url)template.href=url;else template.removeAttribute('href');}
+  const authButton=document.getElementById('shortcut-copy-authorization');
+  if(authButton)authButton.disabled=!shortcutSecret;
+}
+async function loadShortcutSetup(){
+  const generation=++shortcutSetupGeneration;
+  clearShortcutToken();shortcutSetupState=null;shortcutFeedback('');renderShortcutSetup();
+  if(!hasServerAuth()){shortcutFeedback('Войди в SVGTracker через Telegram, чтобы управлять командой.');return;}
+  try{
+    const response=await fetch('/api/shortcut/setup',{headers:telegramApiHeaders(false),cache:'no-store'});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(getApiErrorMessage(data,'Не удалось загрузить настройки'));
+    if(generation!==shortcutSetupGeneration)return;
+    shortcutSetupState=data;renderShortcutSetup();
+  }catch(error){if(generation===shortcutSetupGeneration)shortcutFeedback(error?.message||'Ошибка загрузки');}
+}
+async function issueShortcutToken(){
+  if(shortcutSetupBusy||!hasServerAuth())return;
+  if(shortcutSetupState?.active){
+    requestConfirm('Создать новый ключ? Все команды со старым ключом перестанут работать.',()=>performShortcutTokenAction('issue'));
+  }else await performShortcutTokenAction('issue');
+}
+function revokeShortcutToken(){
+  if(shortcutSetupBusy||!hasServerAuth())return;
+  requestConfirm('Отключить команду iPhone? Запись операций по этому ключу прекратится.',()=>performShortcutTokenAction('revoke'));
+}
+async function performShortcutTokenAction(action){
+  if(shortcutSetupBusy)return;
+  shortcutSetupBusy=true;clearShortcutToken();shortcutFeedback('Сохраняем…');renderShortcutSetup();
+  const generation=shortcutSetupGeneration;
+  try{
+    const endpoint=action==='issue'?'/api/shortcut/token':'/api/shortcut/revoke';
+    const response=await fetch(endpoint,{method:'POST',headers:telegramApiHeaders(false),cache:'no-store'});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(getApiErrorMessage(data,'Не удалось изменить доступ'));
+    if(generation!==shortcutSetupGeneration)return;
+    shortcutSetupState={...shortcutSetupState,...data};
+    if(action==='issue'&&typeof data.token==='string'&&data.token.length>20){
+      shortcutSecret=data.token;
+      const credential=document.getElementById('shortcut-once-token');
+      const value=document.getElementById('shortcut-token-value');
+      if(value)value.textContent=data.token;
+      if(credential)credential.hidden=false;
+      shortcutFeedback('Ключ готов. Скопируй его и вставь в заголовок Authorization своей команды.');
+    }else if(action==='revoke')shortcutFeedback('Доступ отключён. Создай новый ключ, если захочешь подключиться снова.');
+    else shortcutFeedback('Не удалось получить новый ключ, создай его повторно.');
+  }catch(error){if(generation===shortcutSetupGeneration)shortcutFeedback(error?.message||'Ошибка запроса');}
+  finally{shortcutSetupBusy=false;if(generation===shortcutSetupGeneration)renderShortcutSetup();}
+}
+async function copyShortcutValue(key){
+  const state=shortcutSetupState||{};
+  const values={token:shortcutSecret,options:state.options_url||`${location.origin}/api/shortcut/finance/options`,transaction:state.transaction_url||`${location.origin}/api/shortcut/finance/transaction`,header:'Authorization',authorization:shortcutSecret?`Bearer ${shortcutSecret}`:''};
+  const value=values[key];
+  if(!value){shortcutFeedback('Сначала создай новый ключ. Старый ключ повторно не показывается — это защита аккаунта.');return;}
+  const ok=await copyTextV15(value);
+  shortcutFeedback(ok?'Скопировано. Вставь значение в приложение «Команды».':'Не удалось скопировать. Проверь доступ к буферу обмена.');
+}
+function openShortcutSetup(){
+  const finance=document.getElementById('finance-screen');
+  if(finance&&!finance.hidden&&typeof closeFinance==='function')closeFinance();
+  openProfileDrawer();
+  showProfileView('shortcuts');
+}
+
 function profileBackNavigation(){
   if(profileActiveView==='home')return closeProfileDrawer();
   const previous=profileViewHistory.pop()||'home';
@@ -3635,6 +3731,7 @@ function openProfileDrawer(){
 function closeProfileDrawer(immediate=false){
   const drawer=document.getElementById('profile-drawer');
   if(!drawer||drawer.hidden)return;
+  shortcutSetupGeneration++;clearShortcutToken();
   drawer.classList.remove('is-open');document.body.classList.remove('profile-drawer-open');
   if(profilePreviousFocus?.isConnected&&!immediate)profilePreviousFocus.focus({preventScroll:true});
   if(immediate)drawer.hidden=true;

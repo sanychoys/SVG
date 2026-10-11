@@ -5420,3 +5420,42 @@ html.svg-web.web-authenticated .web-auth-gate{display:none!important}
 .home-tool-icon svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;display:block}
 @media(max-width:350px){.home-toolbox-grid{gap:6px}.home-tool-action{min-height:78px;border-radius:14px;font-size:10px;padding:8px 2px}.home-tool-icon{width:31px;height:31px}.home-tool-icon svg{width:18px;height:18px}.home-toolbox-heading small{font-size:9px}}
 @media(prefers-reduced-motion:reduce){.home-tool-action{transition:none!important}}
+
+/* V38 · iPhone Shortcuts wizard */
+.shortcut-setup-card,.shortcut-step-block{border:1px solid rgba(255,255,255,.1);background:linear-gradient(140deg,rgba(255,255,255,.075),rgba(255,255,255,.025));border-radius:19px;padding:16px;margin:0 0 13px;min-width:0;box-sizing:border-box}
+.shortcut-setup-head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.shortcut-setup-head>div{display:grid;gap:5px;min-width:0}
+.shortcut-setup-head strong,.shortcut-copy-line strong{font-size:12.5px;font-weight:650;line-height:1.35}
+.shortcut-setup-head small,.shortcut-step-hint,.shortcut-setup-feedback{font-size:11px;line-height:1.55;color:rgba(255,255,255,.55)}
+.shortcut-setup-icon{display:grid;place-items:center;width:42px;height:42px;flex:0 0 42px;border:1px solid rgba(255,255,255,.13);background:rgba(255,255,255,.1);border-radius:13px}
+.shortcut-setup-icon svg{width:22px;height:22px}
+.shortcut-setup-card>p,.shortcut-step-block>p,.shortcut-credential p,.shortcut-setup-security{font-size:11.5px;line-height:1.65;color:rgba(255,255,255,.57);margin:10px 0}
+.shortcut-setup-actions{display:flex;gap:9px;flex-wrap:wrap;margin:15px 0 2px}
+.shortcut-btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-align:center;border:1px solid rgba(255,255,255,.17);border-radius:12px;min-height:43px;padding:10px 13px;box-sizing:border-box;font:inherit;font-size:11.5px;font-weight:620;text-decoration:none;cursor:pointer;line-height:1.4;max-width:100%}
+.shortcut-btn-primary{color:#121417;background:#f1f1f3;border-color:#f1f1f3}
+.shortcut-btn-secondary{color:#f1f2f4;background:rgba(255,255,255,.10)}
+.shortcut-btn-danger{color:#ffa4a4;background:rgba(255,70,70,.075);border-color:rgba(255,90,90,.24)}
+.shortcut-btn:disabled{opacity:.4;cursor:not-allowed}
+.shortcut-credential{background:rgba(255,255,255,.07);border-radius:13px;padding:12px;margin-top:15px;border:1px solid rgba(255,255,255,.12)}
+.shortcut-credential strong{font-size:12px}
+.shortcut-credential code{display:block;margin:10px 0;padding:12px;border:1px solid rgba(255,255,255,.09);border-radius:9px;background:rgba(0,0,0,.25);font:11px/1.5 ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere;user-select:all}
+.shortcut-step-heading{display:flex;gap:11px;align-items:flex-start;margin-bottom:14px}
+.shortcut-step-heading>span{display:grid;place-items:center;flex:0 0 29px;width:29px;height:29px;border-radius:10px;color:#171719;background:#f0f0f2;font-size:13px;font-weight:700}
+.shortcut-step-heading>div{min-width:0;flex:1}
+.shortcut-step-heading h3{margin:0 0 4px;font-size:14px;line-height:1.35}
+.shortcut-step-heading p{margin:0;color:rgba(255,255,255,.52);font-size:11px;line-height:1.55}
+.shortcut-open-app{width:100%;margin-bottom:8px}
+.shortcut-open-app svg{width:15px;height:15px;stroke:currentColor;stroke-width:1.8;fill:none}
+.shortcut-help-details{border-radius:13px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);padding:12px;margin-bottom:14px}
+.shortcut-help-details summary{font-size:12px;font-weight:620;cursor:pointer;line-height:1.5}
+.shortcut-steps{margin:12px 0 0;padding-left:18px;display:grid;gap:11px}
+.shortcut-steps li{font-size:11px;color:rgba(255,255,255,.7);line-height:1.6;padding-left:2px;overflow-wrap:anywhere}
+.shortcut-steps code{font:11px ui-monospace,SFMono-Regular,monospace;color:#f5f5f5}
+.shortcut-copy-line{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:11px 0;border-top:1px solid rgba(255,255,255,.085);min-width:0}
+.shortcut-copy-line>div{min-width:0;flex:1;display:grid;gap:4px}
+.shortcut-copy-line code{font:10px/1.4 ui-monospace,SFMono-Regular,monospace;color:rgba(255,255,255,.52);overflow-wrap:anywhere}
+.shortcut-copy-line .shortcut-btn{min-height:36px;padding:7px 10px;flex:0 0 auto}
+.shortcut-setup-security{padding:7px 2px 22px!important}
+.shortcut-setup-feedback:empty{display:none}
+.shortcut-finance-entry{margin-top:9px}
+@media(max-width:350px){.shortcut-copy-line{align-items:stretch;flex-direction:column}.shortcut-copy-line .shortcut-btn{align-self:flex-start}.shortcut-step-block,.shortcut-setup-card{padding:13px}}
