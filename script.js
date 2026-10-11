@@ -110,7 +110,7 @@ async function hydrateAuthenticatedApp(source = 'auth') {
 }
 
 function isWebsiteLaunch() {
-  return document.documentElement.classList.contains('svg-web') && !window.SVG_TELEGRAM_LAUNCH && !tg?.initData;
+  return document.documentElement.classList.contains('svg-web');
 }
 
 function hasServerAuth() {
@@ -4844,15 +4844,7 @@ document.addEventListener('svgtracker:auth-ready', () => {
 });
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Website sign-in remains possible only via /?web=1. Never show it at boot:
-  // Telegram's SDK and WebView bridge can arrive after DOMContentLoaded.
-  if (!new URLSearchParams(location.search).has('web') || new URLSearchParams(location.search).get('web') !== '1') return;
-  setTimeout(() => {
-    if (window.SVG_TELEGRAM_LAUNCH || window.TelegramWebviewProxy || window.TelegramWebviewProxyProto || tg?.initData) return;
-    document.documentElement.classList.remove('svg-miniapp');
-    document.documentElement.classList.add('svg-web');
-    initializeWebsiteAuth();
-  }, 1800);
+  if (isWebsiteLaunch()) initializeWebsiteAuth();
 });
 
 document.addEventListener('DOMContentLoaded', () => {

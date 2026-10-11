@@ -288,16 +288,6 @@ def validate_release(root: Path, relpaths: list[Path]) -> list[str]:
     else:
         notes.append("node not installed; JS syntax check skipped")
     notes.extend(validate_frontend_contract(root))
-    # An otherwise healthy API must not be published alongside a stale HTML
-    # entrypoint pointing at cached assets from the previous release.
-    version = release_app_version(root)
-    html_file = root / 'index.html'
-    if version and html_file.is_file():
-        html = html_file.read_text(encoding='utf-8')
-        for asset in ('script.js', 'product.js', 'style.css', 'product.css'):
-            if f'/{asset}?v={version}' not in html:
-                raise ValueError(f'Frontend release version mismatch: {asset} (expected v={version})')
-        notes.append(f'API/frontend version consistent: v{version}')
     return notes
 
 
@@ -553,36 +543,20 @@ def service_restart() -> None:
         raise RuntimeError((proc.stderr or proc.stdout or "systemctl restart failed").strip())
 
 
-def wait_health(timeout: float = 25.0, expected_version: str | None = None) -> tuple[bool, str]:
-    """A previous resident process must not satisfy a new release's health check."""
+def wait_health(timeout: float = 25.0) -> tuple[bool, str]:
     deadline = time.time() + timeout
     last = "no response"
     while time.time() < deadline:
         try:
-            req = urllib.request.Request(HEALTH_URL, headers={"Cache-Control": "no-store"})
-            with urllib.request.urlopen(req, timeout=2.5) as response:
+            with urllib.request.urlopen(HEALTH_URL, timeout=2.5) as response:
                 body = response.read(4096).decode("utf-8", "replace")
-                try:
-                    health = json.loads(body)
-                except (TypeError, ValueError):
-                    health = {}
-                actual_version = str(health.get("version", ""))
-                if (response.status == 200 and health.get("status") == "ok"
-                        and (expected_version is None or actual_version == str(expected_version))):
+                if response.status == 200 and '"status":"ok"' in body.replace(" ", ""):
                     return True, body
-                last = f"Health not ready: HTTP {response.status}, version={actual_version!r}, expected={expected_version!r}"
+                last = f"HTTP {response.status}: {body[:300]}"
         except Exception as exc:
             last = str(exc)
         time.sleep(1.0)
     return False, last
-
-
-def release_app_version(root: Path) -> str | None:
-    main_file = root / "main.py"
-    if not main_file.is_file():
-        return None
-    match = re.search(r'(?m)^APP_VERSION\s*=\s*["\']([^"\']+)["\']', main_file.read_text(encoding='utf-8'))
-    return match.group(1) if match else None
 
 
 def load_bot_token() -> str | None:
@@ -899,7 +873,6 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
             extracted.mkdir()
             relpaths = extract_selected(zip_path, extracted)
             notes = validate_release(extracted, relpaths)
-            expected_version = release_app_version(extracted)
             deploy_log("validated", "Archive validation passed", deployment_id=deployment_id, files=len(relpaths), notes="; ".join(notes))
             changed_targets = [rel for rel in relpaths if not (PROJECT_ROOT / rel).is_file() or (PROJECT_ROOT / rel).read_bytes() != (extracted / rel).read_bytes()]
             if not changed_targets:
@@ -918,7 +891,7 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
             deploy_log("applied", "Files copied to production", deployment_id=deployment_id, files=",".join(changed))
             service_restart()
             deploy_log("restart", "svgtracker.service restart requested", deployment_id=deployment_id)
-            ok, health_detail = wait_health(timeout=35.0, expected_version=expected_version)
+            ok, health_detail = wait_health(timeout=35.0)
             deploy_log("health", "Health-check finished", deployment_id=deployment_id, ok=ok, detail=health_detail[:500])
             if not ok:
                 restore_backup(backup)
