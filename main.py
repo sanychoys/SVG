@@ -87,7 +87,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "41"
+APP_VERSION = "42"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -162,6 +162,8 @@ async def setup_bot_commands() -> None:
         BotCommand(command="admin", description="Админ-панель"),
         BotCommand(command="deploy", description="Обновить production ZIP-файлом"),
         BotCommand(command="deploy_status", description="Статус последнего deploy"),
+        BotCommand(command="deploy_check", description="Проверка обновления и VPS"),
+        BotCommand(command="deploy_probe", description="Проверить запуск systemd"),
         BotCommand(command="server_status", description="Состояние VPS и API"),
         BotCommand(command="backup", description="Создать backup"),
         BotCommand(command="backups", description="Список backup"),
@@ -201,6 +203,10 @@ def admin_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="Deploy ZIP", callback_data="admin:deploy"),
             InlineKeyboardButton(text="Backup", callback_data="admin:backup"),
+        ],
+        [
+            InlineKeyboardButton(text="Проверить deploy", callback_data="admin:deploy_check"),
+            InlineKeyboardButton(text="Тест systemd", callback_data="admin:deploy_probe"),
         ],
         [
             InlineKeyboardButton(text="Backups", callback_data="admin:backups"),
@@ -871,20 +877,100 @@ async def notify_admin_error(title: str, detail: str) -> None:
         logger.exception("Failed to notify admin about %s", title)
 
 
+def _systemd_unit_seen(unit: str) -> bool:
+    """If systemd-run reports a transport error, determine whether it started the job.
+
+    Never relaunch an ambiguous deploy automatically: the worker may already be
+    restarting the bot and modifying production.
+    """
+    try:
+        result = subprocess.run(
+            ["systemctl", "show", unit, "--property=LoadState", "--property=ActiveState"],
+            capture_output=True, text=True, timeout=4,
+        )
+        values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        return result.returncode == 0 and values.get("LoadState") not in (None, "", "not-found")
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def admin_launch_transient(args: list[str], prefix: str) -> str:
     if not ADMIN_DEPLOY_HELPER.is_file():
         raise RuntimeError("deploy/admin_deploy.py not found")
-    unit = f"svgtracker-{prefix}-{int(time.time())}"
+    # Use a collision-proof unit name even when two admins click within a second.
+    unit = f"svgtracker-{prefix}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
     python_bin = Path(__file__).parent / "venv" / "bin" / "python"
     python_cmd = str(python_bin) if python_bin.is_file() else (shutil.which("python3") or "python3")
     command = [
         "systemd-run", "--unit", unit, "--collect", "--property=Type=oneshot",
         python_cmd, str(ADMIN_DEPLOY_HELPER), *args,
     ]
-    proc = subprocess.run(command, capture_output=True, text=True, timeout=10)
-    if proc.returncode != 0:
-        raise RuntimeError((proc.stderr or proc.stdout or "systemd-run failed").strip())
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=12)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if _systemd_unit_seen(unit):
+            return unit
+        raise RuntimeError(f"Не удалось запустить задачу {unit}: {type(exc).__name__}: {exc}") from exc
+    if proc.returncode != 0 and not _systemd_unit_seen(unit):
+        detail = (proc.stderr or proc.stdout or "systemd-run не вернул текст ошибки").strip()
+        raise RuntimeError(f"systemd-run: код {proc.returncode}; {detail[:900]}. Проверка: /deploy_probe")
     return unit
+
+
+def admin_deploy_check_text() -> str:
+    last = admin_latest_status()
+    health = "недоступно"
+    live_version = "?"
+    try:
+        with urllib_request.urlopen("http://127.0.0.1:8000/api/test", timeout=3) as response:
+            payload = json.load(response)
+            health = str(payload.get("status", "HTTP " + str(response.status)))
+            live_version = str(payload.get("version") or "?")
+    except Exception as exc:
+        health = f"Ошибка: {type(exc).__name__}"
+    try:
+        active = subprocess.run(["systemctl", "is-active", "svgtracker.service"], capture_output=True, text=True, timeout=4).stdout.strip()
+    except Exception:
+        active = "неизвестно"
+    pending = str(last.get("status") or "нет данных")
+    if pending in ("success", "no_changes"):
+        conclusion = "Предыдущий deploy завершён успешно. Повторять установку не нужно."
+    elif pending in ("validating", "deploying", "publishing"):
+        conclusion = "Обновление ещё выполняется. Не запускай второе, дождись итога."
+    else:
+        conclusion = "Смотри /logs_deploy; при проблеме запуска используй /deploy_probe."
+    return (
+        "SVGTracker · проверка деплоя\n\n"
+        f"Текущая версия API: {live_version} (бот: {APP_VERSION})\n"
+        f"API health: {health}\n"
+        f"Сервис: {active or 'неизвестно'}\n"
+        f"Последнее обновление: {pending}\n"
+        f"Время: {last.get('updated_at') or '—'}\n"
+        f"Архив: {last.get('archive') or '—'}\n"
+        f"Git commit: {str(last.get('github_commit') or '—')[:15]}\n\n"
+        + conclusion
+    )
+
+
+def admin_systemd_probe_text() -> str:
+    """A no-op systemd-run check; never restart or change the running app."""
+    unit = f"svgtracker-probe-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    true_bin = shutil.which("true") or "/bin/true"
+    try:
+        proc = subprocess.run(
+            ["systemd-run", "--unit", unit, "--collect", "--property=Type=oneshot", true_bin],
+            capture_output=True, text=True, timeout=12,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"systemd-run проверка не прошла: {type(exc).__name__}: {exc}\nСостояние проекта не изменено."
+    ok = proc.returncode == 0 or _systemd_unit_seen(unit)
+    detail = (proc.stdout or proc.stderr or "нет ответа").strip()[:1000]
+    if ok:
+        return f"systemd-run: OK\nТестовая задача: {unit}\n{detail}\nПриложение не перезапускалось."
+    return (
+        f"systemd-run: FAIL ({proc.returncode})\n{detail}\n"
+        "Приложение не перезапускалось. Пришли этот ответ и /logs_system для диагностики."
+    )
 
 
 
@@ -1882,7 +1968,7 @@ async def admin_panel(message: Message):
         "Production управляется отсюда. ZIP-deploy делает backup, проверяет файлы, "
         "перезапускает сервис и автоматически откатывается, если API не поднимается.\n\n"
         "После настройки GitHub успешный ZIP-deploy автоматически делает commit + push в origin/main.\n\n"
-        "Команды: /deploy /deploy_status /server_status /diagnostics /logs_frontend /logs_backend /logs_bot /logs_system /logs_deploy /backup /backups /rollback /logs /errors /restart "
+        "Команды: /deploy /deploy_status /deploy_check /deploy_probe /server_status /diagnostics /logs_frontend /logs_backend /logs_bot /logs_system /logs_deploy /backup /backups /rollback /logs /errors /restart "
         "/github_setup /github_test /github_status /github_sync /memory /memory_gc /resetdata",
         reply_markup=admin_keyboard(),
     )
@@ -2107,6 +2193,20 @@ async def admin_deploy_status(message: Message):
     ))
 
 
+@dp.message(Command("deploy_check"))
+async def admin_deploy_check(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer(admin_trim(await asyncio.to_thread(admin_deploy_check_text)))
+
+
+@dp.message(Command("deploy_probe"))
+async def admin_deploy_probe(message: Message):
+    if not is_admin_message(message):
+        return
+    await message.answer(admin_trim(await asyncio.to_thread(admin_systemd_probe_text)))
+
+
 @dp.message(Command("server_status", "health"))
 async def admin_server_status(message: Message):
     if not is_admin_message(message):
@@ -2296,6 +2396,16 @@ async def admin_callback(callback: CallbackQuery):
         if callback.message:
             await callback.message.answer(await admin_server_status_text_async())
         return
+    if action == "deploy_check":
+        await callback.answer()
+        if callback.message:
+            await callback.message.answer(admin_trim(await asyncio.to_thread(admin_deploy_check_text)))
+        return
+    if action == "deploy_probe":
+        await callback.answer("Запускаю безопасную проверку...")
+        if callback.message:
+            await callback.message.answer(admin_trim(await asyncio.to_thread(admin_systemd_probe_text)))
+        return
     if action == "errors":
         await callback.answer()
         if callback.message:
@@ -2414,25 +2524,57 @@ async def admin_callback(callback: CallbackQuery):
         return
     if action == "deploy_confirm" and len(parts) >= 3:
         token = parts[2]
-        pending = ADMIN_PENDING_DEPLOYS.pop(token, None)
+        pending = ADMIN_PENDING_DEPLOYS.get(token)
         if not pending or time.time() - pending.get("created_at", 0) > 1800:
+            ADMIN_PENDING_DEPLOYS.pop(token, None)
             await callback.answer("ZIP устарел. Отправь его снова.", show_alert=True)
             return
         path = Path(pending["path"])
         if not path.is_file():
+            ADMIN_PENDING_DEPLOYS.pop(token, None)
             await callback.answer("ZIP не найден", show_alert=True)
             return
+        if pending.get("launching"):
+            await callback.answer("Запуск уже проверяется", show_alert=True)
+            return
+        last = admin_latest_status()
+        if last.get("status") in {"validating", "deploying", "publishing"}:
+            await callback.answer("Обновление уже выполняется", show_alert=True)
+            if callback.message:
+                await callback.message.answer("Проверяю: /deploy_check. Дождись завершения текущего деплоя.")
+            return
+        pending["launching"] = True
         try:
-            unit = admin_launch_transient(["deploy", str(path), "--admin-chat", str(ADMIN_TELEGRAM_ID)], "deploy")
-            await callback.answer("Deploy запущен")
-            if callback.message:
-                await callback.message.edit_text(
-                    f"Deploy запущен ({unit}). Проверка, backup, restart, health-check, commit и GitHub push выполняются автоматически. Итог придёт отдельным сообщением."
-                )
+            unit = await asyncio.to_thread(
+                admin_launch_transient, ["deploy", str(path), "--admin-chat", str(ADMIN_TELEGRAM_ID)], "deploy"
+            )
         except Exception as exc:
-            await callback.answer("Ошибка запуска", show_alert=True)
+            pending["launching"] = False
+            await callback.answer("Запуск не подтверждён", show_alert=True)
             if callback.message:
-                await callback.message.answer(admin_trim(str(exc)))
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="Повторить запуск ZIP", callback_data=f"admin:deploy_confirm:{token}")],
+                    [InlineKeyboardButton(text="Отмена", callback_data=f"admin:deploy_cancel:{token}")],
+                ])
+                await callback.message.answer(admin_trim(
+                    f"Не удалось подтвердить запуск deploy:\n{exc}\n\n"
+                    "ZIP сохранён на 30 минут — загружать повторно не нужно. "
+                    "Сначала проверь /deploy_check: если status=success, повторять НЕ нужно. "
+                    "Иначе используй /deploy_probe и кнопку повторного запуска."
+                ), reply_markup=keyboard)
+            return
+        # A successful systemd-run must remain successful even if Telegram
+        # cannot edit the old inline keyboard message afterwards.
+        ADMIN_PENDING_DEPLOYS.pop(token, None)
+        await callback.answer("Deploy запущен")
+        if callback.message:
+            try:
+                await callback.message.edit_text(
+                    f"Deploy запущен ({unit}). Backup, restart, health-check и GitHub push выполняются автоматически. "
+                    "Итог придёт отдельным сообщением. Состояние: /deploy_check"
+                )
+            except Exception:
+                logger.warning("Deploy accepted, but Telegram confirmation message could not be edited", exc_info=True)
         return
     await callback.answer("Команда не распознана", show_alert=True)
 

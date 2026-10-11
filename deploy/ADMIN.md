@@ -7,6 +7,8 @@ Admin Telegram ID is read from `SVGTRACKER_ADMIN_ID` and defaults to the project
 - `/admin` — admin panel
 - `/deploy` — instructions; the admin can also send a `.zip` directly
 - `/deploy_status` — last deployment result
+- `/deploy_check` — deployment + live API status and version (phone-friendly)
+- `/deploy_probe` — harmless `systemd-run ... /bin/true` probe; no restart or code changes
 - `/server_status` — service/API/watchdog/Git/disk/RAM status
 - `/backup` — code backup + consistent SQLite snapshot
 - `/backups` — recent backups

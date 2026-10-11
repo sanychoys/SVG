@@ -7,6 +7,7 @@ unit even while svgtracker.service is being restarted.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import io
 import re
@@ -855,10 +856,9 @@ def git_summary() -> str:
         return "—"
 
 
-def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
+def _deploy_unlocked(zip_path: Path, admin_chat: str | int | None) -> int:
     ensure_dirs()
     deployment_id = local_filename_stamp()
-    DEPLOY_LOCK.write_text(json.dumps({"deployment_id": deployment_id, "started_at": utc_now()}), encoding="utf-8")
     write_status("validating", "Проверяю ZIP и GitHub", deployment_id=deployment_id, archive=zip_path.name)
     deploy_log("validating", "ZIP received; starting preflight", deployment_id=deployment_id, archive=zip_path.name)
     git_context = None
@@ -962,10 +962,6 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
         return 1
     finally:
         try:
-            DEPLOY_LOCK.unlink(missing_ok=True)
-        except Exception:
-            pass
-        try:
             incoming = (STATE_DIR / "incoming").resolve()
             if zip_path.resolve().parent == incoming:
                 zip_path.unlink(missing_ok=True)
@@ -973,7 +969,7 @@ def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
             pass
 
 
-def rollback(backup: Path, admin_chat: str | int | None) -> int:
+def _rollback_unlocked(backup: Path, admin_chat: str | int | None) -> int:
     ensure_dirs()
     try:
         if not backup.is_absolute():
@@ -1000,6 +996,41 @@ def rollback(backup: Path, admin_chat: str | int | None) -> int:
         telegram_notify(admin_chat, "❌ SVGTracker rollback\n\n" + message)
         return 1
 
+
+
+def _exclusive_worker(operation: str, func, admin_chat):
+    """Serialize deploy/rollback across all processes, not only one bot instance.
+
+    The lock file is never removed: unlinking a locked inode would let another
+    process create a new lock file and enter concurrently.
+    """
+    ensure_dirs()
+    fd = os.open(str(DEPLOY_LOCK), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            telegram_notify(admin_chat,
+                f"⚠️ SVGTracker: {operation} не запущен — другое обновление уже выполняется. "
+                "Дождись /deploy_status и не отправляй повторно ZIP.")
+            return 4
+        os.ftruncate(fd, 0)
+        os.write(fd, json.dumps({"operation": operation, "started_at": utc_now()}).encode())
+        os.fsync(fd)
+        try:
+            return func()
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def deploy(zip_path: Path, admin_chat: str | int | None) -> int:
+    return _exclusive_worker("deploy", lambda: _deploy_unlocked(zip_path, admin_chat), admin_chat)
+
+
+def rollback(backup: Path, admin_chat: str | int | None) -> int:
+    return _exclusive_worker("rollback", lambda: _rollback_unlocked(backup, admin_chat), admin_chat)
 
 def manual_backup(include_db: bool = True) -> int:
     archive, manifest = create_backup(project_backup_files(), include_db=include_db, label="manual")
