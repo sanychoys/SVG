@@ -87,7 +87,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "38"
+APP_VERSION = "39"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -481,6 +481,23 @@ def admin_public_web_diagnostics() -> str:
                 rows.append(f"{name}: {'OK' if ok else 'WARN'} · HTTP {response.status} · {len(body)} chars · {elapsed}ms")
         except Exception as exc:
             rows.append(f"{name}: FAIL · {type(exc).__name__}: {exc}")
+    for name, url, method, payload in (
+        ('auth-preflight', f'{PUBLIC_BASE_URL}/api/user', 'GET', None),
+        ('legacy-auth', f'{PUBLIC_BASE_URL}/api/authenticate', 'POST', b'{"initData":"invalid"}'),
+    ):
+        try:
+            req = urllib_request.Request(url, data=payload, method=method,
+                headers={'Content-Type': 'application/json', 'Cache-Control': 'no-store'})
+            with urllib_request.urlopen(req, timeout=4) as response:
+                code = response.status
+        except urllib_request.HTTPError as exc:
+            code = exc.code
+        except Exception as exc:
+            rows.append(f'{name}: FAIL · {type(exc).__name__}')
+            continue
+        # 401 means signed Telegram identity is required; 404 would mean
+        # the reverse proxy is still serving an incompatible API release.
+        rows.append(f'{name}: {"OK" if code == 401 else "WARN"} · HTTP {code} (expected 401)')
     return "\n".join(rows)
 
 
@@ -1304,6 +1321,42 @@ async def api_frontend_diagnostics(request: Request):
 def api_user(request: Request, x_telegram_init_data: str | None = Header(default=None)):
     user, user_id = authenticated_user(request, x_telegram_init_data)
     return {"status": "ok", "user_id": user_id, "telegram_id": str(user["id"])}
+
+
+@app.get("/api/user")
+def api_user_read(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    """Authenticated identity preflight for the Mini App bootstrap."""
+    user, user_id = authenticated_user(request, x_telegram_init_data)
+    return {"status": "ok", "user_id": user_id, "telegram_id": str(user["id"])}
+
+
+@app.post("/api/authenticate")
+async def api_legacy_telegram_auth(request: Request, x_telegram_init_data: str | None = Header(default=None)):
+    """Compatibility for old cached clients; NEVER accept a bare Telegram user/id.
+
+    Current V39 JS does not call this endpoint. Its presence prevents a 404
+    from older builds while requiring exactly the same signed Telegram initData
+    verification as the primary API. No new web session/cookie is created.
+    """
+    init_data = x_telegram_init_data
+    if not init_data:
+        data = bytearray()
+        async for chunk in request.stream():
+            if len(data) + len(chunk) > 12_288:
+                raise HTTPException(status_code=413, detail="Payload too large")
+            data.extend(chunk)
+        try:
+            body = json.loads(data.decode('utf-8'))
+        except (ValueError, UnicodeDecodeError):
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        init_data = body.get('initData') or body.get('init_data')
+        if not isinstance(init_data, str):
+            raise HTTPException(status_code=401, detail="Signed Telegram init data is required")
+    user, user_id = authenticated_user(request, init_data)
+    return {"status": "ok", "authenticated": True, "user_id": user_id,
+            "telegram_id": str(user['id'])}
 
 
 @app.get("/api/training/state")
@@ -2561,7 +2614,32 @@ async def reset_data_cancel(callback: CallbackQuery):
         await callback.message.edit_text("Очистка отменена.")
 
 
+def lock_single_svgtracker_instance():
+    """Only one bot polling + uvicorn instance per VPS. Hold FD for process lifetime.
+
+    This is an advisory local lock, not a protection against a second bot
+    process running on another host or another systemd unit with another path.
+    """
+    import fcntl
+    lock_dir = ADMIN_STATE_DIR
+    lock_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = lock_dir / 'service-instance.lock'
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    handle = os.fdopen(fd, 'r+')
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logger.error('Another SVGTracker instance holds %s; waiting instead of starting duplicate GetUpdates', path)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    handle.seek(0)
+    handle.truncate()
+    handle.write(str(os.getpid()) + '\n')
+    handle.flush()
+    return handle
+
+
 async def main():
+    instance_lock = lock_single_svgtracker_instance()
     init_db()
     init_product_db()
     init_intelligence_db()
@@ -2582,7 +2660,13 @@ async def main():
 
     api_config = uvicorn.Config(app, host=os.environ.get('SVGTRACKER_BIND_HOST', '127.0.0.1'), port=8000, log_level="info", server_header=False)
     api_server = uvicorn.Server(api_config)
-    bot_task = asyncio.create_task(dp.start_polling(bot), name="telegram-polling")
+    # Uvicorn handles SIGTERM/SIGINT for the combined service. Aiogram must not
+    # overwrite those signal handlers; otherwise normal deploy restarts look
+    # like a bot failure and can generate misleading admin error alerts.
+    bot_task = asyncio.create_task(
+        dp.start_polling(bot, handle_signals=False, polling_timeout=20),
+        name="telegram-polling",
+    )
     api_task = asyncio.create_task(api_server.serve(), name="uvicorn-api")
     maintenance_task = asyncio.create_task(runtime_memory_maintenance(), name="memory-maintenance")
     reminder_task = asyncio.create_task(bot_reminder_loop(), name="bot-reminders")
@@ -2594,11 +2678,15 @@ async def main():
     maintenance_task.cancel()
     reminder_task.cancel()
     await asyncio.gather(maintenance_task, reminder_task, return_exceptions=True)
+    intentional_shutdown = bool(api_server.should_exit or api_server.force_exit)
     for task in done:
         if task.cancelled():
             continue
         error = task.exception()
         if error:
+            if intentional_shutdown:
+                logger.info("SVGTracker %s stopped during service shutdown: %s", task.get_name(), type(error).__name__)
+                continue
             logger.error("SVGTracker component %s stopped with an error", task.get_name(), exc_info=(type(error), error, error.__traceback__))
             await notify_admin_error(
                 "Компонент SVGTracker остановился",
@@ -2608,6 +2696,9 @@ async def main():
                 pending_task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
             raise error
+        if intentional_shutdown:
+            logger.info("SVGTracker %s stopped on normal service shutdown", task.get_name())
+            continue
         logger.warning("SVGTracker component %s stopped; terminating process so systemd can restart it", task.get_name())
         await notify_admin_error(
             "Компонент SVGTracker неожиданно завершился",
@@ -2617,6 +2708,7 @@ async def main():
     for pending_task in pending:
         pending_task.cancel()
     await asyncio.gather(*pending, return_exceptions=True)
+    instance_lock.close()
 
 
 if __name__ == "__main__":

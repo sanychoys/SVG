@@ -28,10 +28,16 @@
   html.svg-data-pending:not(.svg-web) .app-shell,html.svg-data-pending.svg-web.web-authenticated .app-shell{visibility:hidden!important;pointer-events:none!important;position:absolute!important;inset:0!important}
   html.svg-web:not(.web-authenticated) .app-bootstrap-placeholder{display:none!important}
   .bootstrap-skeleton-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.bootstrap-skeleton-copy{display:grid;gap:8px}.bootstrap-skeleton-copy span,.bootstrap-skeleton-copy b,.bootstrap-skeleton-copy i,.bootstrap-skeleton-line,.bootstrap-skeleton-stats span,.bootstrap-skeleton-chart,.bootstrap-skeleton-avatar,.bootstrap-skeleton-card{background:linear-gradient(110deg,rgba(255,255,255,.055) 25%,rgba(255,255,255,.11) 38%,rgba(255,255,255,.055) 52%);background-size:220% 100%;animation:svgSkeleton 1.5s ease-in-out infinite}.bootstrap-skeleton-copy span{width:72px;height:10px;border-radius:5px}.bootstrap-skeleton-copy b{width:138px;height:29px;border-radius:9px}.bootstrap-skeleton-copy i{width:168px;height:12px;border-radius:6px}.bootstrap-skeleton-avatar{width:52px;height:52px;border-radius:50%}.bootstrap-skeleton-card{height:150px;border:1px solid rgba(255,255,255,.06);border-radius:24px;box-sizing:border-box}.bootstrap-skeleton-activity{height:286px;padding:22px;margin-bottom:14px;background-color:rgba(255,255,255,.025)}.bootstrap-skeleton-line{height:11px;width:56%;border-radius:6px}.bootstrap-skeleton-line.is-short{width:74px}.bootstrap-skeleton-line.is-title{height:24px;width:126px;margin-top:9px}.bootstrap-skeleton-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:26px}.bootstrap-skeleton-stats span{height:54px;border-radius:14px}.bootstrap-skeleton-chart{height:96px;border-radius:18px;margin-top:22px}.bootstrap-skeleton-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.app-bootstrap-status{margin:18px 0 0;text-align:center;color:rgba(255,255,255,.42);font-size:12px}.app-bootstrap-placeholder.is-slow .app-bootstrap-status{color:rgba(255,255,255,.62)}
+  .app-bootstrap-error[hidden]{display:none!important}
+  .app-bootstrap-placeholder.has-error .bootstrap-skeleton-header,.app-bootstrap-placeholder.has-error .bootstrap-skeleton-card,.app-bootstrap-placeholder.has-error .bootstrap-skeleton-grid,.app-bootstrap-placeholder.has-error .app-bootstrap-status{display:none!important}
+  .app-bootstrap-error{margin:15vh auto 0;padding:24px;border-radius:22px;background:#141519;border:1px solid rgba(255,255,255,.14);text-align:center;max-width:360px}
+  .app-bootstrap-error h2{font-size:19px;line-height:1.2;margin:0 0 12px}
+  .app-bootstrap-error p{font-size:14px;color:#c0c0c6;line-height:1.5;margin:0 0 18px}
+  .app-bootstrap-error button{background:#fff;color:#101014;border:0;border-radius:12px;padding:12px 18px;font-size:14px;font-weight:650}
   @keyframes svgSkeleton{0%{background-position:120% 0}100%{background-position:-120% 0}}
 </style>
-<link rel="stylesheet" href="/style.css?v=38">
-<link rel="stylesheet" href="/product.css?v=38">
+<link rel="stylesheet" href="/style.css?v=39">
+<link rel="stylesheet" href="/product.css?v=39">
 </head>
 <body>
 <section id="web-auth-gate" class="web-auth-gate" aria-labelledby="web-auth-title">
@@ -65,6 +71,11 @@
     <div class="bootstrap-skeleton-card"></div><div class="bootstrap-skeleton-card"></div>
   </div>
   <p id="app-bootstrap-status" class="app-bootstrap-status">Загружаем данные…</p>
+  <div id="app-bootstrap-error" class="app-bootstrap-error" hidden role="alert">
+    <h2>Не удалось загрузить SVGTracker</h2>
+    <p id="app-bootstrap-error-detail">Проверь подключение к интернету и попробуй ещё раз.</p>
+    <button type="button" onclick="retryAppBootstrap()">Повторить</button>
+  </div>
 </div>
 <div class="ambient-layer">
   <div class="beam-core"></div>
@@ -1263,7 +1274,7 @@
 })();
 </script>
 <!-- Keep product.js before script.js: it captures original V28 handlers for V27 deploy compatibility. -->
-<script src="/product.js?v=38" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:product-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:product-failed',{level:'error',asset:'/product.js?v=38'})"></script>
-<script src="/script.js?v=38" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=38'})"></script>
+<script src="/product.js?v=39" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:product-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:product-failed',{level:'error',asset:'/product.js?v=39'})"></script>
+<script src="/script.js?v=39" defer onload="window.SVGDiag&&window.SVGDiag.log('asset:script-loaded')" onerror="window.SVGDiag&&window.SVGDiag.log('asset:script-failed',{level:'error',asset:'/script.js?v=39'})"></script>
 </body>
 </html>
