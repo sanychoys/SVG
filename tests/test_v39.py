@@ -25,7 +25,7 @@ class MiniAppLaunchV39(V37AuthRaceTests):
         response = self.client.get('/api/user', headers=self.header)
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()['telegram_id'], '76540112')
-        self.assertEqual(self.client.get('/api/test').json()['version'], '39')
+        self.assertEqual(self.client.get('/api/test').json()['version'], '40')
 
     def test_legacy_authenticate_accepts_only_signed_telegram_initdata(self):
         self.assertEqual(self.client.post('/api/authenticate', headers=self.header).status_code, 200)
@@ -65,7 +65,7 @@ class DeployHealthV39(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('deploy_for_test', path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        self.assertEqual(mod.release_app_version(path.parents[1]), '39')
+        self.assertEqual(mod.release_app_version(path.parents[1]), '40')
 
 
 if __name__ == '__main__':

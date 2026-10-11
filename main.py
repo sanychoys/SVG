@@ -28,7 +28,7 @@ from aiogram.filters import Command
 from aiogram.types import BotCommand, BotCommandScopeChat, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.types.error_event import ErrorEvent
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 import uvicorn
 
 from config import BOT_TOKEN
@@ -87,7 +87,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "39"
+APP_VERSION = "40"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -463,11 +463,11 @@ def frontend_log_summary() -> str:
 
 def admin_public_web_diagnostics() -> str:
     checks = [
-        ("index", f"{PUBLIC_BASE_URL}/", f"script.js?v={APP_VERSION}"),
-        ("script", f"{PUBLIC_BASE_URL}/script.js?v={APP_VERSION}", "SVGTRACKER_BOOT_STAGE"),
-        ("product.js", f"{PUBLIC_BASE_URL}/product.js?v={APP_VERSION}", "SVGTRACKER_PRODUCT_VERSION"),
-        ("style", f"{PUBLIC_BASE_URL}/style.css?v={APP_VERSION}", ":root"),
-        ("product.css", f"{PUBLIC_BASE_URL}/product.css?v={APP_VERSION}", ".product-screen"),
+        ("index", f"{PUBLIC_BASE_URL}/", f"/api/client/script.js?v={APP_VERSION}"),
+        ("script", f"{PUBLIC_BASE_URL}/api/client/script.js?v={APP_VERSION}", "SVGTRACKER_BOOT_STAGE"),
+        ("product.js", f"{PUBLIC_BASE_URL}/api/client/product.js?v={APP_VERSION}", "SVGTRACKER_PRODUCT_VERSION"),
+        ("style", f"{PUBLIC_BASE_URL}/api/client/style.css?v={APP_VERSION}", ":root"),
+        ("product.css", f"{PUBLIC_BASE_URL}/api/client/product.css?v={APP_VERSION}", ".product-screen"),
     ]
     rows = []
     for name, url, expected in checks:
@@ -606,10 +606,10 @@ def admin_frontend_status() -> str:
     try:
         html = (root / "index.html").read_text(encoding="utf-8", errors="replace")
         expected_assets = (
-            f"/script.js?v={APP_VERSION}",
-            f"/style.css?v={APP_VERSION}",
-            f"/product.js?v={APP_VERSION}",
-            f"/product.css?v={APP_VERSION}",
+            f"/api/client/script.js?v={APP_VERSION}",
+            f"/api/client/style.css?v={APP_VERSION}",
+            f"/api/client/product.js?v={APP_VERSION}",
+            f"/api/client/product.css?v={APP_VERSION}",
         )
         if any(asset not in html for asset in expected_assets):
             return "WARN · asset version mismatch"
@@ -1156,6 +1156,29 @@ async def monitor_http_errors(request: Request, call_next):
             f"{request.method} {request.url.path}\n{type(exc).__name__}: {exc}",
         )
         raise
+
+
+# Serve only public client assets through the already-proxied /api/ path.
+# Some VPS Nginx configurations accidentally block separate CSS/JS URLs.
+# This fixed allowlist cannot access config.py, SQLite, or private media.
+PUBLIC_CLIENT_ASSETS = {
+    'style.css': 'text/css; charset=utf-8',
+    'product.css': 'text/css; charset=utf-8',
+    'product.js': 'text/javascript; charset=utf-8',
+    'script.js': 'text/javascript; charset=utf-8',
+}
+
+
+@app.get('/api/client/{asset_name}')
+def api_public_client_asset(asset_name: str):
+    media_type = PUBLIC_CLIENT_ASSETS.get(asset_name)
+    if media_type is None:
+        raise HTTPException(status_code=404, detail='Asset not found')
+    path = Path(__file__).resolve().parent / asset_name
+    if not path.is_file():
+        raise HTTPException(status_code=503, detail='Asset unavailable')
+    return FileResponse(path, media_type=media_type,
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
 @app.get("/api/test")

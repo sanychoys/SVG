@@ -29,10 +29,6 @@ function setBootstrapStatus(text, slow = false) {
 }
 
 function setAppDataPending(message = 'Загружаем данные…') {
-  const error = document.getElementById('app-bootstrap-error');
-  const placeholder = document.getElementById('app-bootstrap-placeholder');
-  if (error) error.hidden = true;
-  if (placeholder) placeholder.classList.remove('has-error');
   window.SVG_APP_DATA_READY = false;
   document.documentElement.classList.add('svg-data-pending');
   const shell = document.querySelector('.app-shell');
@@ -43,28 +39,6 @@ function setAppDataPending(message = 'Загружаем данные…') {
   appHydrationTimeoutHandle = setTimeout(() => {
     if (!window.SVG_APP_DATA_READY) setBootstrapStatus('Синхронизация занимает чуть больше времени…', true);
   }, 4500);
-}
-
-function showBootstrapError(message, reason = 'unknown') {
-  clearTimeout(appHydrationTimeoutHandle);
-  const placeholder = document.getElementById('app-bootstrap-placeholder');
-  const error = document.getElementById('app-bootstrap-error');
-  const detail = document.getElementById('app-bootstrap-error-detail');
-  if (placeholder) placeholder.classList.add('has-error');
-  if (error) error.hidden = false;
-  if (detail) detail.textContent = message;
-  setBootstrapStatus('Не удалось открыть аккаунт', true);
-  svgDiag('app:bootstrap-error', { level:'error', message:reason });
-}
-
-function retryAppBootstrap() {
-  if (hasServerAuth()) {
-    appHydrationGeneration += 1;
-    appHydrationPromise = null;
-    hydrateAuthenticatedApp('manual-retry');
-  } else {
-    window.location.reload();
-  }
 }
 
 function markAppDataReady(reason = 'ready') {
@@ -104,31 +78,6 @@ async function hydrateAuthenticatedApp(source = 'auth') {
   svgDiag('app:hydrate-start', { message: source });
 
   appHydrationPromise = (async () => {
-    // A verified identity is required before displaying data. Previously a
-    // failed request could silently count as a completed Promise.allSettled.
-    try {
-      const abort = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timer = abort ? setTimeout(() => abort.abort(), 12000) : null;
-      let response;
-      try {
-        response = await fetch('/api/user', {
-          headers: telegramApiHeaders(false), cache: 'no-store',
-          ...(abort ? {signal: abort.signal} : {}),
-        });
-      } finally { if (timer) clearTimeout(timer); }
-      if (!response.ok) {
-        const message = response.status === 401
-          ? 'Сессия Telegram истекла. Закрой мини-приложение и открой его заново.'
-          : `Сервер временно недоступен (HTTP ${response.status}). Повтори попытку.`;
-        throw new Error(message);
-      }
-    } catch (error) {
-      if (generation === appHydrationGeneration)
-        showBootstrapError(error?.name === 'AbortError'
-          ? 'Сервер долго не отвечает. Проверь интернет и повтори попытку.'
-          : (error?.message || 'Не удалось соединиться с сервером.'), 'auth-preflight');
-      return false;
-    }
     const tasks = [
       Promise.resolve().then(() => syncTrainingWithServer()),
       Promise.resolve().then(() => syncFinanceWithServerV15()),
@@ -161,7 +110,7 @@ async function hydrateAuthenticatedApp(source = 'auth') {
 }
 
 function isWebsiteLaunch() {
-  return document.documentElement.classList.contains('svg-web');
+  return document.documentElement.classList.contains('svg-web') && !window.SVG_TELEGRAM_LAUNCH && !tg?.initData;
 }
 
 function hasServerAuth() {
@@ -399,12 +348,6 @@ function applyTelegramIdentity() {
 
   if (!telegramContextAnnounced) {
     telegramContextAnnounced = true;
-    if (!telegramApp.initData && !isWebsiteLaunch()) {
-      setTimeout(() => {
-        if (!hasServerAuth() && !isWebsiteLaunch())
-          showBootstrapError('Telegram не передал данные входа. Открой Mini App через кнопку в боте.', 'telegram-initdata-missing');
-      }, 9000);
-    }
     setTimeout(() => document.dispatchEvent(new Event('svgtracker:telegram-ready')), 0);
   }
   return true;
@@ -419,9 +362,6 @@ function waitForTelegramSdk() {
     if (applyTelegramIdentity() || attempts >= 40) {
       clearInterval(telegramBootstrapTimer);
       telegramBootstrapTimer = null;
-      if (attempts >= 40 && !hasServerAuth() && !isWebsiteLaunch()) {
-        showBootstrapError('Не удалось получить данные Telegram. Проверь соединение и открой приложение заново из бота.', 'telegram-sdk-timeout');
-      }
     }
   }, 250);
 }
@@ -4904,7 +4844,15 @@ document.addEventListener('svgtracker:auth-ready', () => {
 });
 
 document.addEventListener('DOMContentLoaded', () => {
-  if (isWebsiteLaunch()) initializeWebsiteAuth();
+  // Website sign-in remains possible only via /?web=1. Never show it at boot:
+  // Telegram's SDK and WebView bridge can arrive after DOMContentLoaded.
+  if (!new URLSearchParams(location.search).has('web') || new URLSearchParams(location.search).get('web') !== '1') return;
+  setTimeout(() => {
+    if (window.SVG_TELEGRAM_LAUNCH || window.TelegramWebviewProxy || window.TelegramWebviewProxyProto || tg?.initData) return;
+    document.documentElement.classList.remove('svg-miniapp');
+    document.documentElement.classList.add('svg-web');
+    initializeWebsiteAuth();
+  }, 1800);
 });
 
 document.addEventListener('DOMContentLoaded', () => {
