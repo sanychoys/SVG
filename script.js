@@ -1083,11 +1083,11 @@ function renderCalendar() {
     dot.title = `${day} ${monthName}: ${label}`;
     dot.setAttribute('role', 'button');
     dot.tabIndex = 0;
-    dot.addEventListener('click', () => showCalendarDayDetails(date, status));
+    dot.addEventListener('click', () => openCalendarWorkoutEditor(date));
     dot.addEventListener('keydown', event => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        showCalendarDayDetails(date, status);
+        openCalendarWorkoutEditor(date);
       }
     });
     fragment.appendChild(dot);
@@ -1482,7 +1482,7 @@ function normalizeTrainingState(raw = {}) {
   const rawSync = raw.sync && typeof raw.sync === 'object' ? raw.sync : {};
   const tombstones = rawSync.tombstones && typeof rawSync.tombstones === 'object'
     ? rawSync.tombstones
-    : { goals: {}, goalEntries: {}, planOverrides: {} };
+    : { goals: {}, goalEntries: {}, planOverrides: {}, workouts: {} };
   const rawPlanMeta = raw.planMeta && typeof raw.planMeta === 'object' ? raw.planMeta : {};
   return {
     goals,
@@ -1504,7 +1504,8 @@ function normalizeTrainingState(raw = {}) {
       tombstones: {
         goals: tombstones.goals || {},
         goalEntries: tombstones.goalEntries || {},
-        planOverrides: tombstones.planOverrides || {}
+        planOverrides: tombstones.planOverrides || {},
+        workouts: tombstones.workouts || {}
       }
     }
   };
@@ -1595,7 +1596,8 @@ function getMergedTombstones(localSync = {}, remoteSync = {}) {
   return {
     goals: mergeTombstoneMaps(localSync?.tombstones?.goals, remoteSync?.tombstones?.goals),
     goalEntries: mergeTombstoneMaps(localSync?.tombstones?.goalEntries, remoteSync?.tombstones?.goalEntries),
-    planOverrides: mergeTombstoneMaps(localSync?.tombstones?.planOverrides, remoteSync?.tombstones?.planOverrides)
+    planOverrides: mergeTombstoneMaps(localSync?.tombstones?.planOverrides, remoteSync?.tombstones?.planOverrides),
+    workouts: mergeTombstoneMaps(localSync?.tombstones?.workouts, remoteSync?.tombstones?.workouts)
   };
 }
 
@@ -1665,17 +1667,19 @@ function mergeGoalCollections(localGoals, remoteGoals, tombstones = {}) {
     }));
 }
 
-function mergeWorkoutHistory(localHistory, remoteHistory) {
+function mergeWorkoutHistory(localHistory, remoteHistory, tombstones = {}) {
   const byId = new Map();
   [...(remoteHistory || []), ...(localHistory || [])].forEach((raw, index) => {
     const session = normalizeWorkoutRecord(raw, index);
     if (!session) return;
     const previous = byId.get(session.id);
-    if (!previous || compareIso(session.ended || session.date, previous.ended || previous.date) >= 0) {
+    if (!previous || compareIso(session.updatedAt || session.ended || session.date, previous.updatedAt || previous.ended || previous.date) >= 0) {
       byId.set(session.id, session);
     }
   });
-  return [...byId.values()].sort((a, b) => compareIso(a.started || a.date, b.started || b.date));
+  return [...byId.values()]
+    .filter(session => !tombstones.workouts?.[session.id] || compareIso(session.updatedAt || session.ended || session.date, tombstones.workouts[session.id]) > 0)
+    .sort((a, b) => compareIso(a.started || a.date, b.started || b.date));
 }
 
 function mergeAttendance(localValue = {}, remoteValue = {}, history = [], activeWorkout = null) {
@@ -1752,7 +1756,7 @@ function mergeTrainingStates(localRaw, remoteRaw) {
   const older = localIsNewer ? remote : local;
   const tombstones = getMergedTombstones(local.sync, remote.sync);
   const weeklyPlan = mergeWeeklyPlan(local, remote, localIsNewer);
-  const history = mergeWorkoutHistory(local.history, remote.history);
+  const history = mergeWorkoutHistory(local.history, remote.history, tombstones);
   const activeWorkout = mergeActiveWorkout(local, remote, history);
   const activeWorkoutClearedAt = [local.sync?.activeWorkoutClearedAt, remote.sync?.activeWorkoutClearedAt]
     .filter(Boolean)
@@ -1776,6 +1780,13 @@ function mergeTrainingStates(localRaw, remoteRaw) {
       tombstones
     }
   };
+  for (const id of Object.keys(tombstones.workouts || {})) {
+    if (!id.startsWith('manual_')) continue;
+    const key = id.slice('manual_'.length);
+    if (merged.attendance[key] === 'done' && !history.some(item => item.status === 'completed' && item.dateKey === key)) {
+      delete merged.attendance[key];
+    }
+  }
   return normalizeTrainingState(merged);
 }
 
@@ -2130,6 +2141,95 @@ function getCalendarStatus(date) {
   return 'missed';
 }
 
+// V44: calendar entries are real completed sessions in the same history used by
+// all training charts and server reports. The stable ID avoids duplicate entries
+// when the user edits the same calendar day from another device.
+let calendarWorkoutDateKey = null;
+function calendarManualId(dateKey) { return `manual_${dateKey}`; }
+function getCalendarManualRecord(dateKey) {
+  return (state.history || []).find(item => item.id === calendarManualId(dateKey)) || null;
+}
+function calendarDayDate(dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))) return null;
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const date = new Date(year, month - 1, day, 0, 0, 0, 0);
+  return getDateKey(date) === dateKey ? date : null;
+}
+function openCalendarWorkoutEditor(date) {
+  const key = getDateKey(date);
+  if (key > getDateKey(new Date())) { showToast('Будущий день пока нельзя заполнить'); return; }
+  const sheet = document.getElementById('calendar-workout-sheet');
+  if (!sheet) { showCalendarDayDetails(date, getCalendarStatus(date)); return; }
+  calendarWorkoutDateKey = key;
+  const entry = getCalendarManualRecord(key);
+  const seconds = entry ? normalizeWorkoutSeconds(entry.duration) : 0;
+  const label = sheet.querySelector('.calendar-workout-date');
+  const others = getCompletedWorkoutsForDate(date).filter(item => item.id !== calendarManualId(key));
+  const total = others.reduce((sum, item) => sum + normalizeWorkoutSeconds(item.duration), 0);
+  const hint = sheet.querySelector('.calendar-workout-other');
+  if (label) label.textContent = new Intl.DateTimeFormat('ru-RU', {day:'numeric', month:'long', year:'numeric'}).format(date);
+  if (hint) hint.textContent = total ? `Другие тренировки за день: ${formatWorkoutDuration(total)}. Эта запись добавится к ним.` : 'Время попадёт в историю и все графики тренировок.';
+  document.getElementById('calendar-workout-hours').value = entry ? String(Math.floor(seconds / 3600)) : '0';
+  document.getElementById('calendar-workout-minutes').value = entry ? String(Math.floor(seconds % 3600 / 60)) : '';
+  document.getElementById('calendar-workout-name').value = entry ? (entry.workout || '') : (getPlannedWorkoutForDate(date) || '').replace(/^Отдых$/, '');
+  const deleteButton = document.getElementById('calendar-workout-delete');
+  if (deleteButton) deleteButton.hidden = !entry;
+  sheet.hidden = false;
+}
+function saveCalendarWorkout() {
+  const key = calendarWorkoutDateKey;
+  const date = calendarDayDate(key);
+  if (!date || key > getDateKey(new Date())) { showToast('Дата недоступна'); return; }
+  const hoursInput = document.getElementById('calendar-workout-hours');
+  const minutesInput = document.getElementById('calendar-workout-minutes');
+  const hoursText = String(hoursInput?.value ?? '').trim() || '0';
+  const minutesText = String(minutesInput?.value ?? '').trim() || '0';
+  const validInteger = value => /^\d+$/.test(value);
+  if (!validInteger(hoursText) || !validInteger(minutesText)) {
+    showToast('Укажи часы и минуты целыми числами'); return;
+  }
+  const hours = Number(hoursText), minutes = Number(minutesText);
+  if (hours > 23 || minutes > 59 || (hours === 0 && minutes === 0)) {
+    showToast('Укажи время от 1 минуты до 23 ч 59 мин'); return;
+  }
+  const seconds = (hours * 60 + minutes) * 60;
+  const name = document.getElementById('calendar-workout-name')?.value.trim().slice(0, 80) || 'Свободная тренировка';
+  const old = getCalendarManualRecord(key);
+  const recordedAt = new Date().toISOString();
+  const started = date.toISOString();
+  const endMs = date.getTime() + seconds * 1000;
+  const ended = new Date(key === getDateKey(new Date()) ? Math.min(endMs, Date.now()) : endMs).toISOString();
+  const record = normalizeWorkoutRecord({
+    ...(old || {}), id: calendarManualId(key), source: 'manual',
+    workout: name, status: 'completed', duration: seconds, dateKey: key,
+    started, ended, date: started, createdAt: old?.createdAt || recordedAt,
+    updatedAt: recordedAt, exercises: []
+  });
+  state.history = [...(state.history || []).filter(item => item.id !== record.id), record];
+  state.attendance[key] = 'done';
+  persist();
+  closeSheets();
+  activityWeekCursor = getWeekMonday(date);
+  renderFitness();
+  showToast(`${name} · ${formatWorkoutDuration(seconds)} · сохранено`);
+}
+function deleteCalendarWorkout() {
+  const key = calendarWorkoutDateKey;
+  const record = getCalendarManualRecord(key);
+  if (!record) return;
+  requestConfirm('Удалить внесённое вручную время? Другие тренировки сохранятся.', () => {
+    recordSyncTombstone('workouts', record.id);
+    state.history = state.history.filter(item => item.id !== record.id);
+    const date = calendarDayDate(key);
+    if (date && !getCompletedWorkoutsForDate(date).length) delete state.attendance[key];
+    persist();
+    closeSheets();
+    if (date) activityWeekCursor = getWeekMonday(date);
+    renderFitness();
+    showToast('Ручная запись удалена');
+  });
+}
+
 function showCalendarDayDetails(date, status) {
   const dateLabel = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short' }).format(date);
   const workout = getPlannedWorkoutForDate(date);
@@ -2192,12 +2292,8 @@ function openCustomWorkout() {
 
 function startCustomWorkout() {
   const name = document.getElementById('custom-workout-name')?.value.trim();
-  if (!name) {
-    showToast('Назови тренировку');
-    return;
-  }
   closeSheets();
-  startWorkout(name, 'custom');
+  startWorkout(name || 'Свободная тренировка', 'custom');
 }
 
 function startWorkout(customName = null, source = 'planned') {
@@ -2205,15 +2301,17 @@ function startWorkout(customName = null, source = 'planned') {
   if (state.activeWorkout) { showToast('Тренировка уже идёт'); return; }
   const planned = getPlannedWorkoutForDate(now);
   const workout = String(customName || planned || '').trim();
-  if (!workout || workout === 'Отдых') { openCustomWorkout(); return; }
+  const isUnplanned = !workout || workout === 'Отдых';
+  const sessionName = isUnplanned ? 'Свободная тренировка' : workout;
+  const todayKey = getDateKey(now);
   state.activeWorkout = normalizeWorkoutRecord({
     id: createEntityId('session'),
     started: now.toISOString(),
     updatedAt: now.toISOString(),
-    workout,
+    workout: sessionName,
     day: getDayKey(now),
     dateKey: todayKey,
-    source: customName ? source : (getPlanOverride(now)?.movedFrom ? 'moved' : 'planned'),
+    source: customName ? source : (isUnplanned ? 'custom' : (getPlanOverride(now)?.movedFrom ? 'moved' : 'planned')),
     exercises: [],
     status: 'active'
   });
@@ -2525,12 +2623,12 @@ function renderToday() {
       summary.hidden = false;
       summary.textContent = sessions.length > 1
         ? `Сегодня · ${formatWorkoutDuration(totalSeconds)}`
-        : `${[formatClock(completed.started), formatClock(completed.ended)].filter(Boolean).join('–')} · ${formatWorkoutDuration(completed.duration)}`;
+        : (completed.source === 'manual' ? `Внесено вручную · ${formatWorkoutDuration(completed.duration)}` : `${[formatClock(completed.started), formatClock(completed.ended)].filter(Boolean).join('–')} · ${formatWorkoutDuration(completed.duration)}`);
     }
     if (button) {
-      button.textContent = 'Тренировка завершена';
-      button.onclick = null;
-      button.disabled = true;
+      button.textContent = 'Начать ещё';
+      button.onclick = () => startWorkout('Свободная тренировка', 'custom');
+      button.disabled = false;
     }
     if (alternate) {
       alternate.hidden = false;
@@ -2555,7 +2653,12 @@ function renderToday() {
   } else {
     title.textContent = workout === 'Отдых' ? 'День отдыха' : 'Нет запланированной тренировки';
     button.textContent = 'Начать тренировку';
-    button.onclick = openCustomWorkout;
+    button.onclick = () => startWorkout();
+    if (alternate) {
+      alternate.hidden = false;
+      alternate.textContent = 'Указать название';
+      alternate.onclick = openCustomWorkout;
+    }
   }
 }
 

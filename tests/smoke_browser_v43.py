@@ -37,11 +37,11 @@ window.fetch=async function(url,init={}){
 def bundled_html():
  html=(ROOT/'index.html').read_text()
  for name in ('style.css','product.css'):
-  pattern=r'<link rel="stylesheet" href="/'+re.escape(name)+r'\?v=43">'
+  pattern=r'<link rel="stylesheet" href="/'+re.escape(name)+r'\?v=44">'
   html,n=re.subn(pattern,lambda _:'<style>'+ (ROOT/name).read_text()+'</style>',html)
   assert n==1,name
  for name in ('product.js','script.js'):
-  pattern=r'<script src="/'+re.escape(name)+r'\?v=43"[^>]*></script>'
+  pattern=r'<script src="/'+re.escape(name)+r'\?v=44"[^>]*></script>'
   html,n=re.subn(pattern,lambda _:'<script>'+ (ROOT/name).read_text()+'</script>',html)
   assert n==1,name
  html=html.replace('<head>','<head><script>'+MOCK_API+'</script>',1)
@@ -64,8 +64,8 @@ async def run():
     await page.evaluate('''()=>{document.documentElement.classList.remove('svg-web');document.documentElement.classList.add('svg-miniapp');applyTelegramIdentity();}''')
     await page.wait_for_timeout(800)
     state=await page.evaluate('''()=>({ready:window.SVG_APP_DATA_READY,overflow:document.documentElement.scrollWidth>window.innerWidth})''')
-    assert state['ready'],f'V43 failed Mini App bootstrap: {state}'
-    assert not state['overflow'],f'V43 horizontal overflow: {state}'
+    assert state['ready'],f'V44 failed Mini App bootstrap: {state}'
+    assert not state['overflow'],f'V44 horizontal overflow: {state}'
     # Nav functions are exercised, not merely existence-checked.
     for open_name,screen_name in [
      ('openSchedule','schedule-screen'),('openNotes','notes-screen'),

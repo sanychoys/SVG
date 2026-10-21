@@ -5459,3 +5459,16 @@ html.svg-web.web-authenticated .web-auth-gate{display:none!important}
 .shortcut-setup-feedback:empty{display:none}
 .shortcut-finance-entry{margin-top:9px}
 @media(max-width:350px){.shortcut-copy-line{align-items:stretch;flex-direction:column}.shortcut-copy-line .shortcut-btn{align-self:flex-start}.shortcut-step-block,.shortcut-setup-card{padding:13px}}
+
+/* V44: compact training-date editor; uses the existing iOS bottom-sheet system. */
+.calendar-workout-other { font-size: 12px; line-height: 1.5; color: rgba(255,255,255,.62); margin: 8px 0 18px; }
+.calendar-workout-label { display: block; font-size: 12px; color: rgba(255,255,255,.7); margin: 10px 0 7px; }
+.calendar-workout-time { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 14px 0 18px; }
+.calendar-workout-time label { display: flex; flex-direction: column; gap: 7px; color: rgba(255,255,255,.7); font-size: 12px; min-width: 0; }
+.calendar-workout-time input { font-size: 16px; width: 100%; min-width: 0; box-sizing: border-box; }
+#calendar-workout-sheet .sheet-panel { max-height: min(90dvh, 690px); overflow-y: auto; }
+#calendar-workout-sheet .calendar-workout-delete { color: #ff9f9f; }
+.single-training-screen .attendance-grid .calendar-day:not(.empty) { cursor: pointer; touch-action: manipulation; }
+.single-training-screen .attendance-grid .calendar-day:not(.empty):focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+
+.single-training-screen .attendance-edit-hint { font-size: 9px; font-weight: 500; color: rgba(255,255,255,.44); text-align: center; margin: 8px -4px 0; line-height: 1.25; }
