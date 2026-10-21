@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone, time
 from zoneinfo import ZoneInfo
 from finance_db import connect, utc_now
 from product_db import _timezone_for_row, _occurrences
-from insights import _state, _date_value, _number, build_report
+from insights import _state, _date_value, _number, _rows, build_report
 
 RULE_TYPES = {
     'budget_percent': {'label':'Бюджет близок к лимиту','min':50,'max':100,'default':80,'unit':'%'},
@@ -62,9 +62,9 @@ def _month_shift(month, offset):
 
 
 def _finance_metrics(state, month, today):
-    expenses = [e for e in state.get('expenses',[]) if isinstance(e,dict) and _date_value(e.get('date')).startswith(month)]
-    incomes = [e for e in state.get('incomes',[]) if isinstance(e,dict) and _date_value(e.get('date')).startswith(month)]
-    mandatory = [e for e in state.get('mandatoryExpenses',[]) if isinstance(e,dict) and
+    expenses = [e for e in _rows(state,'expenses') if _date_value(e.get('date')).startswith(month)]
+    incomes = [e for e in _rows(state,'incomes') if _date_value(e.get('date')).startswith(month)]
+    mandatory = [e for e in _rows(state,'mandatoryExpenses') if
                  (str(e.get('monthKey') or _date_value(e.get('date'))[:7])==month)]
     # A mandatory payment is only counted when recorded as paid.
     paid = [e for e in mandatory if e.get('paid') is True]
@@ -72,10 +72,11 @@ def _finance_metrics(state, month, today):
     paid_sum = round(sum(abs(_number(e.get('amount'))) for e in paid),2)
     earned = round(sum(abs(_number(e.get('amount'))) for e in incomes),2)
     budgets=state.get('monthlyBudgets') or {}
+    if not isinstance(budgets,dict): budgets={}
     budget_rec=budgets.get(month) or {}
     budget=_number(budget_rec.get('income') if isinstance(budget_rec,dict) else budget_rec)
     if not budget and month==today[:7]: budget=_number(state.get('monthlyIncome'))
-    by_id = {str(cat.get('id')):str(cat.get('name') or 'Без категории')[:45] for cat in state.get('categories',[]) if isinstance(cat,dict)}
+    by_id = {str(cat.get('id')):str(cat.get('name') or 'Без категории')[:45] for cat in _rows(state,'categories')}
     categories=defaultdict(float)
     for item in expenses+paid:
         name=by_id.get(str(item.get('categoryId')),str(item.get('category') or 'Без категории')[:45])
@@ -185,7 +186,7 @@ def collect_due_automations(now=None):
             elif typ=='tomorrow_events':
                 tomorrow=local.date()+timedelta(days=1)
                 start=datetime.combine(tomorrow,time.min,tzinfo=tz).astimezone(timezone.utc)
-                end=datetime.combine(tomorrow+timedelta(days=1),time.min,tzinfo=tz).astimezone(timezone.utc)
+                end=datetime.combine(tomorrow+timedelta(days=1),time.min,tzinfo=tz).astimezone(timezone.utc)-timedelta(microseconds=1)
                 count=0
                 for event in db.execute('''SELECT e.* FROM schedule_events e JOIN schedule_event_members m
                                           ON m.event_id=e.id WHERE m.user_id=?''',(rule['user_id'],)):

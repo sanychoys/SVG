@@ -434,11 +434,11 @@ def list_notes(user_id, include_archived=False):
         return [_note_with_attachments(db,row) for row in rows]
 
 
-def save_note(user_id, note_id, payload):
+def save_note(user_id, note_id, payload, *, require_existing=False):
     now = utc_now()
     with connect() as db:
         existing = db.execute("SELECT user_id,created_at FROM notes WHERE id=?", (note_id,)).fetchone()
-        if existing and int(existing["user_id"]) != int(user_id):
+        if (require_existing and not existing) or (existing and int(existing["user_id"]) != int(user_id)):
             return None
         created_at = existing["created_at"] if existing else now
         db.execute(
@@ -645,7 +645,9 @@ def collect_due_reminders(now=None, lookback_minutes=30):
         for row in finance_rows:
             try:
                 state = json.loads(row["state_json"] or "{}")
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(state, dict):
                 continue
             tz = _timezone_for_row(row)
             local_now = now.astimezone(tz)
@@ -653,7 +655,8 @@ def collect_due_reminders(now=None, lookback_minutes=30):
             # Finance reminders are intentionally sent once on the due date, after 09:00 local time.
             if local_now.hour < 9:
                 continue
-            for item in (state.get("mandatoryExpenses") or []) if notification_enabled(row['user_id'], 'finance_payments', db) else []:
+            for item in (state.get("mandatoryExpenses") if isinstance(state.get("mandatoryExpenses"), list) else []) if notification_enabled(row['user_id'], 'finance_payments', db) else []:
+                if not isinstance(item,dict): continue
                 due = str(item.get("dueDate") or item.get("date") or "")[:10]
                 if due != local_date or item.get("paid") is True:
                     continue
@@ -661,7 +664,8 @@ def collect_due_reminders(now=None, lookback_minutes=30):
                 if db.execute("SELECT 1 FROM bot_reminder_log WHERE user_id=? AND reminder_key=?", (row["user_id"], key)).fetchone():
                     continue
                 reminders.append({"user_id":row["user_id"],"telegram_id":row["telegram_id"],"key":key,"kind":"mandatory","title":item.get("title") or "Обязательный расход","amount":item.get("amount"),"when":now,"timezone":tz})
-            for item in (state.get("debts") or []) if notification_enabled(row['user_id'], 'finance_debts', db) else []:
+            for item in (state.get("debts") if isinstance(state.get("debts"), list) else []) if notification_enabled(row['user_id'], 'finance_debts', db) else []:
+                if not isinstance(item,dict): continue
                 due = str(item.get("dueDate") or "")[:10]
                 if due != local_date or item.get("status") == "closed":
                     continue

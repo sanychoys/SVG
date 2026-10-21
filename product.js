@@ -151,38 +151,53 @@ function applyProductCaches() {
   productRenderDashboard();
 }
 
+// A save can finish while initial hydration is still in flight. Never drop a
+// forced refresh: wait for the current request and read the server again.
+let productSyncPromise = null;
 async function syncScheduleNotesWithServer(force=false) {
-  if (!productHasAuth() || productSyncInFlight) {
-    if(!productHasAuth()) {
-      if(!productScheduleLoaded){ const local=readJSON(STORAGE.schedule,[]); productScheduleDefinitions=Array.isArray(local)?local:[]; productScheduleLoaded=true; }
-      if(!productNotesLoaded){ const local=readJSON(STORAGE.notes,[]); notesData=Array.isArray(local)?local.map(normalizeProductNote).filter(Boolean):[]; productNotesLoaded=true; }
-      applyProductCaches();
-    }
+  if (!productHasAuth()) {
+    if(!productScheduleLoaded){const local=readJSON(STORAGE.schedule,[]);productScheduleDefinitions=Array.isArray(local)?local:[];productScheduleLoaded=true;}
+    if(!productNotesLoaded){const local=readJSON(STORAGE.notes,[]);notesData=Array.isArray(local)?local.map(normalizeProductNote).filter(Boolean):[];productNotesLoaded=true;}
+    applyProductCaches();
     return false;
   }
+  if (productSyncInFlight) {
+    const pending = productSyncPromise;
+    if (pending) await pending;
+    // Opening an existing screen should share a request; saving/editing must
+    // refresh AFTER the previous response so the new item is always visible.
+    return force ? syncScheduleNotesWithServer(false) : Boolean(pending);
+  }
   productSyncInFlight=true;
-  productSetSyncLabel('schedule-sync-label','Синхронизация…'); productSetSyncLabel('notes-sync-label','Синхронизация…');
-  try{
-    const [scheduleResponse,notesResponse]=await Promise.all([
-      fetch('/api/schedule/events',{headers:productHeaders(false),cache:'no-store'}),
-      fetch('/api/notes?archived=true',{headers:productHeaders(false),cache:'no-store'})
-    ]);
-    if(!scheduleResponse.ok) throw new Error(`schedule HTTP ${scheduleResponse.status}`);
-    if(!notesResponse.ok) throw new Error(`notes HTTP ${notesResponse.status}`);
-    const schedulePayload=await scheduleResponse.json(); const notesPayload=await notesResponse.json();
-    productScheduleDefinitions=Array.isArray(schedulePayload.events)?schedulePayload.events:[];
-    notesData=Array.isArray(notesPayload.notes)?notesPayload.notes.map(normalizeProductNote).filter(Boolean):[];
-    productScheduleLoaded=true; productNotesLoaded=true; applyProductCaches();
-    productSetSyncLabel('schedule-sync-label','Синхронизировано'); productSetSyncLabel('notes-sync-label','Синхронизировано');
-    if(!document.getElementById('schedule-screen')?.hidden) renderSchedule();
-    if(!document.getElementById('notes-screen')?.hidden) renderNotes();
-    return true;
-  }catch(error){
-    svgDiag?.('product:sync-error',{level:'warning',message:error?.message||String(error)});
-    if(!productScheduleLoaded){ const local=readJSON(STORAGE.schedule,[]); productScheduleDefinitions=Array.isArray(local)?local:[]; productScheduleLoaded=true; }
-    if(!productNotesLoaded){ const local=readJSON(STORAGE.notes,[]); notesData=Array.isArray(local)?local.map(normalizeProductNote).filter(Boolean):[]; productNotesLoaded=true; }
-    applyProductCaches(); productSetSyncLabel('schedule-sync-label','Офлайн'); productSetSyncLabel('notes-sync-label','Офлайн'); return false;
-  }finally{productSyncInFlight=false;}
+  productSetSyncLabel('schedule-sync-label','Синхронизация…');
+  productSetSyncLabel('notes-sync-label','Синхронизация…');
+  const task=(async()=>{
+    try {
+      const [scheduleResponse,notesResponse]=await Promise.all([
+        fetch('/api/schedule/events',{headers:productHeaders(false),cache:'no-store'}),
+        fetch('/api/notes?archived=true',{headers:productHeaders(false),cache:'no-store'})
+      ]);
+      if(!scheduleResponse.ok) throw new Error(`schedule HTTP ${scheduleResponse.status}`);
+      if(!notesResponse.ok) throw new Error(`notes HTTP ${notesResponse.status}`);
+      const [schedulePayload,notesPayload]=await Promise.all([scheduleResponse.json(),notesResponse.json()]);
+      productScheduleDefinitions=Array.isArray(schedulePayload.events)?schedulePayload.events:[];
+      notesData=Array.isArray(notesPayload.notes)?notesPayload.notes.map(normalizeProductNote).filter(Boolean):[];
+      productScheduleLoaded=true;productNotesLoaded=true;applyProductCaches();
+      productSetSyncLabel('schedule-sync-label','Синхронизировано');
+      productSetSyncLabel('notes-sync-label','Синхронизировано');
+      if(!document.getElementById('schedule-screen')?.hidden)renderSchedule();
+      if(!document.getElementById('notes-screen')?.hidden)renderNotes();
+      return true;
+    } catch(error) {
+      svgDiag?.('product:sync-error',{level:'warning',message:error?.message||String(error)});
+      if(!productScheduleLoaded){const local=readJSON(STORAGE.schedule,[]);productScheduleDefinitions=Array.isArray(local)?local:[];productScheduleLoaded=true;}
+      if(!productNotesLoaded){const local=readJSON(STORAGE.notes,[]);notesData=Array.isArray(local)?local.map(normalizeProductNote).filter(Boolean):[];productNotesLoaded=true;}
+      applyProductCaches();productSetSyncLabel('schedule-sync-label','Офлайн');productSetSyncLabel('notes-sync-label','Офлайн');
+      return false;
+    } finally {productSyncInFlight=false;}
+  })();
+  productSyncPromise=task;
+  try{return await task;}finally{if(productSyncPromise===task)productSyncPromise=null;}
 }
 window.syncScheduleNotesWithServer=syncScheduleNotesWithServer;
 

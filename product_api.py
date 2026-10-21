@@ -309,9 +309,13 @@ def build_product_router(*, authenticate, bot, main_keyboard, get_user_settings,
     @router.put("/api/notes/{note_id}")
     def note_update(note_id: str, payload: dict, request: Request, x_telegram_init_data: str | None = Header(default=None)):
         _, user_id = authenticate(request, x_telegram_init_data)
-        note = save_note(user_id, note_id, _clean_note_payload(payload))
+        note = save_note(user_id, note_id, _clean_note_payload(payload), require_existing=True)
         if not note:
-            raise HTTPException(status_code=403, detail="Нет доступа к заметке")
+            with connect() as db:
+                exists = db.execute('SELECT 1 FROM notes WHERE id=?', (note_id,)).fetchone()
+            if exists:
+                raise HTTPException(status_code=403, detail="Нет доступа к заметке")
+            raise HTTPException(status_code=404, detail="Заметка не найдена")
         return {"status": "ok", "note": note}
 
     @router.delete("/api/notes/{note_id}")

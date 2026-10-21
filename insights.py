@@ -34,6 +34,12 @@ def _date_value(value, local_tz=None):
     return raw[:10]
 
 
+def _rows(state, key):
+    """Ignore individual damaged legacy rows without crashing an entire module."""
+    value = state.get(key) if isinstance(state, dict) else None
+    return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+
 def _number(value):
     try:
         n=float(value)
@@ -63,16 +69,18 @@ def build_report(user_id, period='daily', anchor=None, now=None):
         start_str,end_str=start.isoformat(),end.isoformat()
         financial=_state(db,'finance_state',user_id)
         training=_state(db,'training_state',user_id)
-        expense_rows=[v for v in (financial.get('expenses') or []) if isinstance(v,dict) and start_str<=_date_value(v.get('date') or v.get('createdAt'),tz)<=end_str]
-        income_rows=[v for v in (financial.get('incomes') or []) if isinstance(v,dict) and start_str<=_date_value(v.get('date') or v.get('createdAt'),tz)<=end_str]
-        sessions=[v for v in (training.get('history') or []) if isinstance(v,dict) and v.get('status')=='completed' and start_str<=_date_value(v.get('dateKey') or v.get('ended') or v.get('date'),tz)<=end_str]
+        expense_rows=[v for v in _rows(financial,'expenses') if isinstance(v,dict) and start_str<=_date_value(v.get('date') or v.get('createdAt'),tz)<=end_str]
+        income_rows=[v for v in _rows(financial,'incomes') if isinstance(v,dict) and start_str<=_date_value(v.get('date') or v.get('createdAt'),tz)<=end_str]
+        sessions=[v for v in _rows(training,'history') if isinstance(v,dict) and v.get('status')=='completed' and start_str<=_date_value(v.get('dateKey') or v.get('ended') or v.get('date'),tz)<=end_str]
         # Notes updated_at is UTC, convert to local date for accuracy near midnight.
         notes_rows=db.execute('SELECT updated_at FROM notes WHERE user_id=?',(user_id,)).fetchall()
         notes=sum(start_str<=_date_value(r['updated_at'],tz)<=end_str for r in notes_rows)
         events=db.execute('''SELECT e.* FROM schedule_events e JOIN schedule_event_members m ON m.event_id=e.id
                      WHERE m.user_id=?''',(user_id,)).fetchall()
         window_start=datetime.combine(start,time.min,tzinfo=tz).astimezone(timezone.utc)
-        window_end=datetime.combine(end+timedelta(days=1),time.min,tzinfo=tz).astimezone(timezone.utc)
+        # Reports use [start, next-day) calendar windows. An event exactly at
+        # midnight of the FOLLOWING day must not count in today's digest.
+        window_end=datetime.combine(end+timedelta(days=1),time.min,tzinfo=tz).astimezone(timezone.utc)-timedelta(microseconds=1)
         scheduled=0
         for event in events:
             try:
@@ -145,15 +153,15 @@ def search_user_data(user_id, query, limit=60):
             add('schedule',r['id'],r['title'],f"{r['details']} {r['starts_at']}")
         finance=_state(db,'finance_state',user_id)
         for category in ('expenses','incomes','mandatoryExpenses','debts'):
-            for idx,r in enumerate((finance.get(category) or [])[:3000]):
+            for idx,r in enumerate(_rows(finance,category)[:3000]):
                 if not isinstance(r,dict): continue
                 title=r.get('title') or r.get('person') or r.get('category') or 'Операция'
                 add('finance',r.get('id') or idx,title,f"{r.get('category') or ''} {r.get('amount') or ''} {r.get('date') or ''}")
         training=_state(db,'training_state',user_id)
-        for idx,r in enumerate((training.get('history') or [])[-1500:]):
+        for idx,r in enumerate(_rows(training,'history')[-1500:]):
             if not isinstance(r,dict):continue
             add('training',r.get('id') or idx,r.get('workout') or 'Тренировка',f"{r.get('dateKey') or r.get('date') or ''} {r.get('status') or ''}")
-        for idx,r in enumerate((training.get('goals') or [])[:1000]):
+        for idx,r in enumerate(_rows(training,'goals')[:1000]):
             if not isinstance(r,dict):continue
             add('training',r.get('id') or idx,r.get('name') or 'Цель',str(r.get('description') or ''))
     return results

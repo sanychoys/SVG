@@ -87,7 +87,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "42"
+APP_VERSION = "43"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -1429,6 +1429,13 @@ def api_save_finance_state(
     _, user_id = authenticated_user(request, x_telegram_init_data)
     state = payload.get("state") if isinstance(payload.get("state"), dict) else payload
     base_updated_at = payload.get("baseUpdatedAt") if isinstance(payload.get("state"), dict) else None
+    # Refuse malformed states rather than persisting an object that would break
+    # reminders, insights and global search for that account.
+    for key in ("categories", "mandatoryExpenses", "expenses", "incomes", "debts"):
+        if key in state and not isinstance(state[key], list):
+            raise HTTPException(status_code=422, detail=f"Invalid finance field: {key}")
+    if "monthlyBudgets" in state and not isinstance(state["monthlyBudgets"], dict):
+        raise HTTPException(status_code=422, detail="Invalid finance field: monthlyBudgets")
     encoded = json.dumps(state, ensure_ascii=False).encode("utf-8")
     if len(encoded) > MAX_FINANCE_STATE_BYTES:
         raise HTTPException(status_code=413, detail="Finance state is too large")

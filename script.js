@@ -1797,10 +1797,11 @@ async function saveTrainingToServer(retryConflict = true) {
   }
   setTrainingSyncStatus('saving', 'Синхронизация…');
   try {
+    const postedState=JSON.stringify(getTrainingPayload());
     const response = await fetch('/api/training/state', {
       method: 'PUT',
       headers: telegramApiHeaders(true),
-      body: JSON.stringify({ state: getTrainingPayload(), baseUpdatedAt: trainingServerUpdatedAt })
+      body: JSON.stringify({ state: JSON.parse(postedState), baseUpdatedAt: trainingServerUpdatedAt })
     });
 
     if (response.status === 409 && retryConflict) {
@@ -1818,8 +1819,14 @@ async function saveTrainingToServer(retryConflict = true) {
     trainingServerReady = true;
     trainingServerUpdatedAt = payload.updated_at || trainingServerUpdatedAt;
     if (trainingServerUpdatedAt) localStorage.setItem('fitness_server_updated_at_v1', trainingServerUpdatedAt);
-    localStorage.removeItem(STORAGE.trainingDirty);
-    setTrainingSyncStatus('saved', 'Сохранено');
+    if(JSON.stringify(getTrainingPayload())===postedState){
+      localStorage.removeItem(STORAGE.trainingDirty);
+      setTrainingSyncStatus('saved', 'Сохранено');
+    }else{
+      localStorage.setItem(STORAGE.trainingDirty,'1');
+      scheduleTrainingSave();
+      setTrainingSyncStatus('saving','Сохраняем новые изменения…');
+    }
     return true;
   } catch (_) {
     trainingServerReady = false;
@@ -4003,6 +4010,7 @@ const FINANCE_DIRTY_KEY_V15 = 'finance_server_dirty_v2';
 const FINANCE_SERVER_UPDATED_KEY_V15 = 'finance_server_updated_at_v2';
 let financeSelectedCategoryColorV15 = FINANCE_COLORS_V15[0];
 let financeSyncTimerV15 = null;
+let financeSyncQueuedV43 = false;
 let financeSyncInFlightV15 = false;
 let financeServerUpdatedAtV15 = localStorage.getItem(FINANCE_SERVER_UPDATED_KEY_V15) || null;
 
@@ -4346,12 +4354,14 @@ function mergeFinanceStatesV15(localRaw, remoteRaw) {
   return normalizeFinanceDataV15(merged);
 }
 async function saveFinanceToServerV15(retry = true) {
-  if (!hasServerAuth() || !navigator.onLine || financeSyncInFlightV15) return false;
+  if (!hasServerAuth() || !navigator.onLine) return false;
+  if (financeSyncInFlightV15) { financeSyncQueuedV43 = true; return false; }
   financeSyncInFlightV15 = true; financeSetSyncStatusV15('saving','Синхронизация…');
+  const postedState = JSON.stringify(financeData);
   try {
     const response = await fetch('/api/finance/state', {
       method:'PUT', headers:telegramApiHeaders(true),
-      body:JSON.stringify({ state:financeData, baseUpdatedAt:financeServerUpdatedAtV15 })
+      body:JSON.stringify({ state:JSON.parse(postedState), baseUpdatedAt:financeServerUpdatedAtV15 })
     });
     const payload = await response.json().catch(() => ({}));
     if (response.status === 409 && retry && payload.state) {
@@ -4364,18 +4374,27 @@ async function saveFinanceToServerV15(retry = true) {
     if (!response.ok) throw new Error(getApiErrorMessage(payload,'Не удалось сохранить финансы'));
     financeServerUpdatedAtV15 = payload.updated_at || null;
     if (financeServerUpdatedAtV15) localStorage.setItem(FINANCE_SERVER_UPDATED_KEY_V15, financeServerUpdatedAtV15);
-    localStorage.removeItem(FINANCE_DIRTY_KEY_V15);
-    financeSetSyncStatusV15('saved','Сохранено');
+    if (JSON.stringify(financeData) === postedState) {
+      localStorage.removeItem(FINANCE_DIRTY_KEY_V15);
+      financeSetSyncStatusV15('saved','Сохранено');
+    } else {
+      localStorage.setItem(FINANCE_DIRTY_KEY_V15, '1');
+      financeSyncQueuedV43 = true;
+      financeSetSyncStatusV15('saving','Сохраняем новые изменения…');
+    }
     return true;
   } catch (_) {
     financeSetSyncStatusV15(navigator.onLine ? 'error' : 'offline', navigator.onLine ? 'Нет связи · повторим' : 'Офлайн · сохранено локально');
     return false;
-  } finally { financeSyncInFlightV15 = false; }
+  } finally {
+    financeSyncInFlightV15 = false;
+    if(financeSyncQueuedV43){financeSyncQueuedV43=false;scheduleFinanceSyncV15();}
+  }
 }
 async function syncFinanceWithServerV15() {
   if (!hasServerAuth()) { financeSetSyncStatusV15('local','Локально'); return false; }
   if (!navigator.onLine) { financeSetSyncStatusV15('offline','Офлайн · сохранено локально'); return false; }
-  if (financeSyncInFlightV15) return false;
+  if (financeSyncInFlightV15) {financeSyncQueuedV43 = true;return false;}
   financeSyncInFlightV15 = true; financeSetSyncStatusV15('saving','Синхронизация…');
   try {
     const response = await fetch('/api/finance/state', { headers:telegramApiHeaders(false) });
@@ -4434,7 +4453,10 @@ async function syncFinanceWithServerV15() {
     console.warn('Finance sync failed', error);
     financeSetSyncStatusV15(navigator.onLine ? 'error' : 'offline', navigator.onLine ? 'Нет связи · повторим' : 'Офлайн · сохранено локально');
     return false;
-  } finally { financeSyncInFlightV15 = false; }
+  } finally {
+    financeSyncInFlightV15 = false;
+    if(financeSyncQueuedV43){financeSyncQueuedV43=false;scheduleFinanceSyncV15();}
+  }
 }
 
 
