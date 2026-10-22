@@ -3894,28 +3894,31 @@ async function revokeProfileSessions(mode,sessionId=null){
   finally{profileSessionsBusy=false;}
   await loadProfileSessions(true);
 }
-async function exportProfileData(){
+async function exportProfileData(format='html'){
   if(!hasServerAuth()){showToast('Необходима авторизация');return;}
+  if(!['html','txt'].includes(format))return;
   const button=document.getElementById('profile-export-action');
   const status=document.getElementById('profile-export-status');
   if(button)button.disabled=true;
-  if(status)status.textContent='Подготавливаем экспорт…';
+  if(status)status.textContent='Готовим копию аккаунта…';
   try{
-    const response=await fetch('/api/profile/export',{headers:telegramApiHeaders(false),cache:'no-store'});
-    if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(profileApiError(payload,'Не удалось экспортировать данные'));}
-    const json=await response.json();
-    if(json?.format!=='svgtracker-export-v1')throw new Error('Неожиданный формат экспорта');
-    const blob=new Blob([JSON.stringify(json,null,2)],{type:'application/json;charset=utf-8'});
+    const response=await fetch('/api/profile/export?format='+encodeURIComponent(format),{headers:telegramApiHeaders(false),cache:'no-store'});
+    if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(profileApiError(payload,'Не удалось выгрузить данные'));}
+    const content=await response.text();
+    if(!content.trim())throw new Error('Получен пустой документ');
+    const mime=format==='html'?'text/html;charset=utf-8':'text/plain;charset=utf-8';
+    const blob=new Blob([content],{type:mime});
     const url=URL.createObjectURL(blob);
     const link=document.createElement('a');link.href=url;
-    link.download=`SVGTracker_export_${new Date().toISOString().slice(0,10)}.json`;
+    link.download=`SVGTracker_${new Date().toISOString().slice(0,10)}.${format}`;
     document.body.appendChild(link);link.click();link.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),30000);
-    if(status)status.textContent='Экспорт сформирован. Если загрузка не началась, проверь разрешения браузера.';
-    showToast('Экспорт готов');
-  }catch(error){if(status)status.textContent=error?.message||'Ошибка экспорта';showToast('Экспорт не выполнен');}
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+    if(status)status.textContent='Копия готова. Открой файл через «Файлы» на iPhone или сохрани как PDF через печать.';
+    showToast('Копия аккаунта готова');
+  }catch(error){if(status)status.textContent=error?.message||'Ошибка выгрузки';showToast('Не удалось создать копию');}
   finally{if(button)button.disabled=false;}
 }
+
 function renderProfileOverview(){
   const incoming=(profileState.incoming||[]).length;
   const banner=document.getElementById('profile-incoming-banner');

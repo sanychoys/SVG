@@ -5632,3 +5632,6 @@ html.svg-web.web-authenticated .web-auth-gate{display:none!important}
 .v47-notification-accordion > summary strong{grid-column:1}
 .v47-notification-accordion > summary .v47-enabled-count{grid-column:2;grid-row:1;margin-right:12px!important}
 .v47-notification-accordion > summary small{grid-column:1/-1}
+
+/* V48: alternative readable export format */
+.v48-export-text{margin-top:8px;background:transparent!important;border:1px solid rgba(150,150,160,.45)!important;color:inherit!important}

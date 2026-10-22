@@ -28,11 +28,13 @@ from aiogram.filters import Command
 from aiogram.types import BotCommand, BotCommandScopeChat, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.types.error_event import ErrorEvent
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 import uvicorn
 
 from config import BOT_TOKEN
 from key import main_keyboard
+from account_export import export_html, export_text
+from admin_access import AdminRegistry
 from finance_db import (
     connect,
     block_user,
@@ -87,7 +89,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "47"
+APP_VERSION = "48"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -138,13 +140,13 @@ WEB_AUTH_RATE: dict[str, deque[float]] = {}
 FRONTEND_LOG_LOCK = threading.RLock()
 ADMIN_TIMEZONE_FILE = ADMIN_STATE_DIR / "timezone.json"
 ADMIN_TZ_CACHE = {"expires": 0.0, "settings": None}
+ADMIN_REGISTRY = AdminRegistry(ADMIN_TELEGRAM_ID, ADMIN_STATE_DIR)
+ADMIN_PENDING_ROLES: dict[str, dict] = {}
+ADMIN_ROLE_TTL = 10 * 60
 
 
 def is_admin_telegram_id(value) -> bool:
-    try:
-        return int(value) == ADMIN_TELEGRAM_ID
-    except (TypeError, ValueError):
-        return False
+    return ADMIN_REGISTRY.is_admin(value)
 
 
 def is_admin_message(message: Message) -> bool:
@@ -154,6 +156,7 @@ def is_admin_message(message: Message) -> bool:
 async def setup_bot_commands() -> None:
     common = [
         BotCommand(command="start", description="Открыть SVGTracker"),
+        BotCommand(command="myid", description="Показать свой Telegram ID"),
         BotCommand(command="shortcut", description="Токен для iPhone Action Button"),
         BotCommand(command="shortcut_revoke", description="Отключить Action Button"),
     ]
@@ -186,12 +189,39 @@ async def setup_bot_commands() -> None:
         BotCommand(command="timezone", description="Часовой пояс логов"),
         BotCommand(command="memory", description="Использование оперативной памяти"),
         BotCommand(command="memory_gc", description="Освободить неиспользуемую память"),
+        BotCommand(command="admins", description="Список администраторов"),
+        BotCommand(command="admin_add", description="Добавить администратора по ID"),
+        BotCommand(command="admin_remove", description="Отозвать права администратора"),
     ]
     try:
         await bot.set_my_commands(common)
-        await bot.set_my_commands(admin, scope=BotCommandScopeChat(chat_id=ADMIN_TELEGRAM_ID))
     except Exception:
-        logger.exception("Failed to configure Telegram bot commands")
+        logger.exception("Failed to configure general Telegram bot commands")
+    for admin_id in ADMIN_REGISTRY.list_ids():
+        try:
+            await bot.set_my_commands(admin, scope=BotCommandScopeChat(chat_id=admin_id))
+        except Exception:
+            # A newly delegated administrator may not have started the bot yet.
+            # One inaccessible chat must not hide the menu from all other admins.
+            logger.warning("Could not configure command menu for admin %s", admin_id, exc_info=True)
+
+
+async def refresh_admin_commands(user_id: int, enabled: bool) -> None:
+    """The Telegram command menu is cosmetic; all privileges are checked separately."""
+    common = [
+        BotCommand(command="start", description="Открыть SVGTracker"),
+        BotCommand(command="myid", description="Показать свой Telegram ID"),
+        BotCommand(command="shortcut", description="Токен для iPhone Action Button"),
+        BotCommand(command="shortcut_revoke", description="Отключить Action Button"),
+    ]
+    try:
+        if enabled:
+            # Use the same full command list configured for root.
+            await setup_bot_commands()
+        else:
+            await bot.set_my_commands(common, scope=BotCommandScopeChat(chat_id=user_id))
+    except Exception:
+        logger.warning("Could not refresh bot commands for %s", user_id, exc_info=True)
 
 
 def admin_keyboard() -> InlineKeyboardMarkup:
@@ -222,6 +252,7 @@ def admin_keyboard() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="GitHub", callback_data="admin:github"),
+            InlineKeyboardButton(text="Админы", callback_data="admin:admins"),
         ],
     ])
 
@@ -869,10 +900,14 @@ async def notify_admin_error(title: str, detail: str) -> None:
         return
     ADMIN_ERROR_COOLDOWN[fingerprint] = now
     try:
-        await bot.send_message(
-            ADMIN_TELEGRAM_ID,
-            admin_trim(f"⚠️ SVGTracker\n{title}\n🕒 {admin_now_text()}\n\n{detail}", 3800),
-        )
+        for admin_id in ADMIN_REGISTRY.list_ids():
+            try:
+                await bot.send_message(
+                    admin_id,
+                    admin_trim(f"⚠️ SVGTracker\n{title}\n🕒 {admin_now_text()}\n\n{detail}", 3800),
+                )
+            except Exception:
+                logger.warning("Could not deliver admin alert to %s", admin_id)
     except Exception:
         logger.exception("Failed to notify admin about %s", title)
 
@@ -1662,8 +1697,8 @@ def api_profile_revoke_sessions(payload: dict, request: Request, x_telegram_init
 
 
 @app.get("/api/profile/export")
-def api_profile_export(request: Request, x_telegram_init_data: str | None = Header(default=None)):
-    """Owner-only JSON backup. Never expose token hashes, credentials or file bytes."""
+def api_profile_export(request: Request, format: str = "json", x_telegram_init_data: str | None = Header(default=None)):
+    """Owner-only readable export; legacy JSON remains for integrations."""
     user, user_id = authenticated_user(request, x_telegram_init_data)
     training = get_training_state(user_id)
     finance = get_finance_state(user_id)
@@ -1685,11 +1720,22 @@ def api_profile_export(request: Request, x_telegram_init_data: str | None = Head
         'automation_rules':list_rules(user_id),
         'attachment_notice':'Included: attachment metadata only, not file contents.'
     }
-    return JSONResponse(body, headers={
-        'Cache-Control':'no-store, private',
-        'Content-Disposition':'attachment; filename="svgtracker-account-export.json"',
-        'X-Content-Type-Options':'nosniff',
-    })
+    fmt = str(format or 'html').strip().lower()
+    if fmt not in {'html', 'txt', 'json'}:
+        raise HTTPException(status_code=422, detail='Unsupported export format')
+    stamp = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    headers = {
+        'Cache-Control': 'no-store, private',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+        'X-Content-Type-Options': 'nosniff',
+    }
+    if fmt == 'json':
+        headers['Content-Disposition'] = f'attachment; filename="SVGTracker_{stamp}.json"'
+        return JSONResponse(body, headers=headers)
+    headers['Content-Disposition'] = f'attachment; filename="SVGTracker_{stamp}.{fmt}"'
+    if fmt == 'txt':
+        return Response(export_text(body), media_type='text/plain; charset=utf-8', headers=headers)
+    return Response(export_html(body), media_type='text/html; charset=utf-8', headers=headers)
 
 
 @app.put("/api/profile/notifications")
@@ -1975,11 +2021,89 @@ async def admin_panel(message: Message):
         "перезапускает сервис и автоматически откатывается, если API не поднимается.\n\n"
         "После настройки GitHub успешный ZIP-deploy автоматически делает commit + push в origin/main.\n\n"
         "Команды: /deploy /deploy_status /deploy_check /deploy_probe /server_status /diagnostics /logs_frontend /logs_backend /logs_bot /logs_system /logs_deploy /backup /backups /rollback /logs /errors /restart "
-        "/github_setup /github_test /github_status /github_sync /memory /memory_gc /resetdata",
+        "/github_setup /github_test /github_status /github_sync /memory /memory_gc /resetdata "
+        "/admins /admin_add /admin_remove",
         reply_markup=admin_keyboard(),
     )
 
 
+
+
+def admin_list_text() -> str:
+    admins = ADMIN_REGISTRY.list_ids()
+    rows = [f"Администраторы SVGTracker ({len(admins)}):"]
+    for uid in admins:
+        rows.append(f"• {uid}" + (" — основной" if uid == ADMIN_TELEGRAM_ID else ""))
+    rows.append("\nДобавить: /admin_add 123456789")
+    rows.append("Удалить: /admin_remove 123456789")
+    rows.append("У всех администраторов одинаковые рабочие права. Основного удалить нельзя.")
+    rows.append("Новый администратор должен сначала нажать Start в этом боте и отправить /myid, чтобы узнать свой номер.")
+    return "\n".join(rows)
+
+
+@dp.message(Command("myid"))
+async def show_my_telegram_id(message: Message):
+    if message.from_user:
+        await message.answer(f'Твой Telegram ID: {message.from_user.id}\n\nДля выдачи прав администратора передай этот номер действующему администратору SVGTracker.')
+
+
+@dp.message(Command("admins"))
+async def admin_list_command(message: Message):
+    if not is_admin_message(message):
+        return
+    if str(message.chat.type) != 'private':
+        await message.answer('Управление администраторами доступно только в личном чате бота.')
+        return
+    await message.answer(admin_list_text())
+
+
+async def _admin_role_request(message: Message, action: str):
+    if not is_admin_message(message):
+        return
+    if str(message.chat.type) != 'private':
+        await message.answer('Изменять администраторов можно только в личном чате бота.')
+        return
+    parts = str(message.text or '').split()
+    if len(parts) != 2:
+        await message.answer('Формат: /admin_add 123456789. Попроси будущего админа отправить боту /myid.' if action == 'grant' else 'Формат: /admin_remove 123456789')
+        return
+    try:
+        from admin_access import _id
+        target = _id(parts[1])
+        if target == ADMIN_TELEGRAM_ID:
+            raise ValueError('Основной администратор защищён от изменений')
+        if action == 'revoke' and target == message.from_user.id:
+            raise ValueError('Нельзя удалить собственные права')
+        existing = target in ADMIN_REGISTRY.list_ids()
+        if (action == 'grant' and existing) or (action == 'revoke' and not existing):
+            await message.answer('Пользователь уже администратор.' if existing else 'Такого администратора нет.')
+            return
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    now = time.monotonic()
+    for token, payload in list(ADMIN_PENDING_ROLES.items()):
+        if now - payload.get('created', 0) > ADMIN_ROLE_TTL:
+            ADMIN_PENDING_ROLES.pop(token, None)
+    token = uuid.uuid4().hex[:12]
+    ADMIN_PENDING_ROLES[token] = {'actor': message.from_user.id, 'target': target, 'action': action, 'created': now}
+    verb = 'ДОБАВИТЬ' if action == 'grant' else 'УДАЛИТЬ'
+    note = 'Новый администратор сможет выполнять деплой, откат, перезапуск и назначать других админов.' if action == 'grant' else 'Доступ к административным командам будет сразу отозван.'
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f'Подтвердить: {verb.lower()}', callback_data=f'admin:role_confirm:{token}')],
+        [InlineKeyboardButton(text='Отмена', callback_data=f'admin:role_cancel:{token}')],
+    ])
+    await message.answer(f'{verb} администратора с Telegram ID {target}?\n\n{note}', reply_markup=keyboard)
+
+
+@dp.message(Command("admin_add"))
+async def admin_add_command(message: Message):
+    await _admin_role_request(message, 'grant')
+
+
+@dp.message(Command("admin_remove"))
+async def admin_remove_command(message: Message):
+    await _admin_role_request(message, 'revoke')
 
 
 @dp.message(Command("watchdog_on"))
@@ -2392,6 +2516,50 @@ async def admin_callback(callback: CallbackQuery):
         return
     parts = callback.data.split(":")
     action = parts[1] if len(parts) > 1 else ""
+    if action == "admins":
+        await callback.answer()
+        if callback.message:
+            if str(callback.message.chat.type) != 'private':
+                await callback.message.answer('Список администраторов доступен только в личном чате.')
+            else:
+                await callback.message.answer(admin_list_text())
+        return
+    if action in {'role_confirm', 'role_cancel'}:
+        if not callback.message or str(callback.message.chat.type) != 'private' or len(parts) != 3:
+            await callback.answer('Только в личном чате', show_alert=True)
+            return
+        token = parts[2]
+        pending = ADMIN_PENDING_ROLES.get(token)
+        if not pending or time.monotonic() - pending['created'] > ADMIN_ROLE_TTL:
+            ADMIN_PENDING_ROLES.pop(token, None)
+            await callback.answer('Подтверждение устарело', show_alert=True)
+            return
+        if pending['actor'] != callback.from_user.id:
+            await callback.answer('Это подтверждение другого администратора', show_alert=True)
+            return
+        ADMIN_PENDING_ROLES.pop(token, None)
+        if action == 'role_cancel':
+            await callback.answer('Отменено')
+            await callback.message.edit_text('Изменение списка администраторов отменено.')
+            return
+        try:
+            changed = ADMIN_REGISTRY.change(callback.from_user.id, pending['target'], pending['action'])
+        except (ValueError, PermissionError, RuntimeError, OSError) as exc:
+            await callback.answer('Изменение не выполнено', show_alert=True)
+            await callback.message.answer(f'Ошибка: {exc}')
+            return
+        await callback.answer('Список обновлён')
+        label = 'назначен' if pending['action'] == 'grant' else 'удалён'
+        await callback.message.edit_text(f'Администратор {pending["target"]} {label}.' if changed else 'Список не изменился.')
+        if changed:
+            await refresh_admin_commands(pending['target'], pending['action'] == 'grant')
+            try:
+                await bot.send_message(pending['target'],
+                    'Вам предоставлены права администратора SVGTracker. Откройте /admin для панели.' if pending['action'] == 'grant' else
+                    'Ваши права администратора SVGTracker отозваны.')
+            except Exception:
+                pass  # The user may not have pressed Start; authorization is still updated.
+        return
     if action == "cancel":
         await callback.answer("Отменено")
         if callback.message:
@@ -2490,7 +2658,7 @@ async def admin_callback(callback: CallbackQuery):
             return
         path = backups[0].resolve()
         try:
-            unit = admin_launch_transient(["rollback", str(path), "--admin-chat", str(ADMIN_TELEGRAM_ID)], "rollback")
+            unit = admin_launch_transient(["rollback", str(path), "--admin-chat", str(callback.from_user.id)], "rollback")
             await callback.answer("Rollback запущен")
             if callback.message:
                 await callback.message.edit_text(f"Rollback запущен ({unit}). Итог придёт отдельным сообщением.")
@@ -2552,7 +2720,7 @@ async def admin_callback(callback: CallbackQuery):
         pending["launching"] = True
         try:
             unit = await asyncio.to_thread(
-                admin_launch_transient, ["deploy", str(path), "--admin-chat", str(ADMIN_TELEGRAM_ID)], "deploy"
+                admin_launch_transient, ["deploy", str(path), "--admin-chat", str(callback.from_user.id)], "deploy"
             )
         except Exception as exc:
             pending["launching"] = False
