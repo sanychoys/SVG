@@ -87,7 +87,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI(title="SVGTracker API")
 
-APP_VERSION = "46"
+APP_VERSION = "47"
 MAX_TRAINING_STATE_BYTES = 1_000_000
 MAX_FINANCE_STATE_BYTES = 600_000
 INIT_DATA_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -1766,8 +1766,7 @@ async def api_friend_request(
             try:
                 await bot.send_message(
                     chat_id=target_telegram_id,
-                    text=f"{sender}{sender_username} хочет добавить тебя в друзья в SVGTracker. Открой приложение, чтобы принять запрос.",
-                    reply_markup=main_keyboard(),
+                    text=f"👥 Запрос в друзья от {sender}{sender_username}. Открой SVGTracker для ответа.",
                 )
             except Exception:
                 # The request itself remains valid, but delivery failures must stay observable.
@@ -1787,7 +1786,7 @@ async def api_friend_accept(request_id: int, request: Request, x_telegram_init_d
     if sender and notification_enabled(sender['id'], 'friend_accepted'):
         recipient_name = user.get('first_name') or user.get('username') or 'Друг'
         try:
-            await bot.send_message(chat_id=sender['telegram_id'], text=f"{recipient_name} принял твой запрос в друзья в SVGTracker.",reply_markup=main_keyboard())
+            await bot.send_message(chat_id=sender['telegram_id'], text=f"👥 {recipient_name} принял запрос в друзья.")
         except Exception:
             logger.exception('Failed to notify accepted friend request %s',request_id)
     return {"status": "ok"}
@@ -2634,33 +2633,36 @@ async def bot_reminder_loop():
                 tz = item.get("timezone") or timezone.utc
                 local_when = when.astimezone(tz) if isinstance(when, datetime) else None
                 if kind == "schedule":
-                    minutes = int(item.get("reminder_minutes") or 0)
                     when_text = local_when.strftime("%d.%m · %H:%M") if local_when else "скоро"
-                    lead = "сейчас" if minutes == 0 else (f"через {minutes} мин" if minutes < 60 else f"через {minutes // 60} ч")
-                    text = f"📅 Напоминание · {lead}\n\n{item.get('title') or 'Событие'}\n{when_text}"
+                    text = f"📅 {item.get('title') or 'Событие'} · {when_text}"
+                    if item.get('repeat_attempt'):
+                        text += f"\nПовтор {item['repeat_attempt']+1}/{item['repeat_total']}"
+                elif kind == "training":
+                    text = f"🏋️ Сегодня: {item.get('title') or 'Тренировка'}"
                 elif kind == "note":
-                    body = str(item.get("body") or "").strip().replace("\n", " ")[:180]
-                    text = f"📝 Напоминание по заметке\n\n{item.get('title') or 'Заметка'}" + (f"\n{body}" if body else "")
+                    text = f"📝 {item.get('title') or 'Заметка'}"
+                    if item.get('repeat_attempt'):
+                        text += f"\nПовтор {item['repeat_attempt']+1}/{item['repeat_total']}"
                 elif kind == "mandatory":
-                    amount = item.get("amount")
-                    amount_text = f" · {amount:g} ₽" if isinstance(amount, (int, float)) else ""
-                    text = f"💳 Обязательный расход сегодня\n\n{item.get('title') or 'Платёж'}{amount_text}"
+                    amount = item.get('amount')
+                    amount_text = f" · {amount:g} ₽" if isinstance(amount, (int,float)) else ""
+                    text = f"💳 Платёж: {item.get('title') or 'Платёж'}{amount_text}"
                 elif kind == "debt":
-                    amount = item.get("amount")
-                    amount_text = f" · {amount:g} ₽" if isinstance(amount, (int, float)) else ""
-                    direction = "Нужно вернуть" if item.get("debt_kind") == "owe" else "Ожидается возврат"
-                    text = f"↔️ Напоминание о долге\n\n{direction}: {item.get('title') or 'долг'}{amount_text}"
+                    amount = item.get('amount')
+                    amount_text = f" · {amount:g} ₽" if isinstance(amount,(int,float)) else ""
+                    direction = "Нужно вернуть" if item.get('debt_kind') == 'owe' else "Ожидается возврат"
+                    text = f"↔️ {direction}: {item.get('title') or 'долг'}{amount_text}"
                 else:
                     continue
                 try:
-                    await bot.send_message(chat_id=item["telegram_id"], text=text, reply_markup=main_keyboard())
+                    await bot.send_message(chat_id=item["telegram_id"], text=text)
                     mark_reminder_sent(item["user_id"], item["key"])
                 except Exception:
                     logger.exception("Failed to send %s reminder to Telegram user %s", kind, item.get("telegram_id"))
             # V35 explicit opt-in deterministic automations; deduplicated per rule/period.
             for item in collect_due_automations():
                 try:
-                    await bot.send_message(chat_id=item['telegram_id'], text=item['text'], reply_markup=main_keyboard())
+                    await bot.send_message(chat_id=item['telegram_id'], text=item['text'])
                     mark_reminder_sent(item['user_id'], item['key'])
                 except Exception:
                     logger.exception('Failed to deliver automation %s to user %s', item['key'], item['user_id'])
@@ -2668,7 +2670,7 @@ async def bot_reminder_loop():
             for item in collect_due_reports():
                 try:
                     report = build_report(item['user_id'], item['period'], item['date'])
-                    await bot.send_message(chat_id=item['telegram_id'], text=render_report(report), reply_markup=main_keyboard())
+                    await bot.send_message(chat_id=item['telegram_id'], text=render_report(report))
                     mark_reminder_sent(item['user_id'], item['key'])
                 except Exception:
                     logger.exception('Failed to send %s report to Telegram user %s',item['period'],item['telegram_id'])

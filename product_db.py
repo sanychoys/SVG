@@ -55,6 +55,8 @@ def init_product_db():
                 recurrence_timezone TEXT NOT NULL DEFAULT 'UTC',
                 repeat_day_offsets TEXT NOT NULL DEFAULT '[]',
                 reminder_minutes INTEGER,
+                reminder_repeat_count INTEGER,
+                reminder_repeat_interval INTEGER,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -80,6 +82,8 @@ def init_product_db():
                 pinned INTEGER NOT NULL DEFAULT 0,
                 archived INTEGER NOT NULL DEFAULT 0,
                 reminder_at TEXT,
+                reminder_repeat_count INTEGER,
+                reminder_repeat_interval INTEGER,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -133,12 +137,19 @@ def init_product_db():
             db.execute("ALTER TABLE schedule_events ADD COLUMN repeat_day_offsets TEXT NOT NULL DEFAULT '[]'")
         if 'recurrence_timezone' not in columns:
             db.execute("ALTER TABLE schedule_events ADD COLUMN recurrence_timezone TEXT NOT NULL DEFAULT 'UTC'")
+        # V47 additive migration: old events/notes keep a single reminder by default.
+        for name in ('reminder_repeat_count', 'reminder_repeat_interval'):
+            if name not in columns:
+                db.execute(f'ALTER TABLE schedule_events ADD COLUMN {name} INTEGER')
         # V34 notes: additive migration, existing notes and attachments are preserved.
         note_columns = {r['name'] for r in db.execute('PRAGMA table_info(notes)')}
         if 'folder' not in note_columns:
             db.execute("ALTER TABLE notes ADD COLUMN folder TEXT NOT NULL DEFAULT ''")
         if 'tags_json' not in note_columns:
             db.execute("ALTER TABLE notes ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'")
+        for name in ('reminder_repeat_count', 'reminder_repeat_interval'):
+            if name not in note_columns:
+                db.execute(f'ALTER TABLE notes ADD COLUMN {name} INTEGER')
         if 'favorite' not in note_columns:
             db.execute("ALTER TABLE notes ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
         db.execute('CREATE INDEX IF NOT EXISTS idx_notes_user_folder ON notes(user_id,folder,archived)')
@@ -215,6 +226,8 @@ def _event_dict(db, row, viewer_user_id):
         "repeat_day_offsets": _repeat_offsets(row),
         "recurrence_timezone": row["recurrence_timezone"],
         "reminder_minutes": row["reminder_minutes"],
+        "reminder_repeat_count": row["reminder_repeat_count"],
+        "reminder_repeat_interval": row["reminder_repeat_interval"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "participants": participants,
@@ -277,8 +290,8 @@ def create_schedule_event(user_id, event_id, payload):
         db.execute(
             """
             INSERT INTO schedule_events(
-                id,owner_user_id,title,details,starts_at,ends_at,all_day,recurrence,recurrence_until,recurrence_timezone,repeat_day_offsets,reminder_minutes,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                id,owner_user_id,title,details,starts_at,ends_at,all_day,recurrence,recurrence_until,recurrence_timezone,repeat_day_offsets,reminder_minutes,reminder_repeat_count,reminder_repeat_interval,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 event_id,
@@ -293,6 +306,7 @@ def create_schedule_event(user_id, event_id, payload):
                 payload.get("recurrence_timezone", "UTC"),
                 json.dumps(payload.get("repeat_day_offsets") or [0]),
                 payload.get("reminder_minutes"),
+                payload.get("reminder_repeat_count"), payload.get("reminder_repeat_interval"),
                 now,
                 now,
             ),
@@ -326,13 +340,13 @@ def update_schedule_event(user_id, event_id, payload):
             return None, "forbidden"
         db.execute(
             """
-            UPDATE schedule_events SET title=?,details=?,starts_at=?,ends_at=?,all_day=?,recurrence=?,recurrence_until=?,recurrence_timezone=?,repeat_day_offsets=?,reminder_minutes=?,updated_at=?
+            UPDATE schedule_events SET title=?,details=?,starts_at=?,ends_at=?,all_day=?,recurrence=?,recurrence_until=?,recurrence_timezone=?,repeat_day_offsets=?,reminder_minutes=?,reminder_repeat_count=?,reminder_repeat_interval=?,updated_at=?
             WHERE id=?
             """,
             (
                 payload["title"], payload.get("details", ""), payload["starts_at"], payload.get("ends_at"),
                 1 if payload.get("all_day") else 0, payload.get("recurrence", "none"), payload.get("recurrence_until"),
-                payload.get("recurrence_timezone", "UTC"), json.dumps(payload.get("repeat_day_offsets") or [0]), payload.get("reminder_minutes"), now, event_id,
+                payload.get("recurrence_timezone", "UTC"), json.dumps(payload.get("repeat_day_offsets") or [0]), payload.get("reminder_minutes"), payload.get("reminder_repeat_count"),payload.get("reminder_repeat_interval"), now, event_id,
             ),
         )
         if int(event["owner_user_id"]) == int(user_id) and "participant_ids" in payload:
@@ -443,12 +457,13 @@ def save_note(user_id, note_id, payload, *, require_existing=False):
         created_at = existing["created_at"] if existing else now
         db.execute(
             """
-            INSERT INTO notes(id,user_id,title,body,pinned,archived,reminder_at,created_at,updated_at,folder,tags_json,favorite)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO notes(id,user_id,title,body,pinned,archived,reminder_at,created_at,updated_at,folder,tags_json,favorite,reminder_repeat_count,reminder_repeat_interval)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title,body=excluded.body,pinned=excluded.pinned,archived=excluded.archived,
                 reminder_at=excluded.reminder_at,updated_at=excluded.updated_at,
-                folder=excluded.folder,tags_json=excluded.tags_json,favorite=excluded.favorite
+                folder=excluded.folder,tags_json=excluded.tags_json,favorite=excluded.favorite,
+                reminder_repeat_count=excluded.reminder_repeat_count,reminder_repeat_interval=excluded.reminder_repeat_interval
             """,
             (
                 note_id,user_id,payload.get("title", ""),payload.get("body", ""),
@@ -456,6 +471,7 @@ def save_note(user_id, note_id, payload, *, require_existing=False):
                 payload.get("reminder_at"),created_at,now,
                 payload.get('folder',''),json.dumps(payload.get('tags',[]),ensure_ascii=False),
                 1 if payload.get('favorite') else 0,
+                payload.get('reminder_repeat_count'),payload.get('reminder_repeat_interval'),
             ),
         )
         row = db.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
@@ -570,6 +586,15 @@ def _timezone_for_row(row):
     return timezone(timedelta(minutes=int(row["timezone_offset_minutes"] or 0)))
 
 
+def reminder_repeat_policy(row, preferences):
+    """Per-record values override account defaults; never exceed six deliveries."""
+    count = row['reminder_repeat_count'] if row['reminder_repeat_count'] is not None else preferences['default_reminder_count']
+    interval = row['reminder_repeat_interval'] if row['reminder_repeat_interval'] is not None else preferences['default_reminder_interval']
+    count = count if type(count) is int and 1 <= count <= 6 else 1
+    interval = interval if type(interval) is int and interval in (5, 10, 15, 30, 60) else 5
+    return count, interval
+
+
 def collect_due_reminders(now=None, lookback_minutes=30):
     now = now or datetime.now(timezone.utc)
     window_start = now - timedelta(minutes=max(1, lookback_minutes))
@@ -594,24 +619,32 @@ def collect_due_reminders(now=None, lookback_minutes=30):
             if int(row["owner_user_id"]) != int(row["user_id"]) and _blocked_pair(db, row["owner_user_id"], row["user_id"]):
                 continue
             reminder_minutes = int(row["reminder_minutes"] or 0)
-            occurrence_window_start = window_start + timedelta(minutes=reminder_minutes)
+            preferences = get_notification_preferences(row['user_id'], db)
+            repeat_count, interval = reminder_repeat_policy(row, preferences)
+            # Scan occurrences that can have a repeat attempt due in this window.
+            occurrence_window_start = window_start + timedelta(minutes=reminder_minutes - (repeat_count-1)*interval)
             occurrence_window_end = window_end + timedelta(minutes=reminder_minutes)
             for occurrence in _occurrences(row, occurrence_window_start, occurrence_window_end):
-                remind_at = occurrence - timedelta(minutes=reminder_minutes)
-                if not (window_start <= remind_at <= window_end):
-                    continue
-                key = f"schedule:{row['id']}:{occurrence.isoformat()}:{reminder_minutes}"
-                exists = db.execute(
-                    "SELECT 1 FROM bot_reminder_log WHERE user_id=? AND reminder_key=?",
-                    (row["user_id"], key),
-                ).fetchone()
-                if exists:
-                    continue
-                reminders.append({
-                    "user_id": row["user_id"], "telegram_id": row["telegram_id"], "key": key,
-                    "kind": "schedule", "title": row["title"], "when": occurrence,
-                    "timezone": _timezone_for_row(row), "reminder_minutes": reminder_minutes,
-                })
+                base_time = occurrence - timedelta(minutes=reminder_minutes)
+                for attempt in range(repeat_count):
+                    remind_at = base_time + timedelta(minutes=attempt*interval)
+                    if not (window_start <= remind_at <= window_end):
+                        continue
+                    # Prevent a burst of late repeat notifications after downtime.
+                    if attempt and (now - remind_at).total_seconds() > 120:
+                        continue
+                    # Attempt #0 preserves V46 keys, including previous dedup records.
+                    key = f"schedule:{row['id']}:{occurrence.isoformat()}:{reminder_minutes}"
+                    if attempt:
+                        key += f":repeat:{attempt}:{interval}"
+                    if db.execute("SELECT 1 FROM bot_reminder_log WHERE user_id=? AND reminder_key=?", (row['user_id'], key)).fetchone():
+                        continue
+                    reminders.append({
+                        'user_id':row['user_id'], 'telegram_id':row['telegram_id'], 'key':key,
+                        'kind':'schedule', 'title':row['title'], 'when':occurrence,
+                        'timezone':_timezone_for_row(row), 'reminder_minutes':reminder_minutes,
+                        'repeat_attempt':attempt, 'repeat_total':repeat_count,
+                    })
 
         note_rows = db.execute(
             """
@@ -623,17 +656,81 @@ def collect_due_reminders(now=None, lookback_minutes=30):
         for row in note_rows:
             if not notification_enabled(row['user_id'], 'note_reminders', db):
                 continue
-            remind_at = _parse_iso(row["reminder_at"])
-            if not remind_at or not (window_start <= remind_at <= window_end):
+            remind_at = _parse_iso(row['reminder_at'])
+            if not remind_at:
                 continue
-            key = f"note:{row['id']}:{remind_at.isoformat()}"
-            if db.execute("SELECT 1 FROM bot_reminder_log WHERE user_id=? AND reminder_key=?", (row["user_id"], key)).fetchone():
+            preferences = get_notification_preferences(row['user_id'], db)
+            repeat_count, interval = reminder_repeat_policy(row, preferences)
+            for attempt in range(repeat_count):
+                due = remind_at + timedelta(minutes=attempt*interval)
+                if not (window_start <= due <= window_end):
+                    continue
+                if attempt and (now - due).total_seconds() > 120:
+                    continue
+                key = f"note:{row['id']}:{remind_at.isoformat()}"
+                if attempt:
+                    key += f":repeat:{attempt}:{interval}"
+                if db.execute("SELECT 1 FROM bot_reminder_log WHERE user_id=? AND reminder_key=?", (row['user_id'],key)).fetchone():
+                    continue
+                reminders.append({
+                    'user_id':row['user_id'], 'telegram_id':row['telegram_id'], 'key':key,
+                    'kind':'note', 'title':row['title'] or 'Заметка', 'body':row['body'],
+                    'when':remind_at, 'timezone':_timezone_for_row(row),
+                    'repeat_attempt':attempt,'repeat_total':repeat_count,
+                })
+
+        # Training days do not store a start time. A user can explicitly opt in
+        # to one daily plan reminder at a chosen local clock time.
+        training_rows = db.execute("""
+            SELECT t.user_id,t.state_json,u.telegram_id,s.timezone_name,s.timezone_offset_minutes
+            FROM training_state t JOIN users u ON u.id=t.user_id
+            JOIN user_settings s ON s.user_id=t.user_id WHERE s.bot_notifications=1
+        """).fetchall()
+        for row in training_rows:
+            if not notification_enabled(row['user_id'], 'training_reminders', db):
                 continue
-            reminders.append({
-                "user_id": row["user_id"], "telegram_id": row["telegram_id"], "key": key,
-                "kind": "note", "title": row["title"] or "Заметка", "body": row["body"],
-                "when": remind_at, "timezone": _timezone_for_row(row),
-            })
+            try:
+                training = json.loads(row['state_json'] or '{}')
+            except (TypeError,ValueError):
+                continue
+            if not isinstance(training,dict):
+                continue
+            tz = _timezone_for_row(row)
+            local_now = now.astimezone(tz)
+            day_key = local_now.date().isoformat()
+            preferences=get_notification_preferences(row['user_id'],db)
+            time_parts=preferences['training_reminder_time'].split(':')
+            due=local_now.replace(hour=int(time_parts[0]),minute=int(time_parts[1]),second=0,microsecond=0).astimezone(timezone.utc)
+            if not (window_start <= due <= window_end):
+                continue
+            effective_from=(training.get('planMeta') or {}).get('effectiveFrom') if isinstance(training.get('planMeta'),dict) else None
+            if effective_from and str(effective_from)[:10] > day_key:
+                continue
+            overrides=training.get('planOverrides') or {}
+            override=overrides.get(day_key) if isinstance(overrides,dict) else None
+            workout=''
+            if isinstance(override,dict) and override.get('type')=='cancel':
+                continue
+            if isinstance(override,dict) and override.get('type')=='workout':
+                workout=str(override.get('workout') or '').strip()
+            else:
+                plan=training.get('plan') or {}
+                name=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'][local_now.weekday()]
+                if isinstance(plan,dict):
+                    workout=str(plan.get(name) or '').strip()
+            if not workout:
+                continue
+            history=training.get('history') or []
+            if any(isinstance(h,dict) and h.get('dateKey')==day_key and h.get('status')=='completed' for h in (history if isinstance(history,list) else [])):
+                continue
+            active=training.get('activeWorkout') or {}
+            if isinstance(active,dict) and active.get('dateKey')==day_key:
+                continue
+            key=f'training:daily:{day_key}'
+            if db.execute("SELECT 1 FROM bot_reminder_log WHERE user_id=? AND reminder_key=?",(row['user_id'],key)).fetchone():
+                continue
+            reminders.append({'user_id':row['user_id'],'telegram_id':row['telegram_id'],'key':key,'kind':'training',
+                              'title':workout[:80],'when':due,'timezone':tz})
 
         finance_rows = db.execute(
             """
@@ -711,7 +808,9 @@ NOTIFICATION_DEFAULTS = {
     "note_reminders": True, "finance_payments": True, "finance_debts": True,
     "shared_created": True, "shared_updated": True, "shared_removed": True,
     "friend_accepted": True,
+    "training_reminders": False, "training_reminder_time": "18:00",
     "daily_report": False, "weekly_report": False,
+    "default_reminder_count": 1, "default_reminder_interval": 5,
     "share_busy": False,  # Friends see occupancy only after explicit opt-in
 }
 
@@ -727,11 +826,23 @@ def get_notification_preferences(user_id, db=None):
         overrides = {}
     if not isinstance(overrides, dict):
         overrides = {}
-    return {key: overrides.get(key) if type(overrides.get(key)) is bool else default for key, default in NOTIFICATION_DEFAULTS.items()}
+    return {key: (overrides.get(key) if (
+        (type(default) is bool and type(overrides.get(key)) is bool) or
+        (key == 'default_reminder_count' and type(overrides.get(key)) is int and 1 <= overrides[key] <= 6) or
+        (key == 'default_reminder_interval' and type(overrides.get(key)) is int and overrides[key] in (5,10,15,30,60)) or
+        (key == 'training_reminder_time' and isinstance(overrides.get(key), str) and len(overrides[key]) == 5 and overrides[key][:2].isdigit() and overrides[key][2] == ':' and overrides[key][3:].isdigit() and 0 <= int(overrides[key][:2]) <= 23 and 0 <= int(overrides[key][3:]) <= 59)
+    ) else default) for key, default in NOTIFICATION_DEFAULTS.items()}
 
 
 def update_notification_preferences(user_id, patch):
-    if not isinstance(patch, dict) or not patch or any(k not in NOTIFICATION_DEFAULTS or type(v) is not bool for k,v in patch.items()):
+    if not isinstance(patch, dict) or not patch or any(
+        k not in NOTIFICATION_DEFAULTS or not (
+            (type(NOTIFICATION_DEFAULTS[k]) is bool and type(v) is bool) or
+            (k == 'default_reminder_count' and type(v) is int and 1 <= v <= 6) or
+            (k == 'default_reminder_interval' and type(v) is int and v in (5, 10, 15, 30, 60)) or
+            (k == 'training_reminder_time' and type(v) is str and len(v) == 5 and v[:2].isdigit() and v[2] == ':' and v[3:].isdigit() and 0 <= int(v[:2]) <= 23 and 0 <= int(v[3:]) <= 59)
+        ) for k,v in patch.items()
+    ):
         raise ValueError("Invalid notification preference")
     with connect() as db:
         result = get_notification_preferences(user_id, db)

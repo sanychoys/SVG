@@ -1083,9 +1083,9 @@ function renderCalendar() {
   if (todayJump) todayJump.hidden = isSameMonth(calendarCursor, new Date());
 
   if (monthTitle) {
-    monthTitle.textContent = new Intl.DateTimeFormat('ru-RU', {
-      month: 'long', year: 'numeric'
-    }).format(calendarCursor);
+    const shortMonth = new Intl.DateTimeFormat('ru-RU', {month:'short'}).format(calendarCursor).replace(/\.$/, '');
+    monthTitle.textContent = shortMonth + ' ’' + String(year).slice(-2);
+    monthTitle.title = new Intl.DateTimeFormat('ru-RU', {month:'long',year:'numeric'}).format(calendarCursor);
   }
 
   if (nextButton) {
@@ -1114,7 +1114,7 @@ function renderCalendar() {
 
     const dot = document.createElement('button');
     dot.type = 'button';
-    dot.textContent = String(day);
+    dot.textContent = ''; // V47: compact, numberless activity dots; date remains in aria-label
     dot.className = `calendar-day ${status}${isToday ? ' today' : ''}`;
     dot.setAttribute('aria-label', `${day} ${monthName}: ${label}`);
     dot.title = `${day} ${monthName}: ${label}`;

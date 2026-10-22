@@ -1,7 +1,7 @@
 /* SVGTracker product modules v28: schedule + notes.
    This file intentionally owns these domains so the legacy script.js can be
    reduced gradually without changing existing training/finance behavior. */
-window.SVGTRACKER_PRODUCT_VERSION = 37;
+window.SVGTRACKER_PRODUCT_VERSION = 47;
 let scheduleViewMode = 'personal';
 let scheduleEditorMode = 'personal';
 let scheduleEditorFriendIds = new Set();
@@ -416,7 +416,7 @@ function openScheduleEditor(eventId=null){
     start.setFullYear(selected.getFullYear(),selected.getMonth(),selected.getDate());
   }
   const end=event?.ends_at?new Date(event.ends_at):new Date(start.getTime()+3600000);
-  document.getElementById('schedule-event-id').value=event?.id||'';document.getElementById('schedule-event-title').value=event?.title||'';document.getElementById('schedule-event-date').value=productLocalDateInput(start);document.getElementById('schedule-event-all-day').checked=Boolean(event?.all_day);document.getElementById('schedule-event-time').value=productLocalTimeInput(start);document.getElementById('schedule-event-end-time').value=productLocalTimeInput(end);document.getElementById('schedule-event-recurrence').value=event?.recurrence||'none';document.getElementById('schedule-event-recurrence-until').value=event?.recurrence_until?productLocalDateInput(new Date(event.recurrence_until)):'';document.getElementById('schedule-event-reminder').value=event?.reminder_minutes===null||event?.reminder_minutes===undefined?'-1':String(event.reminder_minutes);document.getElementById('schedule-event-details').value=event?.details||'';document.getElementById('schedule-editor-title').textContent=event?'Событие':'Новое событие';const del=document.getElementById('schedule-delete-button');if(del){del.hidden=!event;del.textContent=event?.is_owner===false?'Убрать у себя':'Удалить событие';}renderScheduleFriendPicker(event);setScheduleEditorMode(event?(scheduleShared(event)?'shared':'personal'):(scheduleViewMode==='shared'?'shared':'personal'));resetScheduleWeekdays(event);toggleScheduleRecurrenceField();toggleScheduleAllDay();document.getElementById('schedule-editor-sheet').hidden=false;v46EditorBaseline.schedule=v46EditorState('schedule');setTimeout(()=>document.getElementById('schedule-event-title')?.focus(),80);
+  document.getElementById('schedule-event-id').value=event?.id||'';document.getElementById('schedule-event-title').value=event?.title||'';document.getElementById('schedule-event-date').value=productLocalDateInput(start);document.getElementById('schedule-event-all-day').checked=Boolean(event?.all_day);document.getElementById('schedule-event-time').value=productLocalTimeInput(start);document.getElementById('schedule-event-end-time').value=productLocalTimeInput(end);document.getElementById('schedule-event-recurrence').value=event?.recurrence||'none';document.getElementById('schedule-event-recurrence-until').value=event?.recurrence_until?productLocalDateInput(new Date(event.recurrence_until)):'';document.getElementById('schedule-event-reminder').value=event?.reminder_minutes===null||event?.reminder_minutes===undefined?'-1':String(event.reminder_minutes);document.getElementById('schedule-event-repeat-count').value=event?.reminder_repeat_count??'';document.getElementById('schedule-event-repeat-interval').value=event?.reminder_repeat_interval??'';toggleScheduleReminderRepeats();document.getElementById('schedule-event-details').value=event?.details||'';document.getElementById('schedule-editor-title').textContent=event?'Событие':'Новое событие';const del=document.getElementById('schedule-delete-button');if(del){del.hidden=!event;del.textContent=event?.is_owner===false?'Убрать у себя':'Удалить событие';}renderScheduleFriendPicker(event);setScheduleEditorMode(event?(scheduleShared(event)?'shared':'personal'):(scheduleViewMode==='shared'?'shared':'personal'));resetScheduleWeekdays(event);toggleScheduleRecurrenceField();toggleScheduleAllDay();document.getElementById('schedule-editor-sheet').hidden=false;v46EditorBaseline.schedule=v46EditorState('schedule');setTimeout(()=>document.getElementById('schedule-event-title')?.focus(),80);
 }
 function closeScheduleEditor(force=false){if(!force&&!v46EditorCanClose('schedule'))return false;const s=document.getElementById('schedule-editor-sheet');if(s)s.hidden=true;scheduleEditingId=null;v46EditorReset('schedule');return true;}
 function toggleScheduleRecurrenceField(){const repeat=document.getElementById('schedule-event-recurrence')?.value||'none';const f=document.getElementById('schedule-recurrence-until-field');if(f)f.hidden=repeat==='none';const days=document.getElementById('schedule-weekday-field');if(days)days.hidden=repeat!=='weekly';}
@@ -428,9 +428,15 @@ async function saveScheduleEvent(){
   const start=new Date(`${date}T${allDay?'00:00':time}:00`);const end=!allDay&&endTime?new Date(`${date}T${endTime}:00`):null;if(end&&end<=start){productToast('Время окончания должно быть позже начала');return;}
   const recurrence=document.getElementById('schedule-event-recurrence').value;const untilRaw=document.getElementById('schedule-event-recurrence-until').value;const reminderRaw=document.getElementById('schedule-event-reminder').value;
   if(recurrence==='weekly'&&!scheduleSelectedWeekdays.size){productToast('Выбери хотя бы один день недели');return;}
-  const payload={title,recurrence_timezone:(scheduleEditingId?scheduleBaseById(scheduleEditingId)?.recurrence_timezone:null)||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC',repeat_day_offsets:recurrence==='weekly'?scheduleOffsetsForEditor():[0],details:document.getElementById('schedule-event-details').value.trim(),starts_at:start.toISOString(),ends_at:end?end.toISOString():null,all_day:allDay,recurrence,recurrence_until:recurrence!=='none'&&untilRaw?new Date(`${untilRaw}T23:59:59`).toISOString():null,reminder_minutes:Number(reminderRaw)<0?null:Number(reminderRaw),participant_ids:selectedScheduleFriends()};
+  const payload={title,recurrence_timezone:(scheduleEditingId?scheduleBaseById(scheduleEditingId)?.recurrence_timezone:null)||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC',repeat_day_offsets:recurrence==='weekly'?scheduleOffsetsForEditor():[0],details:document.getElementById('schedule-event-details').value.trim(),starts_at:start.toISOString(),ends_at:end?end.toISOString():null,all_day:allDay,recurrence,recurrence_until:recurrence!=='none'&&untilRaw?new Date(`${untilRaw}T23:59:59`).toISOString():null,reminder_minutes:Number(reminderRaw)<0?null:Number(reminderRaw),reminder_repeat_count:document.getElementById('schedule-event-repeat-count').value?Number(document.getElementById('schedule-event-repeat-count').value):null,reminder_repeat_interval:document.getElementById('schedule-event-repeat-interval').value?Number(document.getElementById('schedule-event-repeat-interval').value):null,participant_ids:selectedScheduleFriends()};
   if(scheduleEditorMode==='shared'&&!selectedScheduleFriends().length){productToast('Выбери хотя бы одного друга');return;}const id=scheduleEditingId;v46EditorSaving.schedule=true;const saveButton=document.querySelector('#schedule-editor-sheet .sheet-primary-action');if(saveButton)saveButton.disabled=true;try{const response=await fetch(id?`/api/schedule/events/${encodeURIComponent(id)}`:'/api/schedule/events',{method:id?'PUT':'POST',headers:productHeaders(true),body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Не удалось сохранить событие');closeScheduleEditor(true);await syncScheduleNotesWithServer(true);renderSchedule();productToast(id?'Событие обновлено':'Событие добавлено');}catch(error){productToast(error?.message||'Ошибка сохранения');}finally{v46EditorSaving.schedule=false;if(saveButton)saveButton.disabled=false;}
 }
+function toggleScheduleReminderRepeats(){
+  const enabled=Number(document.getElementById('schedule-event-reminder')?.value)>=0;
+  const panel=document.getElementById('schedule-reminder-repeat-controls');if(panel)panel.hidden=!enabled;
+  const hint=document.getElementById('schedule-reminder-note');if(hint)hint.hidden=!enabled;
+}
+window.toggleScheduleReminderRepeats=toggleScheduleReminderRepeats;
 function deleteScheduleEvent(){const id=scheduleEditingId;if(!id)return;const event=scheduleBaseById(id);const message=event?.is_owner===false?'Убрать это совместное событие из своего расписания?':'Удалить событие у всех участников?';requestConfirm(message,async()=>{try{const response=await fetch(`/api/schedule/events/${encodeURIComponent(id)}`,{method:'DELETE',headers:productHeaders(false)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Ошибка удаления');closeScheduleEditor(true);await syncScheduleNotesWithServer(true);renderSchedule();productToast(data.result==='left'?'Событие убрано':'Событие удалено');}catch(error){productToast(error?.message||'Ошибка удаления');}});}
 
 function openNotes(){productCloseOtherScreens();const screen=document.getElementById('notes-screen');if(!screen)return;screen.hidden=false;productLockBody(true);syncScheduleNotesWithServer().finally(renderNotes);}
@@ -495,12 +501,12 @@ function openNoteEditor(noteId=null){if(!productHasAuth()){productToast('Сна�
   document.getElementById('note-favorite-input').checked=Boolean(note?.favorite);
   document.getElementById('note-archived-input').checked=Boolean(note?.archived);
   const folderList=document.getElementById('note-folder-suggestions');if(folderList){folderList.replaceChildren(...[...new Set((notesData||[]).map(n=>n.folder).filter(Boolean))].sort().map(name=>{const opt=document.createElement('option');opt.value=name;return opt;}));}
-  const enabled=Boolean(note?.reminder_at);document.getElementById('note-reminder-enabled').checked=enabled;const reminderInput=document.getElementById('note-reminder-input');if(reminderInput)reminderInput.value=enabled?toDateTimeLocal(new Date(note.reminder_at)):'';notePendingFiles=[];const fileInput=document.getElementById('note-files-input');if(fileInput)fileInput.value='';
+  document.getElementById('note-repeat-count').value=note?.reminder_repeat_count??'';document.getElementById('note-repeat-interval').value=note?.reminder_repeat_interval??'';const enabled=Boolean(note?.reminder_at);document.getElementById('note-reminder-enabled').checked=enabled;const reminderInput=document.getElementById('note-reminder-input');if(reminderInput)reminderInput.value=enabled?toDateTimeLocal(new Date(note.reminder_at)):'';notePendingFiles=[];const fileInput=document.getElementById('note-files-input');if(fileInput)fileInput.value='';
   document.getElementById('note-editor-title').textContent=note?'Заметка':'Новая заметка';renderNoteAttachments();document.getElementById('note-delete-button').hidden=!note;toggleNoteReminderField();document.getElementById('note-editor-sheet').hidden=false;v46EditorBaseline.note=v46EditorState('note');setTimeout(()=>document.getElementById(note?.title?'note-body-input':'note-title-input')?.focus(),80);}
 function closeNoteEditor(force=false){if(noteUploadInProgress||(!force&&!v46EditorCanClose('note')))return false;const s=document.getElementById('note-editor-sheet');if(s)s.hidden=true;noteEditingId=null;notePendingFiles=[];v46EditorReset('note');return true;}
 function toDateTimeLocal(date){if(!(date instanceof Date)||Number.isNaN(date.getTime()))return'';return `${productLocalDateInput(date)}T${productLocalTimeInput(date)}`;}
 function toggleNoteReminderField(){const enabled=document.getElementById('note-reminder-enabled')?.checked;const field=document.getElementById('note-reminder-field');if(field)field.hidden=!enabled;if(enabled&&!document.getElementById('note-reminder-input').value){const d=new Date(Date.now()+3600000);d.setMinutes(Math.ceil(d.getMinutes()/15)*15,0,0);document.getElementById('note-reminder-input').value=toDateTimeLocal(d);}}
-async function saveNote(){if(v46EditorSaving.note)return;const title=document.getElementById('note-title-input').value.trim(),body=document.getElementById('note-body-input').value.trim();if(!title&&!body&&!notePendingFiles.length&&!(noteEditingId&&noteById(noteEditingId)?.attachments?.length)){productToast('Заметка пустая');return;}const reminderEnabled=document.getElementById('note-reminder-enabled').checked;const reminderRaw=document.getElementById('note-reminder-input').value;if(reminderEnabled&&(!reminderRaw||Number.isNaN(Date.parse(reminderRaw)))){productToast('Укажи дату и время напоминания');return;}const payload={title:title||(notePendingFiles[0]?.name||'Вложения'),body,pinned:document.getElementById('note-pinned-input').checked,archived:document.getElementById('note-archived-input').checked,folder:document.getElementById('note-folder-input').value.trim().slice(0,60),tags:[...new Set(document.getElementById('note-tags-input').value.split(',').map(s=>s.trim().replace(/^#/, '').slice(0,32)).filter(Boolean))].slice(0,12),favorite:document.getElementById('note-favorite-input').checked,reminder_at:reminderEnabled&&reminderRaw?new Date(reminderRaw).toISOString():null};const id=noteEditingId;v46EditorSaving.note=true;const saveButton=document.querySelector('#note-editor-sheet .sheet-primary-action');if(saveButton)saveButton.disabled=true;try{const response=await fetch(id?`/api/notes/${encodeURIComponent(id)}`:'/api/notes',{method:id?'PUT':'POST',headers:productHeaders(true),body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Не удалось сохранить заметку');const noteId=data.note?.id||id;
+async function saveNote(){if(v46EditorSaving.note)return;const title=document.getElementById('note-title-input').value.trim(),body=document.getElementById('note-body-input').value.trim();if(!title&&!body&&!notePendingFiles.length&&!(noteEditingId&&noteById(noteEditingId)?.attachments?.length)){productToast('Заметка пустая');return;}const reminderEnabled=document.getElementById('note-reminder-enabled').checked;const reminderRaw=document.getElementById('note-reminder-input').value;if(reminderEnabled&&(!reminderRaw||Number.isNaN(Date.parse(reminderRaw)))){productToast('Укажи дату и время напоминания');return;}const payload={title:title||(notePendingFiles[0]?.name||'Вложения'),body,pinned:document.getElementById('note-pinned-input').checked,archived:document.getElementById('note-archived-input').checked,folder:document.getElementById('note-folder-input').value.trim().slice(0,60),tags:[...new Set(document.getElementById('note-tags-input').value.split(',').map(s=>s.trim().replace(/^#/, '').slice(0,32)).filter(Boolean))].slice(0,12),favorite:document.getElementById('note-favorite-input').checked,reminder_at:reminderEnabled&&reminderRaw?new Date(reminderRaw).toISOString():null,reminder_repeat_count:document.getElementById('note-repeat-count').value?Number(document.getElementById('note-repeat-count').value):null,reminder_repeat_interval:document.getElementById('note-repeat-interval').value?Number(document.getElementById('note-repeat-interval').value):null};const id=noteEditingId;v46EditorSaving.note=true;const saveButton=document.querySelector('#note-editor-sheet .sheet-primary-action');if(saveButton)saveButton.disabled=true;try{const response=await fetch(id?`/api/notes/${encodeURIComponent(id)}`:'/api/notes',{method:id?'PUT':'POST',headers:productHeaders(true),body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Не удалось сохранить заметку');const noteId=data.note?.id||id;
     if(notePendingFiles.length&&noteId){
       noteEditingId=noteId;noteUploadInProgress=true;
       const filesToSend=[...notePendingFiles];
@@ -551,7 +557,9 @@ window.addEventListener('online',()=>syncScheduleNotesWithServer(true));
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&productHasAuth())syncScheduleNotesWithServer(true);});
 
 /* V29 · preferences and shared free/busy planning (privacy-first). */
+const notificationOpenGroups = new Set(['Тренировки','Расписание']);
 const PRODUCT_NOTIFICATION_GROUPS = [
+  {title:'Тренировки',desc:'По твоему недельному плану',items:[['training_reminders','По плану на сегодня','Один раз в выбранное время, если тренировка ещё не завершена']]},
   {title:'Расписание',desc:'Напоминания о событиях',items:[
     ['personal_reminders','Мои события','О личных планах перед началом'],
     ['shared_reminders','Общие события','Напоминания об общих планах'],
@@ -594,16 +602,46 @@ async function loadNotificationPreferences(){
     const data=await response.json().catch(()=>({}));
     if(!response.ok)throw new Error(data.detail||'Ошибка загрузки');
     notificationPreferencesCache=data.preferences||{};
-    paintNotificationPreferences();productNotificationStatus('Изменения сохраняются автоматически');
-  }catch(error){notificationPreferencesCache=null;productNotificationStatus(error?.message||'Нет соединения с сервером');paintNotificationPreferences();}
+    paintNotificationPreferences();paintNotificationRepeatDefaults();productNotificationStatus('Изменения сохраняются автоматически');
+  }catch(error){notificationPreferencesCache=null;productNotificationStatus(error?.message||'Нет соединения с сервером');paintNotificationPreferences();paintNotificationRepeatDefaults();}
 }
+function paintNotificationRepeatDefaults(){
+  const clock=document.getElementById('notification-training-time');
+  if(clock){clock.value=String(notificationPreferencesCache?.training_reminder_time||'18:00');clock.disabled=!notificationPreferencesCache||notificationSettingsBusy;}
+  for(const [id,key] of [['notification-repeat-count','default_reminder_count'],['notification-repeat-interval','default_reminder_interval']]){
+    const el=document.getElementById(id);if(!el)continue;
+    el.disabled=!notificationPreferencesCache||notificationSettingsBusy;
+    el.value=String(notificationPreferencesCache?.[key]??(key==='default_reminder_count'?1:5));
+  }
+}
+async function saveNotificationRepeatDefault(key,value){
+  if(!notificationPreferencesCache||notificationSettingsBusy)return;
+  const previous=notificationPreferencesCache[key];notificationPreferencesCache[key]=value;notificationSettingsBusy=true;
+  paintNotificationRepeatDefaults();productNotificationStatus('Сохраняем…');
+  try{
+    const response=await fetch('/api/notifications/preferences',{method:'PUT',headers:productHeaders(true),body:JSON.stringify({preferences:{[key]:value}})});
+    const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Ошибка сохранения');
+    notificationPreferencesCache=data.preferences;productNotificationStatus('Сохранено');
+  }catch(error){notificationPreferencesCache[key]=previous;productNotificationStatus(error?.message||'Не удалось сохранить');}
+  finally{notificationSettingsBusy=false;paintNotificationRepeatDefaults();}
+}
+document.addEventListener('DOMContentLoaded',()=>{
+ for(const [id,key] of [['notification-repeat-count','default_reminder_count'],['notification-repeat-interval','default_reminder_interval']]){
+   document.getElementById(id)?.addEventListener('change',e=>saveNotificationRepeatDefault(key,Number(e.target.value)));
+ }
+ document.getElementById('notification-training-time')?.addEventListener('change',e=>saveNotificationRepeatDefault('training_reminder_time',e.target.value));
+});
 function paintNotificationPreferences(){
   const root=document.getElementById('notification-settings-groups');if(!root)return;
   root.replaceChildren(...PRODUCT_NOTIFICATION_GROUPS.map(group=>{
-    const section=document.createElement('section');section.className='notification-group';
-    const header=document.createElement('div');header.className='notification-group-header';
+    const section=document.createElement('details');section.className='notification-group v47-notification-accordion';
+    section.open=notificationOpenGroups.has(group.title);
+    section.addEventListener('toggle',()=>{if(section.open)notificationOpenGroups.add(group.title);else notificationOpenGroups.delete(group.title);});
+    const header=document.createElement('summary');header.className='notification-group-header';
     const title=document.createElement('strong');title.textContent=group.title;
-    const desc=document.createElement('small');desc.textContent=group.desc;header.append(title,desc);
+    const desc=document.createElement('small');desc.textContent=group.desc;
+    const count=document.createElement('span');count.className='v47-enabled-count';count.textContent=group.items.filter(([key])=>notificationPreferencesCache?.[key]===true).length+'/'+group.items.length;
+    header.append(title,count,desc);
     section.append(header);
     group.items.forEach(([key,name,description])=>{
       const label=document.createElement('label');label.className='notification-option';

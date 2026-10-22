@@ -103,8 +103,23 @@ def _clean_schedule_payload(payload: dict) -> dict:
         "recurrence": recurrence,
         "recurrence_until": recurrence_until,
         "reminder_minutes": reminder,
+        **_clean_repeat_policy(payload),
         "participant_ids": participant_ids[:50],
     }
+
+
+def _clean_repeat_policy(payload: dict) -> dict:
+    count = payload.get('reminder_repeat_count')
+    interval = payload.get('reminder_repeat_interval')
+    if count in (None, ''):
+        count = None
+    elif type(count) is not int or not 1 <= count <= 6:
+        raise HTTPException(status_code=422, detail='Допустимо от 1 до 6 сообщений')
+    if interval in (None, ''):
+        interval = None
+    elif type(interval) is not int or interval not in (5, 10, 15, 30, 60):
+        raise HTTPException(status_code=422, detail='Некорректный интервал повторений')
+    return {'reminder_repeat_count':count, 'reminder_repeat_interval':interval}
 
 
 def _clean_note_payload(payload: dict) -> dict:
@@ -126,6 +141,7 @@ def _clean_note_payload(payload: dict) -> dict:
         "pinned": bool(payload.get("pinned")),
         "archived": bool(payload.get("archived")),
         "reminder_at": _clean_iso_datetime(payload.get("reminder_at"), "reminder_at", allow_none=True),
+        **_clean_repeat_policy(payload),
     }
 
 

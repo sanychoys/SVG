@@ -5573,3 +5573,62 @@ html.svg-web.web-authenticated .web-auth-gate{display:none!important}
 @media(prefers-reduced-motion:reduce){.feature-card,.v46-fast-grid button{transition:none!important;animation:none!important}}
 
 .v46-fast-grid button svg{display:block;width:16px;height:16px;fill:none;stroke:#fff;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* V47 · compact Apple-Fitness-style month dots + usable week summary beside calendar. */
+.single-training-screen .top-training-row {display:grid!important;grid-template-columns:minmax(0, .94fr) minmax(0, 1.06fr)!important;gap:9px!important;align-items:stretch}
+.single-training-screen .top-training-row > * {min-width:0!important;max-width:100%!important;box-sizing:border-box}
+.single-training-screen .attendance-widget {padding:10px 8px!important;overflow:hidden!important}
+.single-training-screen .week-widget {padding:11px 9px!important;overflow:hidden!important}
+.single-training-screen .attendance-month {font-size:12px!important;line-height:1.2!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.single-training-screen .calendar-header {margin-bottom:6px!important;gap:2px!important}
+.single-training-screen .calendar-title-wrap {gap:3px!important;min-width:0;flex:1}
+.single-training-screen .calendar-today-jump {min-height:23px;font-size:9px;padding:0 5px}
+.single-training-screen .calendar-nav {gap:1px!important}
+.single-training-screen .calendar-nav-button {width:23px!important;height:25px!important;min-width:23px!important;padding:2px!important;border-radius:7px!important}
+.single-training-screen .attendance-weekdays,.single-training-screen .attendance-grid{grid-template-columns:repeat(7,minmax(0,1fr))!important;gap:3px 0!important;max-width:none!important;width:100%!important}
+.single-training-screen .attendance-weekdays{font-size:8px!important;margin-bottom:3px!important}
+.single-training-screen .attendance-weekdays span {min-height:16px!important;width:100%!important}
+.single-training-screen .attendance-grid .calendar-day{width:clamp(12px,3.3vw,18px)!important;height:clamp(12px,3.3vw,18px)!important;min-width:0!important;min-height:0!important;max-width:18px!important;aspect-ratio:1;border-radius:50%!important;font-size:0!important;color:transparent!important;justify-self:center!important;cursor:pointer!important;touch-action:manipulation}
+.single-training-screen .attendance-grid .calendar-day::before{display:none!important}
+.single-training-screen .attendance-grid .calendar-day.today{outline:1.5px solid white!important;outline-offset:1px!important}
+.single-training-screen .attendance-grid .calendar-day:focus-visible{outline:2px solid white!important;outline-offset:2px!important}
+.single-training-screen .calendar-legend {gap:4px 7px!important;justify-content:flex-start!important;margin-top:8px!important;font-size:9px!important}
+.single-training-screen .calendar-legend span{gap:3px!important}
+.single-training-screen .calendar-legend i{height:6px;width:6px}
+.single-training-screen .calendar-add-today{min-height:34px!important;margin-top:8px!important;padding:6px 4px!important;font-size:10px!important;line-height:1.2!important}
+.single-training-screen .week-widget h2{font-size:13px!important;line-height:1.2}
+.single-training-screen .week-widget .widget-action{width:29px!important;height:29px!important;min-width:29px!important}
+.single-training-screen .week-widget .plan-placeholder{max-width:100%!important;min-width:0!important;overflow-wrap:anywhere}
+.v47-reminder-settings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:10px 0}
+.v47-reminder-settings .sheet-field{min-width:0;margin:0}
+.v47-reminder-settings select{max-width:100%;width:100%;min-width:0;font-size:14px}
+.v47-reminder-settings[hidden],#note-reminder-field[hidden],#schedule-reminder-repeat-controls[hidden]{display:none!important}
+.v47-helper{font-size:11px;line-height:1.5;color:rgba(255,255,255,.58);display:block;margin:6px 0 10px}
+.v47-event-reminder{margin:12px 0}
+@media(max-width:350px){.single-training-screen .top-training-row{gap:6px!important;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr)!important}.single-training-screen .attendance-widget{padding:8px 6px!important}.single-training-screen .week-widget{padding:9px 7px!important}.single-training-screen .attendance-month{font-size:10px!important}.single-training-screen .calendar-nav-button{width:20px!important;min-width:20px!important;height:22px!important}.single-training-screen .attendance-grid .calendar-day{width:12px!important;height:12px!important}.v47-reminder-settings{gap:7px}}
+
+/* V47 touch hit boxes stay larger than their status dots. */
+.single-training-screen .attendance-grid .calendar-day:not(.empty){width:100%!important;max-width:none!important;min-height:19px!important;height:19px!important;border-radius:50%!important;background:transparent!important;position:relative!important;outline:0!important}
+.single-training-screen .attendance-grid .calendar-day:not(.empty)::after{content:"";display:block!important;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.11);outline:0}
+.single-training-screen .attendance-grid .calendar-day.future::after{background:rgba(255,255,255,.055)}
+.single-training-screen .attendance-grid .calendar-day.scheduled::after{background:rgba(255,255,255,.5)}
+.single-training-screen .attendance-grid .calendar-day.done::after,.single-training-screen .attendance-grid .calendar-day.active::after{background:#8f72ff}
+.single-training-screen .attendance-grid .calendar-day.missed::after{background:#ff5368;visibility:visible!important}
+.single-training-screen .attendance-grid .calendar-day.today::after{outline:1.5px solid #fff;outline-offset:2px}
+.single-training-screen .attendance-grid .calendar-day:focus-visible{outline:2px solid #fff!important;outline-offset:0!important}
+@media(max-width:350px){.single-training-screen .attendance-grid .calendar-day:not(.empty){min-height:18px!important;height:18px!important}}
+
+/* V47 notification settings: expandable per-domain controls. */
+.v47-notification-accordion > summary {list-style:none;cursor:pointer;user-select:none;position:relative;padding-right:20px}
+.v47-notification-accordion > summary::-webkit-details-marker{display:none}
+.v47-notification-accordion > summary::after{content:'⌄';position:absolute;right:2px;top:8px;color:rgba(255,255,255,.65);transition:transform .15s}
+.v47-notification-accordion[open] > summary::after{transform:rotate(180deg)}
+.v47-notification-accordion > summary:focus-visible{outline:2px solid #c7baff;outline-offset:3px}
+.v47-notification-accordion > summary .v47-enabled-count{margin-left:auto;padding:3px 6px;border-radius:7px;background:rgba(255,255,255,.07);font-size:11px;color:rgba(255,255,255,.75)}
+.v47-training-clock .sheet-field{max-width:240px;margin:10px 0}
+.v47-training-clock input{font-size:16px;min-height:42px;width:100%}
+
+.v47-notification-accordion > summary{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;align-items:center!important;gap:4px 8px!important}
+.v47-notification-accordion > summary strong{grid-column:1}
+.v47-notification-accordion > summary .v47-enabled-count{grid-column:2;grid-row:1;margin-right:12px!important}
+.v47-notification-accordion > summary small{grid-column:1/-1}
