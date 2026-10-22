@@ -32,16 +32,14 @@ async def run():
                 # Calendar day opens an editable form, not a passive toast.
                 await page.locator('.attendance-grid .calendar-day.today').click()
                 assert not await page.locator('#calendar-workout-sheet').evaluate('(el)=>el.hidden')
-                await page.locator('#calendar-workout-hours').fill('1')
-                await page.locator('#calendar-workout-minutes').fill('30')
+                await page.locator('[data-duration="90"]').click()
                 await page.locator('#calendar-workout-name').fill('Плавание')
-                await page.locator('#calendar-workout-sheet button').filter(has_text='Сохранить время').click()
+                await page.locator('#calendar-workout-save').click()
                 after = await page.evaluate('''()=>{let d=new Date(),manual=getCalendarManualRecord(getDateKey(d));return {count:state.history.length,manual,seconds:getTrainingSecondsForDate(d),label:document.querySelector('.activity-total').textContent,dirty:localStorage.getItem(STORAGE.trainingDirty)}}''')
                 assert after['count']==2 and after['manual']['duration']==5400 and after['manual']['workout']=='Плавание',after
                 assert after['seconds']>=5400 and after['dirty']=='1',after
                 await page.evaluate('''()=>openCalendarWorkoutEditor(new Date())''')
-                await page.locator('#calendar-workout-hours').fill('2')
-                await page.locator('#calendar-workout-minutes').fill('0')
+                await page.locator('[data-duration="120"]').click()
                 await page.evaluate('saveCalendarWorkout()')
                 edited=await page.evaluate('''()=>({count:state.history.length,seconds:getCalendarManualRecord(getDateKey(new Date())).duration})''')
                 assert edited == {'count':2,'seconds':7200},edited
@@ -58,7 +56,7 @@ async def run():
                 assert not errors,(width,errors)
                 print(f'V44 browser {width}px: start/finish, manual add/edit/delete, history merge, layout OK')
                 if width==390:
-                    await page.screenshot(path='/mnt/data/svg_v44/V44_Training_390.png')
+                    await page.screenshot(path='/mnt/data/svg_v46/V45_Training_390.png')
                 await context.close()
         finally:
             await browser.close()

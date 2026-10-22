@@ -5472,3 +5472,104 @@ html.svg-web.web-authenticated .web-auth-gate{display:none!important}
 .single-training-screen .attendance-grid .calendar-day:not(.empty):focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
 
 .single-training-screen .attendance-edit-hint { font-size: 9px; font-weight: 500; color: rgba(255,255,255,.44); text-align: center; margin: 8px -4px 0; line-height: 1.25; }
+
+/* V45: usability refresh. Full-width, numbered workout calendar with realistic touch targets. */
+.single-training-screen .top-training-row {grid-template-columns:minmax(0,1fr)!important;gap:12px}
+.single-training-screen .attendance-widget {--calendar-dot:clamp(32px,9vw,39px);--calendar-gap-x:clamp(2px,1.4vw,8px);--calendar-gap-y:6px; padding:16px!important;overflow:visible}
+.single-training-screen .attendance-month {font-size:17px!important;line-height:1.2}
+.single-training-screen .calendar-header {margin-bottom:12px}
+.single-training-screen .calendar-title-wrap {display:flex;align-items:center;gap:8px;min-width:0}
+.single-training-screen .calendar-today-jump {width:auto;min-width:0;min-height:28px;padding:0 9px;margin:0;border-radius:9px;background:rgba(255,255,255,.09);color:rgba(255,255,255,.85);font-size:11px;font-weight:600}
+.single-training-screen .calendar-nav-button{width:32px!important;height:32px!important;border-radius:10px}
+.single-training-screen .calendar-nav-button svg{width:14px!important;height:14px!important}
+.single-training-screen .attendance-weekdays,.single-training-screen .attendance-grid{grid-template-columns:repeat(7,minmax(0,1fr))!important;gap:6px 2px!important;width:100%!important;max-width:350px;margin:0 auto}
+.single-training-screen .attendance-weekdays{margin-bottom:5px;font-size:11px!important;font-weight:600;color:rgba(255,255,255,.5)}
+.single-training-screen .attendance-weekdays span{width:100%;min-height:24px}
+.single-training-screen .attendance-grid .calendar-day{width:100%!important;height:auto!important;aspect-ratio:1;min-height:34px!important;min-width:32px!important;max-width:44px!important;justify-self:center;display:grid;place-items:center;font-size:13px!important;font-weight:650;line-height:1;color:rgba(255,255,255,.88)!important;border-radius:13px!important;background:rgba(255,255,255,.07);transform:none!important}
+.single-training-screen .attendance-grid .calendar-day::before{display:none!important}
+.single-training-screen .attendance-grid .calendar-day.today{outline:2px solid #fff!important;outline-offset:-2px!important}
+.single-training-screen .attendance-grid .calendar-day.done,.single-training-screen .attendance-grid .calendar-day.active{background:#7856d1!important;color:white!important}
+.single-training-screen .attendance-grid .calendar-day.scheduled{background:rgba(255,255,255,.22)!important}
+.single-training-screen .attendance-grid .calendar-day.missed{background:rgba(255,85,105,.23)!important;color:#ffc2c9!important}
+.single-training-screen .attendance-grid .calendar-day.future{opacity:.6}
+.single-training-screen .attendance-grid .calendar-day:focus-visible{outline:2px solid white!important;outline-offset:2px!important}
+.calendar-legend{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:13px;font-size:11px;color:rgba(255,255,255,.62)}
+.calendar-legend span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.calendar-legend i{display:inline-block;width:8px;height:8px;border-radius:50%}
+.calendar-legend .is-done{background:#8f72ff}.calendar-legend .is-planned{background:rgba(255,255,255,.6)}.calendar-legend .is-missed{background:#ff5368}
+.single-training-screen .calendar-add-today{display:block;width:100%;min-height:42px;margin:13px 0 0;padding:8px 12px;border-radius:13px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);color:#fff;font-size:13px;font-weight:650}
+.single-training-screen .week-widget{padding:15px!important}
+/* V45: the entire day is an overview, then a concise duration editor. */
+.calendar-day-panel{max-height:min(90dvh,800px)!important;overflow-y:auto}
+.calendar-day-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
+.calendar-day-title h2{margin:5px 0 4px;font-size:24px;letter-spacing:-.035em}
+.calendar-day-eyebrow{font-size:10px;font-weight:750;letter-spacing:.12em;color:rgba(255,255,255,.45)}
+.calendar-day-title .sheet-subtitle{margin:0;font-size:13px;color:rgba(255,255,255,.65)}
+.calendar-day-close{flex:0 0 38px;width:38px;height:38px;min-height:38px!important;margin:0!important;border-radius:50%;background:rgba(255,255,255,.1);color:#fff;font-size:25px;font-weight:400}
+.calendar-day-summary{display:grid;grid-template-columns:1fr auto;gap:5px 10px;padding:16px;border-radius:17px;background:rgba(255,255,255,.065);border:1px solid rgba(255,255,255,.06)}
+.calendar-day-status{align-self:center;color:rgba(255,255,255,.75);font-size:13px}
+.calendar-day-total{font-size:20px;white-space:nowrap;letter-spacing:-.03em}
+.calendar-day-plan{grid-column:1/-1;color:rgba(255,255,255,.53);font-size:12px}
+.calendar-day-sessions{margin-top:8px}
+.calendar-day-list-heading{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.52);margin:15px 2px 8px}
+.calendar-day-session{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;margin-top:5px;border:1px solid rgba(255,255,255,.07);border-radius:12px;color:rgba(255,255,255,.83);font-size:13px}
+.calendar-day-session strong{white-space:nowrap;font-size:12px}
+.calendar-day-editable{margin-top:19px}
+.calendar-day-edit-title{font-size:17px;margin:0 0 6px}
+.calendar-day-edit-help{font-size:12px;line-height:1.45;color:rgba(255,255,255,.56);margin:0 0 15px}
+.calendar-duration-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 15px}
+#calendar-workout-sheet .calendar-duration-presets button{min-width:0;min-height:44px!important;margin:0!important;padding:7px 5px;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(255,255,255,.07);color:rgba(255,255,255,.82);font-weight:650;font-size:13px}
+#calendar-workout-sheet .calendar-duration-presets button.is-selected{background:#8164df;color:#fff;border-color:#9980ed}
+.calendar-duration-input-row{display:grid;grid-template-columns:54px minmax(0,1fr) 54px;align-items:center;gap:9px}
+.calendar-duration-input-row input{margin:0!important;width:100%;height:54px;box-sizing:border-box;font-size:19px!important;text-align:center;font-weight:700;border-radius:12px}
+#calendar-workout-sheet .calendar-duration-input-row button{min-width:0!important;margin:0!important;padding:0!important;height:50px;min-height:50px!important;border-radius:13px;background:rgba(255,255,255,.09);color:white;font-size:15px;font-weight:700}
+#calendar-workout-sheet .calendar-workout-label{display:block;font-size:13px;font-weight:650;margin:17px 0 7px;color:rgba(255,255,255,.8)}
+.calendar-workout-label span{font-weight:400;color:rgba(255,255,255,.45)}
+#calendar-workout-name{width:100%;box-sizing:border-box}
+.calendar-workout-validation{min-height:15px;margin:6px 0 4px;font-size:12px;color:#ffb4bf}
+.calendar-day-save-actions{display:grid;grid-template-columns:1fr 0.75fr;gap:9px;margin-top:10px}
+#calendar-workout-sheet .calendar-day-save-actions button{min-width:0;margin:0!important;min-height:50px;border-radius:13px;font-size:15px}
+#calendar-workout-sheet .calendar-day-save-actions button:disabled{opacity:.38;cursor:not-allowed}
+#calendar-workout-sheet .calendar-workout-delete{margin-top:12px;background:transparent!important;border:1px solid rgba(255,120,120,.2);font-size:13px;font-weight:600}
+.calendar-day-future{margin:17px 0 4px;padding:15px;border-radius:14px;background:rgba(255,255,255,.06);font-size:13px;line-height:1.5;color:rgba(255,255,255,.68)}
+/* V45: save the weekly plan before optional advanced changes. */
+#plan-sheet .week-picker{max-height:none;overflow:visible;gap:8px}
+#plan-sheet .day-picker{flex-direction:row;align-items:center;gap:8px;padding:8px 10px;border-radius:12px}
+#plan-sheet .day-picker strong{flex:0 0 92px;font-size:12px}
+#plan-sheet .day-picker input{flex:1;min-width:0;font-size:16px;min-height:42px}
+.plan-editor-intro{font-size:13px;line-height:1.5;color:rgba(255,255,255,.6)}
+.plan-editor-actions{display:grid;grid-template-columns:1.5fr 1fr;gap:9px;margin-top:15px}
+#plan-sheet .plan-editor-actions button{min-width:0;min-height:50px;margin:0;font-size:14px}
+#plan-sheet .plan-exception-block{margin-top:20px;padding-top:13px}
+#plan-sheet .plan-exception-block summary{list-style:none;cursor:pointer;padding:8px 0;font-weight:650;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+#plan-sheet .plan-exception-block summary::-webkit-details-marker{display:none}
+#plan-sheet .plan-exception-block[open] summary span{transform:rotate(180deg)}
+#plan-sheet .plan-exception-help{color:rgba(255,255,255,.55);font-size:12px;line-height:1.5}
+@media(max-width:360px){#plan-sheet .day-picker strong{flex-basis:74px;font-size:11px}.calendar-legend{gap:8px;font-size:10px}}
+
+/* V46: primary jobs first; touch-friendly, readable and accessible. */
+.v46-fast-section{margin:13px 0 16px;min-width:0}
+.v46-fast-title{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:9px;color:#f7f7f7}
+.v46-fast-title strong{font-size:13px;letter-spacing:.01em}
+.v46-fast-title small{font-size:10px;color:rgba(255,255,255,.55)}
+.v46-fast-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.v46-fast-grid button{appearance:none;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.075);color:#fff;border-radius:14px;min-height:48px;padding:8px 9px;font:inherit;font-size:12px;font-weight:650;text-align:left;display:flex;align-items:center;gap:8px}
+.v46-fast-grid button span{flex:0 0 24px;height:24px;border-radius:8px;background:rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;font-size:17px}
+.v46-fast-grid button:active{background:rgba(255,255,255,.2)}
+.feature-card[role="button"]{cursor:pointer}
+.feature-card[role="button"]:focus-visible,.v46-fast-grid button:focus-visible,.v46-empty button:focus-visible,.v46-week-bottom button:focus-visible{outline:2px solid #c8baff;outline-offset:3px}
+.v46-finance-add{margin:12px 0 15px!important;min-height:52px;width:100%;box-sizing:border-box}
+.v46-week-bottom{display:flex;align-items:center;gap:10px;margin-top:11px;justify-content:space-between}
+.v46-week-bottom button{border:1px solid rgba(255,255,255,.25);border-radius:12px;color:#fff;background:rgba(255,255,255,.09);padding:10px 12px;min-height:40px;font:inherit;font-size:12px;font-weight:700}
+.v46-week-bottom span{font-size:11px;line-height:1.35;color:rgba(255,255,255,.65);text-align:right}
+.v46-filter-line{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 2px 12px;color:rgba(255,255,255,.63);font-size:12px}
+.v46-filter-line button{background:none;border:0;padding:7px 3px;color:#cfc5ff;font:inherit;font-size:12px;font-weight:650;white-space:nowrap}
+.v46-empty{display:flex;flex-direction:column;gap:9px;align-items:flex-start;padding:20px 16px}
+.v46-empty strong{font-size:15px;color:#fff}
+.v46-empty p{margin:0;font-size:13px;line-height:1.5;color:rgba(255,255,255,.65)}
+.v46-empty button,.v46-empty-action{appearance:none;border:0;border-radius:12px;min-height:42px;padding:10px 15px;background:#fff;color:#161616;font:inherit;font-size:13px;font-weight:700}
+.schedule-empty-v29 .v46-empty-action{margin-top:10px}
+@media(max-width:360px){.v46-fast-grid{gap:7px}.v46-fast-grid button{font-size:11px;padding:8px 6px}.v46-fast-title small{font-size:9px}}
+@media(prefers-reduced-motion:reduce){.feature-card,.v46-fast-grid button{transition:none!important;animation:none!important}}
+
+.v46-fast-grid button svg{display:block;width:16px;height:16px;fill:none;stroke:#fff;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}

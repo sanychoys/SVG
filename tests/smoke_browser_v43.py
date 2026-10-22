@@ -37,11 +37,11 @@ window.fetch=async function(url,init={}){
 def bundled_html():
  html=(ROOT/'index.html').read_text()
  for name in ('style.css','product.css'):
-  pattern=r'<link rel="stylesheet" href="/'+re.escape(name)+r'\?v=44">'
+  pattern=r'<link rel="stylesheet" href="/'+re.escape(name)+r'\?v=46">'
   html,n=re.subn(pattern,lambda _:'<style>'+ (ROOT/name).read_text()+'</style>',html)
   assert n==1,name
  for name in ('product.js','script.js'):
-  pattern=r'<script src="/'+re.escape(name)+r'\?v=44"[^>]*></script>'
+  pattern=r'<script src="/'+re.escape(name)+r'\?v=46"[^>]*></script>'
   html,n=re.subn(pattern,lambda _:'<script>'+ (ROOT/name).read_text()+'</script>',html)
   assert n==1,name
  html=html.replace('<head>','<head><script>'+MOCK_API+'</script>',1)

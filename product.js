@@ -243,8 +243,18 @@ function scheduleBaseById(id){return productScheduleDefinitions.find(event=>Stri
 function scheduleParticipantLabel(person){return person?.first_name||person?.username||'Друг';}
 function scheduleShared(event){return (event?.participants||[]).length>1;}
 function openSchedule(){productCloseOtherScreens();const screen=document.getElementById('schedule-screen');if(!screen)return;screen.hidden=false;productLockBody(true);scheduleSelectedDate=new Date();scheduleWeekCursor=scheduleMonday(scheduleSelectedDate);if(typeof loadProfileData==='function')loadProfileData(true).then(()=>{paintAvailabilityFriends();if(!document.getElementById('schedule-editor-sheet')?.hidden)paintScheduleFriendPicker();if(scheduleViewMode==='availability')loadScheduleAvailability();});syncScheduleNotesWithServer().finally(renderSchedule);}
-function closeSchedule(){const s=document.getElementById('schedule-screen');if(s)s.hidden=true;productLockBody(false);}
-function shiftScheduleWeek(delta){const base=scheduleWeekCursor||scheduleMonday(new Date());base.setDate(base.getDate()+Number(delta||0)*7);scheduleWeekCursor=scheduleMonday(base);scheduleSelectedDate=new Date(scheduleWeekCursor);renderSchedule();}
+function closeSchedule(){if(!document.getElementById('schedule-editor-sheet')?.hidden&&!closeScheduleEditor())return;const s=document.getElementById('schedule-screen');if(s)s.hidden=true;productLockBody(false);}
+function shiftScheduleWeek(delta){
+  // Keep the weekday the user was viewing instead of unexpectedly jumping to Monday.
+  const amount=Number(delta||0);
+  if(!Number.isInteger(amount)||Math.abs(amount)>52)return;
+  const selected=scheduleSelectedDate||new Date();
+  const next=new Date(selected);
+  next.setDate(next.getDate()+amount*7);
+  scheduleSelectedDate=next;
+  scheduleWeekCursor=scheduleMonday(next);
+  renderSchedule();
+}
 function selectScheduleDate(key){const d=new Date(`${key}T12:00:00`);if(Number.isNaN(d.getTime()))return;scheduleSelectedDate=d;scheduleWeekCursor=scheduleMonday(d);renderSchedule();}
 function setScheduleView(mode) {
   if(!['personal','shared','availability'].includes(mode))return;
@@ -292,7 +302,8 @@ function renderSchedule(){
     const icon=document.createElement('span');icon.className='empty-orbit';icon.textContent=scheduleViewMode==='shared'?'◎':'◇';
     const head=document.createElement('strong');head.textContent=scheduleViewMode==='shared'?'Общих планов пока нет':'День свободен';
     const desc=document.createElement('span');desc.textContent=scheduleViewMode==='shared'?'Создай событие и пригласи друзей.':'Личные события появятся здесь.';
-    e.append(icon,head,desc);root.replaceChildren(e);return;}
+    const action=document.createElement('button');action.type='button';action.className='v46-empty-action';action.textContent=scheduleViewMode==='shared'?'Создать общий план':'Добавить событие';action.onclick=()=>openScheduleEditor();
+    e.append(icon,head,desc,action);root.replaceChildren(e);return;}
   root.replaceChildren(...items.map(item=>{
     const base=scheduleBaseById(item.id)||item;const button=document.createElement('button');button.type='button';button.className='schedule-event-row';button.onclick=()=>openScheduleEditor(item.id);
     const time=document.createElement('span');time.className='schedule-time';const d=new Date(item.startAt||item.starts_at);
@@ -373,34 +384,65 @@ function scheduleOffsetsForEditor(){
   const day=scheduleWeekdayNumber(new Date(`${date}T12:00:00`));
   return [...scheduleSelectedWeekdays].map(index=>(index-day+7)%7).sort((a,b)=>a-b);
 }
+
+/* V46: protect unfinished user input. No secrets or note content are persisted. */
+const v46EditorBaseline={note:null,schedule:null};
+const v46EditorSaving={note:false,schedule:false};
+function v46EditorState(which){
+  const id=which==='note'?'note-editor-sheet':'schedule-editor-sheet';
+  const panel=document.getElementById(id);
+  if(!panel)return '';
+  const values=[...panel.querySelectorAll('input,select,textarea')].filter(el=>el.type!=='file').map(el=>[el.id,el.type==='checkbox'?el.checked:el.value]);
+  if(which==='note')values.push(['pendingFiles',notePendingFiles.map(file=>`${file.name}:${file.size}`)]);
+  if(which==='schedule')values.push(['weekdays',[...scheduleSelectedWeekdays].sort()],['friends',[...scheduleEditorFriendIds].sort()],['mode',scheduleEditorMode]);
+  return JSON.stringify(values);
+}
+function v46EditorCanClose(which){
+  if(v46EditorSaving[which])return false;
+  return v46EditorBaseline[which]===null||v46EditorBaseline[which]===v46EditorState(which)||window.confirm('Есть несохранённые изменения. Закрыть без сохранения?');
+}
+function v46EditorReset(which){v46EditorBaseline[which]=null;}
 function openWeeklyScheduleEditor(){
   openScheduleEditor();
   const input=document.getElementById('schedule-event-recurrence');if(input)input.value='weekly';
   const title=document.getElementById('schedule-editor-title');if(title)title.textContent='Еженедельное занятие';
-  toggleScheduleRecurrenceField();
+  toggleScheduleRecurrenceField();v46EditorBaseline.schedule=v46EditorState('schedule');
 }
 function openScheduleEditor(eventId=null){
-  if(!productHasAuth()){productToast('Сначала войди через Telegram');return;}scheduleEditingId=eventId||null;const event=eventId?scheduleBaseById(eventId):null;const now=new Date();now.setMinutes(Math.ceil(now.getMinutes()/15)*15,0,0);const start=event?new Date(event.starts_at):now;const end=event?.ends_at?new Date(event.ends_at):new Date(start.getTime()+3600000);
-  document.getElementById('schedule-event-id').value=event?.id||'';document.getElementById('schedule-event-title').value=event?.title||'';document.getElementById('schedule-event-date').value=productLocalDateInput(start);document.getElementById('schedule-event-all-day').checked=Boolean(event?.all_day);document.getElementById('schedule-event-time').value=productLocalTimeInput(start);document.getElementById('schedule-event-end-time').value=productLocalTimeInput(end);document.getElementById('schedule-event-recurrence').value=event?.recurrence||'none';document.getElementById('schedule-event-recurrence-until').value=event?.recurrence_until?productLocalDateInput(new Date(event.recurrence_until)):'';document.getElementById('schedule-event-reminder').value=event?.reminder_minutes===null||event?.reminder_minutes===undefined?'-1':String(event.reminder_minutes);document.getElementById('schedule-event-details').value=event?.details||'';document.getElementById('schedule-editor-title').textContent=event?'Событие':'Новое событие';const del=document.getElementById('schedule-delete-button');if(del){del.hidden=!event;del.textContent=event?.is_owner===false?'Убрать у себя':'Удалить событие';}renderScheduleFriendPicker(event);setScheduleEditorMode(event?(scheduleShared(event)?'shared':'personal'):(scheduleViewMode==='shared'?'shared':'personal'));resetScheduleWeekdays(event);toggleScheduleRecurrenceField();toggleScheduleAllDay();document.getElementById('schedule-editor-sheet').hidden=false;setTimeout(()=>document.getElementById('schedule-event-title')?.focus(),80);
+  if(!productHasAuth()){productToast('Сначала войди через Telegram');return;}scheduleEditingId=eventId||null;const event=eventId?scheduleBaseById(eventId):null;const now=new Date();now.setMinutes(Math.ceil(now.getMinutes()/15)*15,0,0);const start=event?new Date(event.starts_at):new Date(now);
+  if(!event && scheduleSelectedDate && !Number.isNaN(scheduleSelectedDate.getTime())){
+    // New events inherit the day selected in the schedule, not always today.
+    const selected=new Date(scheduleSelectedDate);
+    start.setFullYear(selected.getFullYear(),selected.getMonth(),selected.getDate());
+  }
+  const end=event?.ends_at?new Date(event.ends_at):new Date(start.getTime()+3600000);
+  document.getElementById('schedule-event-id').value=event?.id||'';document.getElementById('schedule-event-title').value=event?.title||'';document.getElementById('schedule-event-date').value=productLocalDateInput(start);document.getElementById('schedule-event-all-day').checked=Boolean(event?.all_day);document.getElementById('schedule-event-time').value=productLocalTimeInput(start);document.getElementById('schedule-event-end-time').value=productLocalTimeInput(end);document.getElementById('schedule-event-recurrence').value=event?.recurrence||'none';document.getElementById('schedule-event-recurrence-until').value=event?.recurrence_until?productLocalDateInput(new Date(event.recurrence_until)):'';document.getElementById('schedule-event-reminder').value=event?.reminder_minutes===null||event?.reminder_minutes===undefined?'-1':String(event.reminder_minutes);document.getElementById('schedule-event-details').value=event?.details||'';document.getElementById('schedule-editor-title').textContent=event?'Событие':'Новое событие';const del=document.getElementById('schedule-delete-button');if(del){del.hidden=!event;del.textContent=event?.is_owner===false?'Убрать у себя':'Удалить событие';}renderScheduleFriendPicker(event);setScheduleEditorMode(event?(scheduleShared(event)?'shared':'personal'):(scheduleViewMode==='shared'?'shared':'personal'));resetScheduleWeekdays(event);toggleScheduleRecurrenceField();toggleScheduleAllDay();document.getElementById('schedule-editor-sheet').hidden=false;v46EditorBaseline.schedule=v46EditorState('schedule');setTimeout(()=>document.getElementById('schedule-event-title')?.focus(),80);
 }
-function closeScheduleEditor(){const s=document.getElementById('schedule-editor-sheet');if(s)s.hidden=true;scheduleEditingId=null;}
+function closeScheduleEditor(force=false){if(!force&&!v46EditorCanClose('schedule'))return false;const s=document.getElementById('schedule-editor-sheet');if(s)s.hidden=true;scheduleEditingId=null;v46EditorReset('schedule');return true;}
 function toggleScheduleRecurrenceField(){const repeat=document.getElementById('schedule-event-recurrence')?.value||'none';const f=document.getElementById('schedule-recurrence-until-field');if(f)f.hidden=repeat==='none';const days=document.getElementById('schedule-weekday-field');if(days)days.hidden=repeat!=='weekly';}
 function toggleScheduleAllDay(){const allDay=Boolean(document.getElementById('schedule-event-all-day')?.checked);const fields=document.getElementById('schedule-time-fields');if(fields)fields.hidden=allDay;}
 document.addEventListener('change',event=>{if(event.target?.id==='schedule-event-recurrence')toggleScheduleRecurrenceField();if(event.target?.id==='schedule-event-date')resetScheduleWeekdays();});
 async function saveScheduleEvent(){
+  if(v46EditorSaving.schedule)return;
   const title=document.getElementById('schedule-event-title').value.trim(),date=document.getElementById('schedule-event-date').value,time=document.getElementById('schedule-event-time').value,endTime=document.getElementById('schedule-event-end-time').value,allDay=Boolean(document.getElementById('schedule-event-all-day')?.checked);if(!title){productToast('Укажи название');return;}if(!date||(!allDay&&!time)){productToast(allDay?'Укажи дату':'Укажи дату и время');return;}
-  const start=new Date(`${date}T${allDay?'00:00':time}:00`);const end=!allDay&&endTime?new Date(`${date}T${endTime}:00`):null;if(end&&end<start){productToast('Окончание раньше начала');return;}
+  const start=new Date(`${date}T${allDay?'00:00':time}:00`);const end=!allDay&&endTime?new Date(`${date}T${endTime}:00`):null;if(end&&end<=start){productToast('Время окончания должно быть позже начала');return;}
   const recurrence=document.getElementById('schedule-event-recurrence').value;const untilRaw=document.getElementById('schedule-event-recurrence-until').value;const reminderRaw=document.getElementById('schedule-event-reminder').value;
   if(recurrence==='weekly'&&!scheduleSelectedWeekdays.size){productToast('Выбери хотя бы один день недели');return;}
   const payload={title,recurrence_timezone:(scheduleEditingId?scheduleBaseById(scheduleEditingId)?.recurrence_timezone:null)||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC',repeat_day_offsets:recurrence==='weekly'?scheduleOffsetsForEditor():[0],details:document.getElementById('schedule-event-details').value.trim(),starts_at:start.toISOString(),ends_at:end?end.toISOString():null,all_day:allDay,recurrence,recurrence_until:recurrence!=='none'&&untilRaw?new Date(`${untilRaw}T23:59:59`).toISOString():null,reminder_minutes:Number(reminderRaw)<0?null:Number(reminderRaw),participant_ids:selectedScheduleFriends()};
-  if(scheduleEditorMode==='shared'&&!selectedScheduleFriends().length){productToast('Выбери хотя бы одного друга');return;}const id=scheduleEditingId;try{const response=await fetch(id?`/api/schedule/events/${encodeURIComponent(id)}`:'/api/schedule/events',{method:id?'PUT':'POST',headers:productHeaders(true),body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Не удалось сохранить событие');closeScheduleEditor();await syncScheduleNotesWithServer(true);renderSchedule();productToast(id?'Событие обновлено':'Событие добавлено');}catch(error){productToast(error?.message||'Ошибка сохранения');}
+  if(scheduleEditorMode==='shared'&&!selectedScheduleFriends().length){productToast('Выбери хотя бы одного друга');return;}const id=scheduleEditingId;v46EditorSaving.schedule=true;const saveButton=document.querySelector('#schedule-editor-sheet .sheet-primary-action');if(saveButton)saveButton.disabled=true;try{const response=await fetch(id?`/api/schedule/events/${encodeURIComponent(id)}`:'/api/schedule/events',{method:id?'PUT':'POST',headers:productHeaders(true),body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Не удалось сохранить событие');closeScheduleEditor(true);await syncScheduleNotesWithServer(true);renderSchedule();productToast(id?'Событие обновлено':'Событие добавлено');}catch(error){productToast(error?.message||'Ошибка сохранения');}finally{v46EditorSaving.schedule=false;if(saveButton)saveButton.disabled=false;}
 }
-function deleteScheduleEvent(){const id=scheduleEditingId;if(!id)return;const event=scheduleBaseById(id);const message=event?.is_owner===false?'Убрать это совместное событие из своего расписания?':'Удалить событие у всех участников?';requestConfirm(message,async()=>{try{const response=await fetch(`/api/schedule/events/${encodeURIComponent(id)}`,{method:'DELETE',headers:productHeaders(false)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Ошибка удаления');closeScheduleEditor();await syncScheduleNotesWithServer(true);renderSchedule();productToast(data.result==='left'?'Событие убрано':'Событие удалено');}catch(error){productToast(error?.message||'Ошибка удаления');}});}
+function deleteScheduleEvent(){const id=scheduleEditingId;if(!id)return;const event=scheduleBaseById(id);const message=event?.is_owner===false?'Убрать это совместное событие из своего расписания?':'Удалить событие у всех участников?';requestConfirm(message,async()=>{try{const response=await fetch(`/api/schedule/events/${encodeURIComponent(id)}`,{method:'DELETE',headers:productHeaders(false)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Ошибка удаления');closeScheduleEditor(true);await syncScheduleNotesWithServer(true);renderSchedule();productToast(data.result==='left'?'Событие убрано':'Событие удалено');}catch(error){productToast(error?.message||'Ошибка удаления');}});}
 
 function openNotes(){productCloseOtherScreens();const screen=document.getElementById('notes-screen');if(!screen)return;screen.hidden=false;productLockBody(true);syncScheduleNotesWithServer().finally(renderNotes);}
-function closeNotes(){const s=document.getElementById('notes-screen');if(s)s.hidden=true;productLockBody(false);}
+function closeNotes(){if(!document.getElementById('note-editor-sheet')?.hidden&&!closeNoteEditor())return;const s=document.getElementById('notes-screen');if(s)s.hidden=true;productLockBody(false);}
 let v34NotesFilter='all';
 function setNotesFilter(value){v34NotesFilter=value;renderNotes();}
+function resetNotesFilters(){
+  v34NotesFilter='all';
+  const query=document.getElementById('notes-search-input'),folder=document.getElementById('notes-folder-filter');
+  if(query)query.value='';if(folder)folder.value='';renderNotes();
+}
+window.resetNotesFilters=resetNotesFilters;
 function renderNotes(){
   const root=document.getElementById('notes-list');if(!root)return;
   const q=String(document.getElementById('notes-search-input')?.value||'').trim().toLocaleLowerCase('ru-RU');
@@ -421,7 +463,16 @@ function renderNotes(){
     .sort((a,b)=>Number(b.pinned)-Number(a.pinned)||Number(b.favorite)-Number(a.favorite)||String(b.updated_at||b.updatedAt||'').localeCompare(String(a.updated_at||a.updatedAt||'')));
   document.querySelectorAll('[data-notes-filter]').forEach(b=>{const on=b.dataset.notesFilter===v34NotesFilter;b.classList.toggle('is-active',on);b.setAttribute('aria-pressed',String(on));});
   const count=document.getElementById('notes-count');if(count)count.textContent=String(items.length);
-  if(!items.length){const e=document.createElement('p');e.className='product-empty';e.textContent=q?'Ничего не найдено':'Пока здесь пусто';root.replaceChildren(e);return;}
+  const isFiltered=Boolean(q||folder||v34NotesFilter!=='all');
+  const context=document.getElementById('v46-notes-view-context');if(context)context.textContent=(v34NotesFilter==='archive'?'Архив':v34NotesFilter==='favorites'?'Избранное':'Активные заметки')+(folder?' · '+folder:'');
+  const reset=document.getElementById('v46-notes-reset');if(reset)reset.hidden=!isFiltered;
+  if(!items.length){
+    const e=document.createElement('div');e.className='v46-empty';
+    const head=document.createElement('strong');head.textContent=isFiltered?'По этому запросу записей нет':'Начни с первой заметки';
+    const hint=document.createElement('p');hint.textContent=isFiltered?'Измени поиск или сбрось фильтры — записи останутся на месте.':'Запиши идею, список или прикрепи файл. Потом всё можно найти поиском.';
+    const action=document.createElement('button');action.type='button';action.textContent=isFiltered?'Сбросить фильтры':'Создать заметку';action.onclick=isFiltered?resetNotesFilters:()=>openNoteEditor();
+    e.append(head,hint,action);root.replaceChildren(e);return;
+  }
   root.replaceChildren(...items.map(note=>{
     const b=document.createElement('button');b.type='button';b.className='note-row';b.onclick=()=>openNoteEditor(note.id);
     const copy=document.createElement('span');copy.className='note-row-copy';
@@ -445,11 +496,11 @@ function openNoteEditor(noteId=null){if(!productHasAuth()){productToast('Сна�
   document.getElementById('note-archived-input').checked=Boolean(note?.archived);
   const folderList=document.getElementById('note-folder-suggestions');if(folderList){folderList.replaceChildren(...[...new Set((notesData||[]).map(n=>n.folder).filter(Boolean))].sort().map(name=>{const opt=document.createElement('option');opt.value=name;return opt;}));}
   const enabled=Boolean(note?.reminder_at);document.getElementById('note-reminder-enabled').checked=enabled;const reminderInput=document.getElementById('note-reminder-input');if(reminderInput)reminderInput.value=enabled?toDateTimeLocal(new Date(note.reminder_at)):'';notePendingFiles=[];const fileInput=document.getElementById('note-files-input');if(fileInput)fileInput.value='';
-  document.getElementById('note-editor-title').textContent=note?'Заметка':'Новая заметка';renderNoteAttachments();document.getElementById('note-delete-button').hidden=!note;toggleNoteReminderField();document.getElementById('note-editor-sheet').hidden=false;setTimeout(()=>document.getElementById(note?.title?'note-body-input':'note-title-input')?.focus(),80);}
-function closeNoteEditor(){if(noteUploadInProgress)return;const s=document.getElementById('note-editor-sheet');if(s)s.hidden=true;noteEditingId=null;notePendingFiles=[];}
+  document.getElementById('note-editor-title').textContent=note?'Заметка':'Новая заметка';renderNoteAttachments();document.getElementById('note-delete-button').hidden=!note;toggleNoteReminderField();document.getElementById('note-editor-sheet').hidden=false;v46EditorBaseline.note=v46EditorState('note');setTimeout(()=>document.getElementById(note?.title?'note-body-input':'note-title-input')?.focus(),80);}
+function closeNoteEditor(force=false){if(noteUploadInProgress||(!force&&!v46EditorCanClose('note')))return false;const s=document.getElementById('note-editor-sheet');if(s)s.hidden=true;noteEditingId=null;notePendingFiles=[];v46EditorReset('note');return true;}
 function toDateTimeLocal(date){if(!(date instanceof Date)||Number.isNaN(date.getTime()))return'';return `${productLocalDateInput(date)}T${productLocalTimeInput(date)}`;}
 function toggleNoteReminderField(){const enabled=document.getElementById('note-reminder-enabled')?.checked;const field=document.getElementById('note-reminder-field');if(field)field.hidden=!enabled;if(enabled&&!document.getElementById('note-reminder-input').value){const d=new Date(Date.now()+3600000);d.setMinutes(Math.ceil(d.getMinutes()/15)*15,0,0);document.getElementById('note-reminder-input').value=toDateTimeLocal(d);}}
-async function saveNote(){const title=document.getElementById('note-title-input').value.trim(),body=document.getElementById('note-body-input').value.trim();if(!title&&!body&&!notePendingFiles.length&&!(noteEditingId&&noteById(noteEditingId)?.attachments?.length)){productToast('Заметка пустая');return;}const reminderEnabled=document.getElementById('note-reminder-enabled').checked;const reminderRaw=document.getElementById('note-reminder-input').value;const payload={title:title||(notePendingFiles[0]?.name||'Вложения'),body,pinned:document.getElementById('note-pinned-input').checked,archived:document.getElementById('note-archived-input').checked,folder:document.getElementById('note-folder-input').value.trim().slice(0,60),tags:[...new Set(document.getElementById('note-tags-input').value.split(',').map(s=>s.trim().replace(/^#/, '').slice(0,32)).filter(Boolean))].slice(0,12),favorite:document.getElementById('note-favorite-input').checked,reminder_at:reminderEnabled&&reminderRaw?new Date(reminderRaw).toISOString():null};const id=noteEditingId;try{const response=await fetch(id?`/api/notes/${encodeURIComponent(id)}`:'/api/notes',{method:id?'PUT':'POST',headers:productHeaders(true),body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Не удалось сохранить заметку');const noteId=data.note?.id||id;
+async function saveNote(){if(v46EditorSaving.note)return;const title=document.getElementById('note-title-input').value.trim(),body=document.getElementById('note-body-input').value.trim();if(!title&&!body&&!notePendingFiles.length&&!(noteEditingId&&noteById(noteEditingId)?.attachments?.length)){productToast('Заметка пустая');return;}const reminderEnabled=document.getElementById('note-reminder-enabled').checked;const reminderRaw=document.getElementById('note-reminder-input').value;if(reminderEnabled&&(!reminderRaw||Number.isNaN(Date.parse(reminderRaw)))){productToast('Укажи дату и время напоминания');return;}const payload={title:title||(notePendingFiles[0]?.name||'Вложения'),body,pinned:document.getElementById('note-pinned-input').checked,archived:document.getElementById('note-archived-input').checked,folder:document.getElementById('note-folder-input').value.trim().slice(0,60),tags:[...new Set(document.getElementById('note-tags-input').value.split(',').map(s=>s.trim().replace(/^#/, '').slice(0,32)).filter(Boolean))].slice(0,12),favorite:document.getElementById('note-favorite-input').checked,reminder_at:reminderEnabled&&reminderRaw?new Date(reminderRaw).toISOString():null};const id=noteEditingId;v46EditorSaving.note=true;const saveButton=document.querySelector('#note-editor-sheet .sheet-primary-action');if(saveButton)saveButton.disabled=true;try{const response=await fetch(id?`/api/notes/${encodeURIComponent(id)}`:'/api/notes',{method:id?'PUT':'POST',headers:productHeaders(true),body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Не удалось сохранить заметку');const noteId=data.note?.id||id;
     if(notePendingFiles.length&&noteId){
       noteEditingId=noteId;noteUploadInProgress=true;
       const filesToSend=[...notePendingFiles];
@@ -460,8 +511,8 @@ async function saveNote(){const title=document.getElementById('note-title-input'
         }
       }finally{noteUploadInProgress=false;}
     }
-    closeNoteEditor();await syncScheduleNotesWithServer(true);renderNotes();productToast(id?'Заметка обновлена':'Заметка сохранена');}catch(error){noteUploadStatus(error?.message||'Ошибка сохранения');productToast(error?.message||'Ошибка сохранения');}}
-function deleteNote(){const id=noteEditingId;if(!id)return;requestConfirm('Удалить заметку?',async()=>{try{const response=await fetch(`/api/notes/${encodeURIComponent(id)}`,{method:'DELETE',headers:productHeaders(false)});if(!response.ok)throw new Error('Не удалось удалить заметку');closeNoteEditor();await syncScheduleNotesWithServer(true);renderNotes();productToast('Заметка удалена');}catch(error){productToast(error?.message||'Ошибка удаления');}});}
+    closeNoteEditor(true);await syncScheduleNotesWithServer(true);renderNotes();productToast(id?'Заметка обновлена':'Заметка сохранена');}catch(error){noteUploadStatus(error?.message||'Ошибка сохранения');productToast(error?.message||'Ошибка сохранения');}finally{v46EditorSaving.note=false;if(saveButton)saveButton.disabled=false;}}
+function deleteNote(){const id=noteEditingId;if(!id)return;requestConfirm('Удалить заметку?',async()=>{try{const response=await fetch(`/api/notes/${encodeURIComponent(id)}`,{method:'DELETE',headers:productHeaders(false)});if(!response.ok)throw new Error('Не удалось удалить заметку');closeNoteEditor(true);await syncScheduleNotesWithServer(true);renderNotes();productToast('Заметка удалена');}catch(error){productToast(error?.message||'Ошибка удаления');}});}
 
 window.openWeeklyScheduleEditor=openWeeklyScheduleEditor;window.selectNoteFiles=selectNoteFiles;window.closeNotePreview=closeNotePreview;window.closeNotePreviewOnBackdrop=closeNotePreviewOnBackdrop;window.toggleScheduleAllDay=toggleScheduleAllDay;window.openSchedule=openSchedule;window.closeSchedule=closeSchedule;window.shiftScheduleWeek=shiftScheduleWeek;window.selectScheduleDate=selectScheduleDate;window.renderSchedule=renderSchedule;window.openScheduleEditor=openScheduleEditor;window.closeScheduleEditor=closeScheduleEditor;window.saveScheduleEvent=saveScheduleEvent;window.deleteScheduleEvent=deleteScheduleEvent;window.openNotes=openNotes;window.closeNotes=closeNotes;window.renderNotes=renderNotes;window.openNoteEditor=openNoteEditor;window.closeNoteEditor=closeNoteEditor;window.toggleNoteReminderField=toggleNoteReminderField;window.saveNote=saveNote;window.deleteNote=deleteNote;
 
@@ -893,7 +944,7 @@ function v35BarChart(root,items){
     const col=v35Node('div','v35-bar-column');
     const amount=v35Node('span','v35-bar-amount',entry.display||String(entry.value||0));
     const track=v35Node('div','v35-bar-track');
-    const bar=v35Node('div','v35-bar-fill');bar.style.height=`${Math.max(2,Math.min(100,Math.round((Number(entry.value)||0)/peak*100)))}%`;
+    const bar=v35Node('div','v35-bar-fill');bar.style.height=`${Math.max(0,Math.min(100,Math.round((Number(entry.value)||0)/peak*100)))}%`;
     track.append(bar);col.append(amount,track,v35Node('small','',entry.label));root.append(col);
   }
 }
@@ -913,6 +964,7 @@ async function openActivityAnalytics(){
     v35StatGrid(stats,[['Активных дней',`${data.active_days} из 7`,'Сферы с записями или событиями'],['Тренировки',data.totals.workouts,`${data.totals.training_minutes} минут`],['Расписание',data.totals.events,'Запланировано событий'],['Заметки',data.totals.notes_updated,'Обновления записей'],['Расходы',v35Money(data.totals.expenses),'По операциям'],['Доходы',v35Money(data.totals.income),'По операциям']]);
     const bars=data.days.map(d=>({label:d.start.slice(5),value:d.workouts+d.events+d.notes_updated+d.expense_count+d.income_count,display:String(d.workouts+d.events+d.notes_updated+d.expense_count+d.income_count)}));
     v35BarChart(document.getElementById('v35-activity-chart'),bars);
+    const help=document.getElementById('v46-analytics-context');if(help)help.textContent=bars.some(x=>x.value>0)?'График показывает количество записей по дням, а не время тренировок.':'За эту неделю пока нет записей. Добавь тренировку, событие, заметку или расход — статистика обновится.';
   }catch(error){if(seq===v35RequestSeq)stats.textContent=error.message;}
 }
 function v35OpenReport(period){v35ReportReturn=true;showReport(period);}
@@ -963,6 +1015,7 @@ async function openAutomations(){
 }
 function v35RenderRules(rules){
   const root=document.getElementById('v35-rules');root.replaceChildren();
+  if(!rules.length){root.textContent='Правила пока недоступны. Попробуй открыть раздел позже.';return;}
   rules.forEach(rule=>{
     const block=v35Node('section','v35-rule');
     const head=v35Node('div','v35-rule-head');const copy=v35Node('div','v35-rule-copy');

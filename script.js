@@ -520,7 +520,20 @@ if (!state.planMeta.effectiveFrom && Object.keys(state.plan).length) {
 
 
 
-function closeSheets() {
+const v46FinanceBaseline={entry:null};
+function v46FinanceEntryState(){
+  const sheet=document.getElementById('finance-entry-sheet');
+  return JSON.stringify([...sheet.querySelectorAll('input,select,textarea')].map(e=>[e.id,e.type==='checkbox'?e.checked:e.value]));
+}
+function v46FinanceEntryDirty(){
+  const sheet=document.getElementById('finance-entry-sheet');
+  return Boolean(sheet&&!sheet.hidden&&v46FinanceBaseline.entry!==null&&v46FinanceBaseline.entry!==v46FinanceEntryState());
+}
+function closeSheets(force = false) {
+  if(!force&&!document.getElementById('note-editor-sheet')?.hidden&&!closeNoteEditor())return false;
+  if(!force&&!document.getElementById('schedule-editor-sheet')?.hidden&&!closeScheduleEditor())return false;
+  if(!force&&v46FinanceEntryDirty()&&!window.confirm('Есть несохранённая операция. Закрыть без сохранения?'))return false;
+  v46FinanceBaseline.entry=null;
   const active = document.activeElement;
   if (active?.closest?.('.ios-sheet')) active.blur();
   document.querySelectorAll('.ios-sheet').forEach(sheet => {
@@ -528,24 +541,38 @@ function closeSheets() {
     const panel = sheet.querySelector('.sheet-panel');
     if (panel) panel.style.transform = '';
   });
+  return true;
 }
 
 function closeSheetByBackdrop(event) {
   if (event.target.classList.contains('ios-sheet')) {
+    if(event.target.id==='note-editor-sheet'){closeNoteEditor();return;}
+    if(event.target.id==='schedule-editor-sheet'){closeScheduleEditor();return;}
     closeSheets();
   }
 }
 
 function setupSheetGestures() {
+  // Only a deliberate pull on the grabber closes a bottom sheet. Previously any
+  // downward scroll inside long forms closed the editor and discarded inputs.
   document.querySelectorAll('.sheet-panel').forEach(panel => {
-    let startY = 0;
-    panel.addEventListener('touchstart', e => {
-      startY = e.touches[0].clientY;
+    let startY = null;
+    panel.addEventListener('touchstart', event => {
+      const target = event.target;
+      startY = target?.closest?.('.sheet-handle') && panel.scrollTop < 6
+        ? event.touches[0].clientY : null;
     }, {passive:true});
-    panel.addEventListener('touchend', e => {
-      const delta = e.changedTouches[0].clientY - startY;
-      if (delta > 100) closeSheets();
+    panel.addEventListener('touchend', event => {
+      if (startY === null) return;
+      const delta = event.changedTouches[0].clientY - startY;
+      startY = null;
+      if (delta <= 100 || panel.scrollTop >= 6) return;
+      if (panel.closest('#calendar-workout-sheet')) requestCloseCalendarWorkout();
+      else if(panel.closest('#note-editor-sheet'))closeNoteEditor();
+      else if(panel.closest('#schedule-editor-sheet'))closeScheduleEditor();
+      else closeSheets();
     }, {passive:true});
+    panel.addEventListener('touchcancel', () => { startY = null; }, {passive:true});
   });
 }
 
@@ -554,6 +581,7 @@ function showToast(text) {
   if (!el) {
     el = document.createElement('div');
     el.className = 'app-toast';
+    el.setAttribute('role','status');el.setAttribute('aria-live','polite');
     document.body.appendChild(el);
   }
   const sheetOpen = [...document.querySelectorAll('.ios-sheet')].some(sheet => !sheet.hidden);
@@ -561,7 +589,7 @@ function showToast(text) {
   el.textContent = text;
   el.classList.add('is-visible');
   clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => el.classList.remove('is-visible'), 1800);
+  showToast.timer = setTimeout(() => el.classList.remove('is-visible'), 3000);
 }
 
 
@@ -1035,6 +1063,11 @@ function shiftCalendarMonth(delta) {
   renderCalendar();
 }
 
+function goToCurrentCalendarMonth() {
+  calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  renderCalendar();
+}
+
 function renderCalendar() {
   const grid = document.querySelector('.attendance-grid');
   if (!grid) return;
@@ -1046,11 +1079,13 @@ function renderCalendar() {
   const month = calendarCursor.getMonth();
   const monthTitle = document.querySelector('.attendance-month');
   const nextButton = document.querySelector('.calendar-next');
+  const todayJump = document.querySelector('.calendar-today-jump');
+  if (todayJump) todayJump.hidden = isSameMonth(calendarCursor, new Date());
 
   if (monthTitle) {
     monthTitle.textContent = new Intl.DateTimeFormat('ru-RU', {
-      month: 'short'
-    }).format(calendarCursor).replace('.', '');
+      month: 'long', year: 'numeric'
+    }).format(calendarCursor);
   }
 
   if (nextButton) {
@@ -1077,19 +1112,14 @@ function renderCalendar() {
     const label = getCalendarStatusLabel(status);
     const monthName = new Intl.DateTimeFormat('ru-RU', { month: 'long' }).format(date);
 
-    const dot = document.createElement('span');
+    const dot = document.createElement('button');
+    dot.type = 'button';
+    dot.textContent = String(day);
     dot.className = `calendar-day ${status}${isToday ? ' today' : ''}`;
     dot.setAttribute('aria-label', `${day} ${monthName}: ${label}`);
     dot.title = `${day} ${monthName}: ${label}`;
-    dot.setAttribute('role', 'button');
-    dot.tabIndex = 0;
+    dot.setAttribute('aria-current', isToday ? 'date' : 'false');
     dot.addEventListener('click', () => openCalendarWorkoutEditor(date));
-    dot.addEventListener('keydown', event => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        openCalendarWorkoutEditor(date);
-      }
-    });
     fragment.appendChild(dot);
   }
 
@@ -2091,6 +2121,8 @@ function openPlan() {
   }
   togglePlanExceptionFields();
   renderPlanExceptionsList();
+  const details = document.getElementById('plan-exceptions-details');
+  if (details) details.open = false;
   sheet.hidden = false;
 }
 
@@ -2145,6 +2177,7 @@ function getCalendarStatus(date) {
 // all training charts and server reports. The stable ID avoids duplicate entries
 // when the user edits the same calendar day from another device.
 let calendarWorkoutDateKey = null;
+let calendarWorkoutSnapshot = null;
 function calendarManualId(dateKey) { return `manual_${dateKey}`; }
 function getCalendarManualRecord(dateKey) {
   return (state.history || []).find(item => item.id === calendarManualId(dateKey)) || null;
@@ -2155,45 +2188,124 @@ function calendarDayDate(dateKey) {
   const date = new Date(year, month - 1, day, 0, 0, 0, 0);
   return getDateKey(date) === dateKey ? date : null;
 }
+function calendarWorkoutDraft() {
+  return {
+    minutes: String(document.getElementById('calendar-workout-minutes-total')?.value || '').trim(),
+    name: String(document.getElementById('calendar-workout-name')?.value || '').trim()
+  };
+}
+function calendarWorkoutIsDirty() {
+  if (!calendarWorkoutSnapshot) return false;
+  const current = calendarWorkoutDraft();
+  return current.minutes !== calendarWorkoutSnapshot.minutes || current.name !== calendarWorkoutSnapshot.name;
+}
+function calendarWorkoutMinutesValid(value) {
+  if (!/^\d+$/.test(value)) return false;
+  const minutes = Number(value);
+  return Number.isSafeInteger(minutes) && minutes >= 1 && minutes <= 1439;
+}
+function setCalendarWorkoutMinutes(minutes) {
+  const el = document.getElementById('calendar-workout-minutes-total');
+  if (!el) return;
+  el.value = String(minutes);
+  updateCalendarWorkoutEditor();
+}
+function adjustCalendarWorkoutMinutes(delta) {
+  const value = Number(calendarWorkoutDraft().minutes);
+  setCalendarWorkoutMinutes(Math.min(1439, Math.max(1, (Number.isFinite(value) ? value : 0) + delta)));
+}
+function updateCalendarWorkoutEditor() {
+  const draft = calendarWorkoutDraft();
+  const valid = calendarWorkoutMinutesValid(draft.minutes);
+  const status = document.getElementById('calendar-workout-validation');
+  const button = document.getElementById('calendar-workout-save');
+  if (button) button.disabled = !valid || !calendarWorkoutIsDirty();
+  if (status) status.textContent = draft.minutes && !valid ? 'Укажи целое число от 1 до 1439 минут' : '';
+  document.querySelectorAll('#calendar-workout-sheet [data-duration]').forEach(button => {
+    const selected = valid && Number(draft.minutes) === Number(button.dataset.duration);
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+}
+function requestCloseCalendarWorkout() {
+  if (calendarWorkoutIsDirty()) {
+    requestConfirm('Отменить изменения в записи за этот день?', () => closeSheets());
+  } else closeSheets();
+}
+function closeCalendarWorkoutOnBackdrop(event) {
+  if (event.target.id === 'calendar-workout-sheet') requestCloseCalendarWorkout();
+}
 function openCalendarWorkoutEditor(date) {
   const key = getDateKey(date);
-  if (key > getDateKey(new Date())) { showToast('Будущий день пока нельзя заполнить'); return; }
   const sheet = document.getElementById('calendar-workout-sheet');
   if (!sheet) { showCalendarDayDetails(date, getCalendarStatus(date)); return; }
+  closeSheets();
   calendarWorkoutDateKey = key;
+  const future = key > getDateKey(new Date());
   const entry = getCalendarManualRecord(key);
   const seconds = entry ? normalizeWorkoutSeconds(entry.duration) : 0;
+  const sessions = getCompletedWorkoutsForDate(date);
+  const realSessions = sessions.filter(item => item.id !== calendarManualId(key));
+  const totalSeconds = sessions.reduce((sum, item) => sum + normalizeWorkoutSeconds(item.duration), 0);
   const label = sheet.querySelector('.calendar-workout-date');
-  const others = getCompletedWorkoutsForDate(date).filter(item => item.id !== calendarManualId(key));
-  const total = others.reduce((sum, item) => sum + normalizeWorkoutSeconds(item.duration), 0);
-  const hint = sheet.querySelector('.calendar-workout-other');
-  if (label) label.textContent = new Intl.DateTimeFormat('ru-RU', {day:'numeric', month:'long', year:'numeric'}).format(date);
-  if (hint) hint.textContent = total ? `Другие тренировки за день: ${formatWorkoutDuration(total)}. Эта запись добавится к ним.` : 'Время попадёт в историю и все графики тренировок.';
-  document.getElementById('calendar-workout-hours').value = entry ? String(Math.floor(seconds / 3600)) : '0';
-  document.getElementById('calendar-workout-minutes').value = entry ? String(Math.floor(seconds % 3600 / 60)) : '';
-  document.getElementById('calendar-workout-name').value = entry ? (entry.workout || '') : (getPlannedWorkoutForDate(date) || '').replace(/^Отдых$/, '');
+  const summary = sheet.querySelector('.calendar-day-total');
+  const status = sheet.querySelector('.calendar-day-status');
+  const plan = sheet.querySelector('.calendar-day-plan');
+  const list = sheet.querySelector('.calendar-day-sessions');
+  if (label) label.textContent = new Intl.DateTimeFormat('ru-RU', {day:'numeric', month:'long', year:'numeric', weekday:'long'}).format(date);
+  if (summary) summary.textContent = totalSeconds ? formatWorkoutDuration(totalSeconds) : '0 мин';
+  if (status) status.textContent = sessions.length ? `${sessions.length} ${sessions.length === 1 ? 'тренировка' : sessions.length < 5 ? 'тренировки' : 'тренировок'} за день` : 'Нет завершённых тренировок';
+  const planned = getPlannedWorkoutForDate(date);
+  if (plan) plan.textContent = planned && planned !== 'Отдых' ? `По плану: ${planned}` : 'Без запланированной тренировки';
+  if (list) {
+    list.replaceChildren();
+    if (realSessions.length) {
+      const heading = document.createElement('p');
+      heading.className = 'calendar-day-list-heading';
+      heading.textContent = 'Уже сохранено';
+      list.appendChild(heading);
+      realSessions.forEach(item => {
+        const row = document.createElement('div'); row.className = 'calendar-day-session';
+        const title = document.createElement('span'); title.textContent = item.workout || 'Тренировка';
+        const duration = document.createElement('strong'); duration.textContent = formatWorkoutDuration(item.duration);
+        row.append(title, duration); list.appendChild(row);
+      });
+    }
+  }
+  const editTitle = sheet.querySelector('.calendar-day-edit-title');
+  if (editTitle) editTitle.textContent = entry ? 'Изменить внесённое время' : 'Добавить время';
+  const help = sheet.querySelector('.calendar-day-edit-help');
+  if (help) help.textContent = realSessions.length
+    ? 'Внесённое время прибавится к тренировкам выше. Их результат не изменится.'
+    : 'Запись появится в истории, графиках и отчётах.';
+  const input = document.getElementById('calendar-workout-minutes-total');
+  if (input) input.value = entry ? String(Math.round(seconds / 60)) : '';
+  const name = document.getElementById('calendar-workout-name');
+  if (name) name.value = entry ? entry.workout || '' : (planned && planned !== 'Отдых' ? planned : '');
+  calendarWorkoutSnapshot = calendarWorkoutDraft();
   const deleteButton = document.getElementById('calendar-workout-delete');
   if (deleteButton) deleteButton.hidden = !entry;
+  const editSection = sheet.querySelector('.calendar-day-editable');
+  const futureNotice = sheet.querySelector('.calendar-day-future');
+  if (editSection) editSection.hidden = future;
+  if (futureNotice) futureNotice.hidden = !future;
   sheet.hidden = false;
+  if (sheet.querySelector('.sheet-panel')) sheet.querySelector('.sheet-panel').scrollTop = 0;
+  updateCalendarWorkoutEditor();
 }
 function saveCalendarWorkout() {
   const key = calendarWorkoutDateKey;
   const date = calendarDayDate(key);
   if (!date || key > getDateKey(new Date())) { showToast('Дата недоступна'); return; }
-  const hoursInput = document.getElementById('calendar-workout-hours');
-  const minutesInput = document.getElementById('calendar-workout-minutes');
-  const hoursText = String(hoursInput?.value ?? '').trim() || '0';
-  const minutesText = String(minutesInput?.value ?? '').trim() || '0';
-  const validInteger = value => /^\d+$/.test(value);
-  if (!validInteger(hoursText) || !validInteger(minutesText)) {
-    showToast('Укажи часы и минуты целыми числами'); return;
+  const draft = calendarWorkoutDraft();
+  if (!calendarWorkoutMinutesValid(draft.minutes)) {
+    updateCalendarWorkoutEditor();
+    showToast('Укажи длительность тренировки в минутах');
+    return;
   }
-  const hours = Number(hoursText), minutes = Number(minutesText);
-  if (hours > 23 || minutes > 59 || (hours === 0 && minutes === 0)) {
-    showToast('Укажи время от 1 минуты до 23 ч 59 мин'); return;
-  }
-  const seconds = (hours * 60 + minutes) * 60;
-  const name = document.getElementById('calendar-workout-name')?.value.trim().slice(0, 80) || 'Свободная тренировка';
+  if (!calendarWorkoutIsDirty()) return;
+  const seconds = Number(draft.minutes) * 60;
+  const name = draft.name.slice(0, 80) || 'Свободная тренировка';
   const old = getCalendarManualRecord(key);
   const recordedAt = new Date().toISOString();
   const started = date.toISOString();
@@ -2217,7 +2329,7 @@ function deleteCalendarWorkout() {
   const key = calendarWorkoutDateKey;
   const record = getCalendarManualRecord(key);
   if (!record) return;
-  requestConfirm('Удалить внесённое вручную время? Другие тренировки сохранятся.', () => {
+  requestConfirm('Удалить внесённое вручную время? Остальные тренировки останутся.', () => {
     recordSyncTombstone('workouts', record.id);
     state.history = state.history.filter(item => item.id !== record.id);
     const date = calendarDayDate(key);
@@ -3828,7 +3940,7 @@ function openProfileDrawer(){
   const drawer=document.getElementById('profile-drawer');
   if(!drawer||!drawer.hidden)return;
   profilePreviousFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
-  closeSheets();drawer.hidden=false;
+  if(closeSheets()===false)return;drawer.hidden=false;
   document.body.classList.add('profile-drawer-open');
   profileViewHistory=[];profileActiveView='home';
   showProfileView('home',true);
@@ -4590,7 +4702,8 @@ function openFinance() {
 }
 function closeFinance() {
   const screen = document.getElementById('finance-screen'); if (!screen) return;
-  screen.hidden = true; document.body.classList.remove('training-open'); closeSheets();
+  if(closeSheets()===false)return;
+  screen.hidden = true; document.body.classList.remove('training-open');
 }
 function renderFinance() {
   const screen = document.getElementById('finance-screen');
@@ -4710,13 +4823,13 @@ function renderFinanceCategoryChartV15() {
   root.replaceChildren(...rows.map(row => { const button=document.createElement('button');button.type='button';button.className='finance-category-column';const amount=document.createElement('strong');amount.textContent=formatFinanceCompactV15(row.amount);const plot=document.createElement('span');plot.className='finance-category-plot';const bar=document.createElement('span');bar.className='finance-category-bar';bar.style.height=`${Math.max(6,row.amount/max*100)}%`;bar.style.setProperty('--finance-category-color',row.category.color);plot.appendChild(bar);const label=document.createElement('small');label.textContent=row.category.name;button.append(amount,plot,label);button.addEventListener('click',()=>showToast(`${row.category.name}: ${formatRubles(row.amount)} · ${Math.round(row.amount/Math.max(1,total)*100)}%`));return button; }));
 }
 
-function openFinanceActionSheet(){ closeSheets(); const s=document.getElementById('finance-action-sheet'); if(s)s.hidden=false; }
+function openFinanceActionSheet(){ if(closeSheets()===false)return; const s=document.getElementById('finance-action-sheet'); if(s)s.hidden=false; }
 function fillFinanceCategorySelectV15(selectedId) {
   const select=document.getElementById('finance-entry-category'); if(!select)return;
   select.replaceChildren(...financeData.categories.map(cat=>{const o=document.createElement('option');o.value=cat.id;o.textContent=cat.name;if(String(cat.id)===String(selectedId))o.selected=true;return o;}));
 }
 function openFinanceEntrySheet(type='expense', editId=null) {
-  closeSheets();
+  if(closeSheets()===false)return;
   const sheet=document.getElementById('finance-entry-sheet'); if(!sheet)return;
   const collectionKey=type==='mandatory'?'mandatoryExpenses':type==='income'?'incomes':'expenses';
   const collection=financeData[collectionKey] || [];
@@ -4739,6 +4852,7 @@ function openFinanceEntrySheet(type='expense', editId=null) {
   if(title)title.textContent=item?(type==='mandatory'?'Обязательный расход':type==='income'?'Доход':'Расход'):(type==='mandatory'?'Новый обязательный':type==='income'?'Новый доход':'Новый расход');
   const del=document.getElementById('finance-entry-delete-button'); if(del)del.hidden=!item;
   sheet.hidden=false;
+  v46FinanceBaseline.entry=v46FinanceEntryState();
   setTimeout(()=>document.getElementById('finance-entry-title')?.focus(),100);
 }
 function saveFinanceEntryV15() {
@@ -4757,7 +4871,7 @@ function saveFinanceEntryV15() {
   const nowIso = financeNowIsoV15();
   const item={ id:existing?.id||financeIdV15(type), title:title.slice(0,80), amount, ...(type==='income'?{}:{categoryId}), date, ...(type==='mandatory'?{monthKey:financeMonthKeyV15(new Date(`${dueDate}T12:00:00`)),dueDate,paid,paidAt:paid?(existing?.paidAt||nowIso):null}:{}), updatedAt:nowIso };
   if(existing) financeData[collectionKey]=collection.map(x=>String(x.id)===id?item:x); else financeData[collectionKey].push(item);
-  closeSheets(); saveFinance(); showToast(type==='mandatory'?'Обязательный расход сохранён':type==='income'?'Доход записан':'Расход записан');
+  closeSheets(true); saveFinance(); showToast(type==='mandatory'?'Обязательный расход сохранён':type==='income'?'Доход записан':'Расход записан');
 }
 function deleteFinanceEntryV15() {
   const type=document.getElementById('finance-entry-type')?.value||'expense'; const id=String(document.getElementById('finance-edit-id')?.value||''); if(!id)return;
@@ -4930,7 +5044,7 @@ async function copyProfileUsername() {
 function renderHomeActivity(nowMs = Date.now()) {
   const now=new Date(nowMs);const monday=getWeekMonday(now);const days=Array.from({length:7},(_,index)=>{const day=new Date(monday);day.setDate(monday.getDate()+index);return day;});const breakdowns=days.map(day=>getDashboardActivityBreakdown(day,nowMs));const todayIndex=Math.max(0,Math.min(6,Math.round((startOfDay(now)-startOfDay(monday))/86400000)));const elapsed=breakdowns.slice(0,todayIndex+1);const weekScore=elapsed.length?Math.round(elapsed.reduce((sum,item)=>sum+item.score,0)/elapsed.length):0;
   const spentEl=document.getElementById('home-finance-spent');const workoutEl=document.getElementById('home-last-workout');const scheduleEl=document.getElementById('home-next-schedule');const scheduleLabel=document.getElementById('home-next-schedule-label');const progress=document.getElementById('home-activity-progress');const line=document.getElementById('home-activity-line');const area=document.getElementById('home-activity-area');const points=document.getElementById('home-activity-points');
-  const todayStats=financeMonthStatsV15(now);const cashToday=financeCashSpentForDateV28(now);if(spentEl)spentEl.textContent=cashToday?formatRubles(cashToday):'0 ₽';const lastWorkout=getLastCompletedWorkout(now);if(workoutEl)workoutEl.textContent=lastWorkout?formatDashboardDuration(normalizeWorkoutSeconds(lastWorkout.duration)):'—';const next=getNextScheduleEvent(now);if(scheduleEl)scheduleEl.textContent=next?(next.event?.all_day?'Весь день':new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(next.date)):'—';if(scheduleLabel)scheduleLabel.textContent=next?String(next.event.title||next.event.name||'Следующее').slice(0,22):'Следующее';if(progress){const value=progress.querySelector('b');const label=progress.querySelector('small');progress.classList.remove('is-live');if(value)value.textContent=`${weekScore}%`;if(label)label.textContent='общей активности';}
+  const todayStats=financeMonthStatsV15(now);const cashToday=financeCashSpentForDateV28(now);if(spentEl)spentEl.textContent=cashToday?formatRubles(cashToday):'0 ₽';const lastWorkout=getLastCompletedWorkout(now);if(workoutEl)workoutEl.textContent=lastWorkout?formatDashboardDuration(normalizeWorkoutSeconds(lastWorkout.duration)):'—';const next=getNextScheduleEvent(now);if(scheduleEl)scheduleEl.textContent=next?(next.event?.all_day?'Весь день':new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(next.date)):'—';if(scheduleLabel)scheduleLabel.textContent=next?String(next.event.title||next.event.name||'Следующее').slice(0,22):'Следующее';if(progress){const value=progress.querySelector('b');const label=progress.querySelector('small');progress.classList.remove('is-live');if(value)value.textContent=`${weekScore}%`;if(label)label.textContent='индекс недели';}
   if(!line||!area||!points)return;const baselineY=124,topY=28;const coords=breakdowns.map((item,index)=>({x:Number((index*(336/6)).toFixed(1)),y:Number((baselineY-Math.max(0,Math.min(100,item.score))/100*(baselineY-topY)).toFixed(1))}));const path=buildSmoothPath(coords);line.setAttribute('d',path);area.setAttribute('d',`${path} L336 142 L0 142 Z`);points.replaceChildren();coords.forEach((point,index)=>{const day=days[index],data=breakdowns[index];const group=document.createElementNS('http://www.w3.org/2000/svg','g');group.setAttribute('tabindex','0');group.setAttribute('role','button');const hit=document.createElementNS('http://www.w3.org/2000/svg','circle');hit.setAttribute('cx',point.x);hit.setAttribute('cy',point.y);hit.setAttribute('r','13');hit.setAttribute('fill','transparent');hit.setAttribute('class','home-point-hit');const circle=document.createElementNS('http://www.w3.org/2000/svg','circle');circle.setAttribute('cx',point.x);circle.setAttribute('cy',point.y);circle.setAttribute('r',getDateKey(day)===getDateKey(now)?'2.2':'1.8');circle.setAttribute('class','home-point-dot');const label=new Intl.DateTimeFormat('ru-RU',{weekday:'short',day:'numeric',month:'short'}).format(day);const detail=`${data.score}% · тренировки ${formatDashboardDuration(data.trainingSeconds)} · финансы ${Math.round(data.finance)}/25 · расписание ${data.scheduleCount} · заметки ${data.noteCount}`;group.setAttribute('aria-label',`${label}: ${detail}`);const announce=()=>showToast(`${label} · ${detail}`);group.addEventListener('click',announce);group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();announce();}});group.append(hit,circle);points.appendChild(group);});
 }
 
