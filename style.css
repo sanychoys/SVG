@@ -556,3 +556,204 @@ input[type="file"]::file-selector-button{cursor:pointer;border:1px solid #8273d9
  .toast{max-width:calc(100vw - 30px)!important}
 }
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto!important}*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+/* ===============================================================
+   SITE CONTROL 1.10 — COBALT / ICE
+   UI-only: existing pages, fields, data and endpoints are untouched.
+   One focus cue per field; no decorative metric-square icons.
+================================================================ */
+:root {
+  color-scheme:dark;
+  --bg:#080c11!important;
+  --sidebar:#0b1117!important;
+  --card:#111a24!important;
+  --input:#151f29!important;
+  --line:#263440!important;
+  --muted:#94a6b7!important;
+  --text:#f5fbff!important;
+  --purple:#eaf7ff!important;
+  --bright:#35d7ff!important;
+  --success:#51e4ae!important;
+  --sc-ink:#080c11!important;
+  --sc-panel:#111b26!important;
+  --sc-panel2:#182534!important;
+  --sc-border:rgba(141,202,237,.12)!important;
+  --sc-violet:#42dafa!important;
+  --sc-blue:#3b7aff!important;
+  --sc-halo:rgba(24,170,239,.15)!important;
+}
+html,body{background:#080c11!important;color:#f5faff!important}
+body{background:radial-gradient(ellipse 65% 32% at 88% -10%,#153f5940,transparent 75%),#080c11!important}
+body::before{background:radial-gradient(ellipse 65% 48% at 78% 19%,rgba(21,157,228,.14),transparent 74%)!important;opacity:.85!important}
+::selection{background:#186582!important;color:white!important}
+/* Chrome, navigation and identity */
+.sidebar{background:linear-gradient(165deg,#0d151e,#090f15 70%)!important;border-right:1px solid #7ab4d014!important;box-shadow:15px 0 45px #0004!important}
+.sidebar::before{background:radial-gradient(ellipse at 18% 0,#10a9ec1b,transparent 70%)!important}
+.brand-logo{box-shadow:0 0 0 1px #98eaff32,0 0 20px #169ce122!important}
+.brand small,.crumb,.side-label{color:#839cb0!important}
+.eyebrow{color:#70dfff!important}
+.nav{color:#a1b2c1!important;border-color:transparent!important}
+.nav:hover{background:#20303a!important;color:#eefaff!important}
+.nav.active{background:linear-gradient(105deg,#0a516052,#16324558)!important;border-color:#43d9ff3a!important;color:#f4fdff!important;box-shadow:inset 2px 0 #40d9ff,0 0 20px #09bbed12!important}
+.nav.active .nav-icon{color:#6ee6ff!important}
+.topbar{background:#0c121ccc!important;border-bottom:1px solid #91cbe51a!important}
+.crumb b,.brand strong{color:#f7fcff!important}
+.userbadge{background:#18212b!important;border:1px solid #9ac3d31c!important;color:#d6e5ed!important}
+.user-circle{background:linear-gradient(135deg,#2c9bbd,#2854a8)!important;box-shadow:0 0 16px #16b9fd29!important}
+.mobile-menu{background:#17232e!important;border:1px solid #5e9cb32d!important;color:#eaf8ff!important}
+#logout:hover{background:#162732!important;color:#ecfaff!important}
+/* Elegant typography and buttons */
+.page-head h1,.section-heading h2,.panel-heading h2{color:#f6fbff!important}
+.page-head h1{letter-spacing:-.055em!important}
+.subtitle,.panel-heading p,.hint{color:#9caebb!important}
+.section-heading>span{background:#1a2833!important;border-color:#6cacc62b!important;color:#c5e4f0!important}
+.primary{background:linear-gradient(114deg,#6bebff 0%,#26bcf0 40%,#327cfa 100%)!important;color:#071720!important;border:1px solid #a4f2ff66!important;box-shadow:inset 0 1px #ffffff80,0 7px 23px #13b9fe3c!important}
+.primary:hover{background:linear-gradient(114deg,#b0f4ff,#3dd9fa 42%,#498dff)!important;box-shadow:inset 0 1px #ffffffb8,0 10px 34px #05b5f65c!important}
+.primary:disabled{background:#203f54!important;color:#90a6b6!important;box-shadow:none!important}
+.secondary,.compact{background:linear-gradient(#253442,#182732)!important;border:1px solid #a4d3ea23!important;color:#e8f8ff!important;box-shadow:inset 0 1px #ffffff0c!important}
+.secondary:hover,.compact:hover{background:#294253!important;border-color:#47c8e869!important;color:#fff!important}
+.text-action,.back-link,.project-card>.accent{color:#85e6ff!important}
+.text-action:hover,.back-link:hover{color:#d8f8ff!important}
+button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus-visible{outline:2px solid #66dcfa!important;outline-offset:3px!important}
+/* Overlays: blur the whole content behind a side drawer, tap outside closes it */
+.sidebar-backdrop{display:none;border:0;border-radius:0;padding:0;background:transparent;cursor:default}
+@media(max-width:850px){
+ .sidebar-backdrop{display:block;position:fixed;inset:0;z-index:55;background:rgba(0,8,15,.55);backdrop-filter:blur(11px) saturate(.75);-webkit-backdrop-filter:blur(11px) saturate(.75);opacity:0;pointer-events:none;transition:opacity .24s ease!important}
+ .sidebar.open + .sidebar-backdrop{opacity:1;pointer-events:auto;cursor:pointer}
+ .sidebar{z-index:60!important;background:linear-gradient(160deg,#101e29,#0c141c 72%)!important;box-shadow:20px 0 100px #000b!important}
+ body.menu-open{overflow:hidden!important}
+}
+/* Dashboard metrics — remove upper-right fake square glyphs completely */
+.stat{background:linear-gradient(145deg,#172531,#101923 75%)!important;border:1px solid #91c9e41a!important;box-shadow:inset 0 1px #ffffff0b,0 14px 34px #0003!important}
+.stat:nth-child(1){background:radial-gradient(ellipse at 8% 100%,#067fb532,transparent 69%),linear-gradient(145deg,#173240,#101b26)!important}
+.stat:nth-child(2){background:radial-gradient(ellipse at 103% 0%,#127ee22b,transparent 60%),linear-gradient(145deg,#192936,#101923)!important}
+.stat:nth-child(3){background:radial-gradient(ellipse at 94% 105%,#0aaacc29,transparent 65%),linear-gradient(145deg,#142934,#101b25)!important}
+.stat:nth-child(4){background:radial-gradient(ellipse at 10% 5%,#277fe127,transparent 65%),linear-gradient(145deg,#182532,#101822)!important}
+.stat::after{content:none!important;display:none!important;box-shadow:none!important}
+.stat::before{background:linear-gradient(90deg,transparent,#52d9ff9c,transparent)!important}
+.stat:hover{border-color:#5fd5f45e!important;box-shadow:0 14px 45px #0005,0 0 30px #01acef16!important}
+.stat>span{color:#b1cddd!important}
+.stat strong{color:#fff!important}
+.stat small{color:#9aafbf!important}
+/* Projects — deep slate surfaces, status badges remain meaningful */
+.project-card{background:linear-gradient(153deg,#182633,#111922)!important;border:1px solid #7bbedc25!important;box-shadow:0 12px 34px #0004,inset 0 1px #ffffff0b!important}
+.project-card::before{background:radial-gradient(ellipse at 95% 3%,#21caff18,transparent 53%)!important}
+.project-card:hover{border-color:#45d6fa66!important;box-shadow:0 19px 44px #0007,0 0 24px #0db7ff15!important}
+.project-art,.project-card:nth-child(3n+2) .project-art,.project-card:nth-child(3n) .project-art{background:radial-gradient(ellipse at 78% 22%,#126cba65,transparent 65%),linear-gradient(146deg,#182e40,#111b26)!important;border-bottom:1px solid #8cc2d91a!important}
+.project-card:nth-child(3n+2) .project-art{background:radial-gradient(ellipse at 85% 10%,#11a3c65d,transparent 62%),linear-gradient(146deg,#17313b,#111f2a)!important}
+.project-card:nth-child(3n) .project-art{background:radial-gradient(ellipse at 15% 95%,#2d83ed57,transparent 67%),linear-gradient(146deg,#1d2a3c,#121b25)!important}
+.project-art::before{border-color:#65c7eb21!important}
+.project-art .big-icon{color:#d4f5ff!important}
+.project-card:nth-child(3n+2) .project-art .big-icon{color:#8fefff!important}
+.project-body h3{color:#f8fdff!important}
+.project-body p,.project-body small{color:#9db6c6!important}
+.published{background:#0b51406e!important;border-color:#50d5a74d!important;color:#8bf8ca!important}
+.project-quick-delete{background:#203542!important;color:#d2edf8!important;border-color:#78b4ca29!important}
+.project-quick-delete:hover{background:#305268!important}
+.archive-section{background:linear-gradient(145deg,#13222c,#0f1822)!important;border-color:#81b6cc23!important}
+.archive-section summary{color:#d0ecf8!important}
+/* Panels, tabs, data lists */
+.work-panel,.editor-panel,.preview-panel,.admin-panel,.server-card{background:linear-gradient(146deg,#15222d,#101923 72%)!important;border:1px solid #84c2df1c!important;box-shadow:inset 0 1px #ffffff09,0 11px 30px #0003!important}
+#platformUpdater{background:radial-gradient(ellipse at 105% 0,#0b8dcb22,transparent 58%),linear-gradient(147deg,#152733,#101923 72%)!important;border:1px solid #75cce038!important;box-shadow:0 13px 35px #0004,inset 0 1px #ffffff14!important}
+.tabs{background:#111e28!important;border:1px solid #83bfd632!important;box-shadow:inset 0 1px #ffffff0b!important}
+.tabs>.tab{color:#99b4c5!important}
+.tabs>.tab.active{color:#061a21!important;background:linear-gradient(115deg,#9ceeff,#39cdf6)!important;border-color:#b8f7ff78!important;box-shadow:0 3px 16px #1abbed38,inset 0 1px #ffffff85!important}
+.tabs>.tab:hover:not(.active){background:#294352!important;color:#f4fbff!important}
+.scope-tag{background:#163947!important;color:#a2efff!important;border-color:#52ccef52!important}
+.stack-card,.bot-row,.history-row,.lead-row{background:#172530!important;border-color:#7bc0df1d!important;color:#e8f5ff!important}
+.stack-card:hover{background:#1e3543!important;border-color:#47ccec45!important}
+.stack-card strong{color:#f6fcff!important}
+.stack-card small{color:#a3b7c5!important}
+.stack-buttons button,.command-grid button,.download-grid a,.download-grid button{background:linear-gradient(#223746,#192a35)!important;border-color:#9ac8e22c!important;color:#e4f8ff!important}
+.stack-buttons button:hover,.command-grid button:hover,.download-grid a:hover,.download-grid button:hover{background:#2a4555!important;border-color:#5ed5f488!important}
+.faq-card{background:linear-gradient(140deg,#15222e,#101923)!important;border-color:#7fbfe022!important}
+.faq-card:hover,.faq-card[open]{background:#1a2c38!important;border-color:#56d8ff55!important}
+.faq-card summary{color:#f2fbff!important}
+.faq-card li,.faq-card p{color:#a8c0cf!important}
+.notice{background:#14343e!important;color:#b9f2ff!important;border-color:#47bcd75e!important}
+.empty-state{background:radial-gradient(ellipse at 50% 0,#1079c11c,transparent 65%),#14212d!important;border-color:#447a9566!important}
+/* Inputs — ONE visual focus treatment, no additional outline around each field */
+:where(#app,#auth,#modal,#denied) input:not([type="checkbox"]):not([type="radio"]),
+:where(#app,#auth,#modal,#denied) textarea,
+:where(#app,#auth,#modal,#denied) select{
+  background:#172530!important;
+  border:0!important;
+  outline:none!important;
+  box-shadow:inset 0 0 0 1px #8fbad019!important;
+  color:#f4fbff!important;
+  transition:background .16s ease,box-shadow .16s ease!important;
+}
+:where(#app,#auth,#modal,#denied) input:not([type="checkbox"]):not([type="radio"]):focus,
+:where(#app,#auth,#modal,#denied) input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+:where(#app,#auth,#modal,#denied) textarea:focus,
+:where(#app,#auth,#modal,#denied) textarea:focus-visible,
+:where(#app,#auth,#modal,#denied) select:focus,
+:where(#app,#auth,#modal,#denied) select:focus-visible{
+  background:#1b3340!important;
+  border:0!important;
+  outline:none!important;
+  box-shadow:inset 0 -2px 0 #53dcfc!important;
+}
+:where(#app,#auth,#modal,#denied) input.invalid-field,
+:where(#app,#auth,#modal,#denied) textarea.invalid-field,
+:where(#app,#auth,#modal,#denied) select.invalid-field{
+  border:0!important;outline:none!important;
+  box-shadow:inset 0 -2px 0 #ff7586!important;
+}
+label{color:#c1d1db!important}
+label input::placeholder,label textarea::placeholder{color:#8196a8!important}
+input[type="file"]::file-selector-button{border:0!important;background:#243b49!important;color:#d8f9ff!important;box-shadow:inset 0 0 0 1px #5ec4e13a!important}
+input[type="file"]::file-selector-button:hover{background:#31556b!important}
+/* Larger, more usable server console with both command editor + response viewport */
+#panelServer{max-width:none!important}
+#consoleCommand{min-height:130px!important;resize:vertical!important;line-height:1.6!important;font:13px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace!important}
+#consoleOutput{min-height:400px!important;max-height:66vh!important;overflow:auto!important;white-space:pre-wrap!important;overflow-wrap:anywhere!important;padding:21px!important;font:13px/1.72 ui-monospace,SFMono-Regular,Consolas,monospace!important;tab-size:2!important}
+.terminal,.log-output{background:#070e15!important;color:#d1f4ff!important;border:1px solid #75b8d42b!important;border-radius:15px!important;box-shadow:inset 0 8px 18px #0005!important}
+#projectLogOutput{max-height:68vh!important;min-height:240px!important;overflow:auto!important}
+/* Modal/auth/toasts */
+.modal-layer{background:#030a10c9!important;backdrop-filter:blur(16px)!important;-webkit-backdrop-filter:blur(16px)!important}
+.modal{background:radial-gradient(ellipse at 95% 0,#16759b28,transparent 55%),linear-gradient(145deg,#1a2a36,#111b26)!important;border-color:#8acae240!important;box-shadow:0 30px 100px #000b!important}
+.auth-screen{background:radial-gradient(ellipse at 55% 18%,#0b7bc336,transparent 57%),#080c11!important}
+.auth-card{background:#15232f!important;border-color:#72d6ff40!important;box-shadow:0 28px 82px #0009,0 0 70px #04aefa18!important}
+.toast{background:#163845!important;border-color:#48cdef75!important;color:#e8fbff!important}
+.toast.error{background:#3b212d!important;border-color:#fd7b9b55!important}
+/* Mobile spacing tuned for Telegram */
+@media(max-width:850px){
+ .topbar{background:#0c1621e9!important}
+ .sidebar-backdrop:focus-visible{outline:none!important}
+}
+@media(max-width:590px){
+ body::before{opacity:.5!important}
+ .sidebar{padding-top:max(20px,env(safe-area-inset-top))!important}
+ .stat{padding:18px 16px!important}
+ #consoleCommand{min-height:154px!important}
+ #consoleOutput{min-height:330px!important;max-height:61dvh!important;padding:16px!important;font-size:12px!important}
+ #panelServer{padding:17px!important}
+ .project-art{height:126px!important}
+}
+@media(prefers-reduced-motion:reduce){.sidebar-backdrop{transition:none!important}}
+/* Specificity harmonization for legacy v1.5/v1.9 selectors. */
+@media(max-width:850px){
+  #sidebar.sidebar{left:0!important;transform:translateX(-105%)!important;width:min(304px,83vw)!important}
+  #sidebar.sidebar.open{transform:translateX(0)!important}
+}
+#projectTabs.tabs>.tab.active{color:#061a21!important;background:linear-gradient(115deg,#a0f2ff,#35c9f6)!important;border:0!important;box-shadow:0 3px 16px #19b5f449,inset 0 1px #ffffff85!important}
+#projectTabs.tabs>.tab:not(.active){color:#9eb6c5!important;background:transparent!important;border:0!important;box-shadow:none!important}
+#projectTabs.tabs>.tab:hover:not(.active){color:#f5fdff!important;background:#294353!important}
+#viewWorkspace .work-panel input:not([type="checkbox"]):not([type="radio"]),
+#viewWorkspace .work-panel textarea,
+#viewWorkspace .work-panel select{
+ background:#172530!important;border:0!important;outline:none!important;box-shadow:inset 0 0 0 1px #8fbad019!important;color:#f4fbff!important
+}
+#viewWorkspace .work-panel input:not([type="checkbox"]):not([type="radio"]):focus,
+#viewWorkspace .work-panel textarea:focus,
+#viewWorkspace .work-panel select:focus,
+#viewWorkspace .work-panel input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+#viewWorkspace .work-panel textarea:focus-visible,
+#viewWorkspace .work-panel select:focus-visible{
+ background:#1b3340!important;border:0!important;outline:none!important;box-shadow:inset 0 -2px 0 #53dcfc!important
+}
+#viewWorkspace .work-panel input.invalid-field,
+#viewWorkspace .work-panel textarea.invalid-field,
+#viewWorkspace .work-panel select.invalid-field{
+ border:0!important;box-shadow:inset 0 -2px 0 #ff7586!important
+}

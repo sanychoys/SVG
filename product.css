@@ -16,3 +16,7 @@ input[type=color]::-webkit-color-swatch-wrapper{padding:0}input[type=color]::-we
 :focus-visible,button:not(:disabled):focus-visible,a:focus-visible{outline-color:#b7a2ff!important}
 ::selection{background:#735be4a8!important;color:#fff!important}
 @media(hover:none){.primary:hover{background:linear-gradient(115deg,#a37cff 0%,#7961f1 45%,#5e6dfa 100%)!important}}
+/* v1.10: final accessible cyan focus and touch press states; visual only. */
+:focus-visible,button:not(:disabled):focus-visible,a:focus-visible{outline-color:#5ce1ff!important}
+::selection{background:#167fadbf!important;color:white!important}
+@media(hover:none){.primary:hover{background:linear-gradient(114deg,#6bebff 0%,#26bcf0 40%,#327cfa 100%)!important}}
