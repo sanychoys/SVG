@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import shlex
 import subprocess
 from pathlib import Path
 from . import store
@@ -138,3 +139,29 @@ def trust_host(key:str):
     if dest.is_symlink():raise ValueError('Некорректный файл known_hosts')
     with dest.open('a',encoding='utf-8') as fh:fh.write(key+'\n')
     dest.chmod(0o600)
+
+
+def prepare_deploy_root(server, slug):
+    """Create one deploy folder in SSH user's home and report absolute path.
+
+    Requires a pre-authorized SSH key and pinned host key. Never creates dirs on
+    the central Site Control server or assumes root privileges on remote VPS.
+    """
+    if not isinstance(slug,str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]{2,55}',slug):
+        raise ValueError('Некорректный идентификатор проекта')
+    code=("import os, pathlib, sys; "
+          "home=pathlib.Path.home().resolve(); "
+          "dest=home/'sitecontrol-sites'/sys.argv[1]; "
+          "dest.mkdir(parents=True,exist_ok=True,mode=0o755); "
+          "assert dest.resolve().is_relative_to(home); "
+          "print(dest.resolve())")
+    cmd='python3 -c '+shlex.quote(code)+' '+shlex.quote(slug)
+    result=execute(server,'manual',cmd)
+    if not result['ok']:
+        raise RuntimeError('Не удалось создать папку на клиентском VPS. '+result['output'][-240:])
+    root=result['output'].strip().splitlines()[-1]
+    # remote path must be absolute within supported user home and no traversal
+    if not (root.startswith(('/home/','/root/')) and '..' not in root.split('/') and len(root)<240
+            and root.endswith('/sitecontrol-sites/'+slug)):
+        raise RuntimeError('VPS сообщил неожиданный путь проекта')
+    return root

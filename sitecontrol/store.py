@@ -119,6 +119,13 @@ def init():
             service TEXT NOT NULL, site_id INTEGER REFERENCES sites(id),
             created_at INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS project_domains (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            site_id INTEGER NOT NULL REFERENCES sites(id),
+            server_id INTEGER NOT NULL REFERENCES remote_servers(id),
+            hostname TEXT NOT NULL UNIQUE,
+            created_at INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS remote_runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT, server_id INTEGER NOT NULL,
             actor TEXT NOT NULL, template TEXT NOT NULL,
@@ -499,6 +506,8 @@ def remove_server(server_id,actor):
     with connect() as db:
         row=db.execute('SELECT name FROM remote_servers WHERE id=?',(server_id,)).fetchone()
         if not row:raise LookupError('Сервер не найден')
+        if db.execute('SELECT 1 FROM project_domains WHERE server_id=?',(server_id,)).fetchone():
+            raise ValueError('Сначала удалите домены этого VPS в проекте')
         db.execute('DELETE FROM remote_servers WHERE id=?',(server_id,))
         audit(db,actor,'server.remove',None,row['name'])
 
@@ -546,6 +555,7 @@ def delete_site(site_id:int,slug:str,actor):
         db.execute('DELETE FROM bots WHERE tenant_id=?',(tenant,))
         db.execute('DELETE FROM leads WHERE site_id=?',(site_id,))
         db.execute('DELETE FROM releases WHERE site_id=?',(site_id,))
+        db.execute('DELETE FROM project_domains WHERE site_id=?',(site_id,))
         db.execute('DELETE FROM sites WHERE id=?',(site_id,))
         db.execute('DELETE FROM tenants WHERE id=?',(tenant,))
         audit(db,'admin:'+str(actor),'project.delete',tenant,'project ID '+str(site_id))
@@ -567,3 +577,28 @@ def get_admin_timezone(admin_id:int)->str:
     with connect() as db:
         row=db.execute('SELECT timezone_name FROM admin_timezones WHERE admin_id=?',(int(admin_id),)).fetchone()
     return row['timezone_name'] if row else 'UTC'
+
+
+def add_project_domain(site_id,server_id,hostname,actor):
+    with connect() as db:
+        site=db.execute('SELECT id FROM sites WHERE id=?',(site_id,)).fetchone()
+        srv=db.execute('SELECT site_id FROM remote_servers WHERE id=?',(server_id,)).fetchone()
+        if not site or not srv or srv['site_id']!=site_id:raise ValueError('VPS не связан с этим проектом')
+        try:
+            cur=db.execute('INSERT INTO project_domains(site_id,server_id,hostname,created_at) VALUES(?,?,?,?)',
+                           (site_id,server_id,hostname,now()))
+        except sqlite3.IntegrityError:raise ValueError('Домен уже добавлен в Site Control') from None
+        audit(db,actor,'project.domain',None,hostname)
+        return cur.lastrowid
+
+def list_project_domains(site_id):
+    with connect() as db:
+        rows=db.execute('SELECT d.*,s.host AS server_host,s.deploy_root FROM project_domains d JOIN remote_servers s ON s.id=d.server_id WHERE d.site_id=? ORDER BY d.id DESC',(site_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+def remove_project_domain(site_id,domain_id,actor):
+    with connect() as db:
+        item=db.execute('SELECT hostname FROM project_domains WHERE site_id=? AND id=?',(site_id,domain_id)).fetchone()
+        if not item:raise LookupError('Домен не найден')
+        db.execute('DELETE FROM project_domains WHERE id=?',(domain_id,))
+        audit(db,actor,'project.domain.remove',None,item['hostname'])

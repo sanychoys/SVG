@@ -20,7 +20,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from . import store
-from . import diagnostics, miniapp_auth, remote, project_files, local_console, self_update
+from . import diagnostics, miniapp_auth, remote, project_files, local_console, self_update, domains
 
 app = FastAPI(title='Site Control API', docs_url=None, redoc_url=None, openapi_url=None)
 registry = None
@@ -410,6 +410,26 @@ async def server_create(request:Request):
     return {'ok':True,'id':server_id}
 
 
+@app.post('/api/sc/servers/{server_id}/prepare')
+async def server_prepare(server_id:int,request:Request):
+    actor=write_guard(request)
+    server=store.get_server(server_id)
+    if not server or not server.get('site_id'):raise HTTPException(404,'Подключите VPS к клиентскому проекту')
+    site=store.get_site(server['site_id'])
+    if not site:raise HTTPException(404,'Проект не найден')
+    body=await json_body(request,1000)
+    if body.get('confirm')!='PREPARE':raise HTTPException(400,'Подтвердите подготовку VPS')
+    try:
+        path=await asyncio.to_thread(remote.prepare_deploy_root,server,site['slug'])
+        store.server_set_root(server_id,path,'admin:'+str(actor))
+        store.log_server_run(server_id,'admin:'+str(actor),'prepare',True)
+    except Exception as exc:
+        store.log_server_run(server_id,'admin:'+str(actor),'prepare',False)
+        site_log.warning('VPS preparation failure: %s',type(exc).__name__)
+        raise HTTPException(502,'Не удалось подготовить папку проекта на VPS: '+str(exc)[:180])
+    return {'ok':True,'deploy_root':path,'message':'Папка создана на клиентском VPS'}
+
+
 @app.delete('/api/sc/servers/{server_id}')
 def server_remove(server_id:int,request:Request):
     actor=write_guard(request)
@@ -602,7 +622,8 @@ def platform_overview(request:Request):
     return {'service':'Site Control','app_root':str(project_files.ROOT),
             'python':platform.python_version(),'server':'Локальный VPS',
             'bot_name':'Главный бот Site Control','owner_id':registry.owner_id,
-            'console_mode':'diagnostics_only' if os.geteuid()==0 else 'restricted_shell'}
+            'console_mode':'diagnostics_only' if os.geteuid()==0 else 'restricted_shell',
+            'updater_ready':self_update.UPDATER_MARKER.is_file()}
 
 @app.post('/api/sc/platform/execute')
 async def platform_execute(request:Request):
@@ -632,6 +653,36 @@ def projects(request:Request):
     return {'projects':[{'id':0,'name':'Наша платформа','kind':'own','slug':'site-control','bot_name':'главный бот'}]+[
         {'id':s['id'],'name':s['client_name'],'kind':'client','slug':s['slug'],'bot_name':s['bot_name'],'new_leads':s['new_leads'],'archived_at':s.get('archived_at')}
         for s in store.list_sites()]}
+
+
+@app.get('/api/sc/projects/{project_id}/domains')
+def project_domains(project_id:int,request:Request):
+    require_admin(request)
+    if not store.get_site(project_id):raise HTTPException(404,'Проект не найден')
+    rows=store.list_project_domains(project_id)
+    for row in rows:
+        row['dns']=domains.dns_state(row['hostname'],row['server_host'])
+        row['nginx_example']=domains.nginx_example(row['hostname'],row['deploy_root'] or '/home/scdeploy/sitecontrol-sites/PROJECT')
+    return {'domains':rows}
+
+@app.post('/api/sc/projects/{project_id}/domains')
+async def domain_create(project_id:int,request:Request):
+    actor=write_guard(request)
+    data=await json_body(request,2000)
+    try:
+        domain=domains.clean_domain(data.get('hostname'))
+        server_id=int(data.get('server_id'))
+        item=store.add_project_domain(project_id,server_id,domain,'admin:'+str(actor))
+    except (ValueError,TypeError,LookupError) as exc:error(exc)
+    return {'ok':True,'id':item,'message':'Домен записан. Настройте DNS у регистратора и Nginx/HTTPS на VPS.'}
+
+@app.delete('/api/sc/projects/{project_id}/domains/{domain_id}')
+def domain_delete(project_id:int,domain_id:int,request:Request):
+    actor=write_guard(request)
+    if request.query_params.get('confirm')!='REMOVE':raise HTTPException(400,'Требуется подтверждение')
+    try:store.remove_project_domain(project_id,domain_id,'admin:'+str(actor))
+    except LookupError as exc:error(exc)
+    return {'ok':True}
 
 
 @app.post('/api/sc/platform/updates/stage')

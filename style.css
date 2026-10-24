@@ -757,3 +757,16 @@ input[type="file"]::file-selector-button:hover{background:#31556b!important}
 #viewWorkspace .work-panel select.invalid-field{
  border:0!important;box-shadow:inset 0 -2px 0 #ff7586!important
 }
+
+/* v1.12: iOS Safari/WebView must not zoom on form focus. */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+#app input:not([type="checkbox"]):not([type="radio"]),
+#app textarea,#app select,
+#auth input,#auth textarea,#auth select,
+#modal input,#modal textarea,#modal select,
+#denied input {font-size:16px!important;line-height:1.4}
+#app .work-panel .domain-entry{width:100%;min-width:0}
+#app .domain-entry pre{max-width:100%;overflow:auto;white-space:pre;font-size:12px!important}
+#app .local-only-preset[hidden],#app [hidden]{display:none!important}
+#viewWorkspace .tabs{overflow-x:auto;max-width:100%;scrollbar-width:none}
+#viewWorkspace .tabs::-webkit-scrollbar{display:none}

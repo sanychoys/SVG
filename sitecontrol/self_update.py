@@ -81,34 +81,49 @@ def status(rid):
     if not path.is_file():raise LookupError('Обновление не найдено')
     return json.loads(path.read_text('utf-8'))
 
+UPDATER_MARKER=Path('/etc/sitecontrol/updater-enabled')
+
+def _notify_watcher(rid,item):
+    """Queue for separately installed systemd .path/.service, never execute as root from web."""
+    if not UPDATER_MARKER.is_file():
+        return False
+    ready=STATE/(rid+'.ready')
+    fd=os.open(ready,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+    with os.fdopen(fd,'w') as fh:
+        fh.write(rid+'\n')
+        fh.flush();os.fsync(fh.fileno())
+    item.update(status='queued',message='Установка поставлена в очередь отдельного сервиса',unit='sitecontrol-updater')
+    write_status(rid,item)
+    return True
+
 def launch(rid):
     item=status(rid)
     if item['status']!='staged':raise ValueError('Это обновление уже отправлено на установку')
     archive=STATE/(rid+'.zip')
     if not archive.is_file():raise ValueError('Файл обновления отсутствует')
-    # Keep independent systemd job alive when the web service restarts.
+    # For sites with one-time updater setup, the separate systemd watcher is
+    # preferred: it survives restarts and doesn't depend on web-service D-Bus.
+    if _notify_watcher(rid,item):
+        return item
+    # Legacy installations may already permit systemd-run.
     unit='sitecontrol-update-'+rid
-    python=sys.executable
     cmd=['systemd-run','--unit='+unit,'--collect','--property=Type=oneshot',
          '--working-directory='+str(ROOT),'--setenv=PYTHONPATH='+str(ROOT),
          '--setenv=SITE_CONTROL_PROJECT_ROOT='+str(ROOT),
          '--setenv=SITE_CONTROL_PROJECT_FILES_DIR='+str(project_files.STATE),
          '--setenv=SITE_CONTROL_DATA_DIR='+str(project_files.store.STATE),
          '--setenv=SVGTRACKER_SERVICE_NAME='+os.environ.get('SVGTRACKER_SERVICE_NAME','svgtracker'),
-         python,'-m','sitecontrol.self_update','apply',rid]
+         sys.executable,'-m','sitecontrol.self_update','apply',rid]
     if not shutil.which('systemd-run'):
-        raise RuntimeError('На VPS нет systemd-run. Необходимо настроить отдельный сервис установки обновлений.')
-    item.update(status='queued',message='Установка передана сервису',unit=unit)
-    write_status(rid,item)
+        raise RuntimeError('systemd-run недоступен. Установщик на VPS не настроен. Однократно выполните deploy/configure_update_service.py через SSH.')
     try:
         p=subprocess.run(cmd,capture_output=True,text=True,timeout=15,cwd=str(ROOT))
-        if p.returncode:
-            reason=(p.stderr or p.stdout).strip()[:400]
-            raise RuntimeError('Веб-службе не разрешено запускать установщик. '+reason+' Нужны права отдельной службы обновлений.')
-    except Exception:
-        item.update(status='staged',message='Не удалось запустить установщик')
-        write_status(rid,item)
-        raise
+    except (OSError,subprocess.TimeoutExpired) as exc:
+        raise RuntimeError('Веб-службе запрещено запускать обновления. Настройте отдельный updater по инструкции.') from exc
+    if p.returncode:
+        raise RuntimeError('systemd-run запрещён политикой VPS. Один раз настройте отдельную службу обновлений по инструкции (deploy/configure_update_service.py). Файл проверен и сохранён, но НЕ установлен.')
+    item.update(status='queued',message='Установка передана systemd',unit=unit)
+    write_status(rid,item)
     return item
 
 def apply(rid):
@@ -143,6 +158,10 @@ def apply(rid):
     except Exception as exc:
         try:
             project_files.apply_local(ROOT,project_files.pack(previous),max_bytes=project_files.MAX_BACKUP,max_total=project_files.MAX_BACKUP,allow_empty=True)
+            for new_name in files:
+                if new_name not in previous:
+                    path=ROOT/new_name
+                    if path.is_file() and not path.is_symlink():path.unlink()
             subprocess.run(['systemctl','restart',os.environ.get('SVGTRACKER_SERVICE_NAME','svgtracker')],timeout=25,capture_output=True)
         except Exception:pass
         item.update(status='failed',message=str(exc)[:400])
