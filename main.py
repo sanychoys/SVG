@@ -1,4 +1,4 @@
-"""Site Control 1.3: admin Mini App, project management and remote VPS control."""
+"""Site Control 1.6: admin Mini App, project management and remote VPS control."""
 from __future__ import annotations
 import asyncio
 import hmac
@@ -15,7 +15,7 @@ from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import (Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, WebAppInfo, BufferedInputFile, ErrorEvent, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats, BotCommandScopeAllChatAdministrators, BotCommandScopeChat)
+from aiogram.types import (Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, WebAppInfo, BufferedInputFile, ErrorEvent, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats, BotCommandScopeAllChatAdministrators, BotCommandScopeChat, MenuButtonCommands)
 from fastapi import Request, HTTPException
 from urllib.parse import urlsplit,urlunsplit,parse_qsl,urlencode
 import uvicorn
@@ -572,9 +572,14 @@ async def client_webhook(hook_key:str,request:Request):
     try:payload=json.loads(body)
     except (ValueError,TypeError):raise HTTPException(400,'Invalid JSON')
     if not isinstance(payload,dict):raise HTTPException(400,'Invalid JSON')
-    try:await manager.receive(row,payload)
+    try:
+        with store.connect() as db:
+            site=db.execute('SELECT id FROM sites WHERE tenant_id=? LIMIT 1',(row['tenant_id'],)).fetchone()
+        if site:diagnostics.project_event(site['id'],'bot','Получено событие клиентского Telegram-бота')
+        await manager.receive(row,payload)
     except Exception:
         log.exception('Ошибка webhook клиентского бота')
+        if site:diagnostics.project_exception(site['id'],'bot','Ошибка Telegram webhook',traceback.format_exc())
         raise HTTPException(503,'Temporary processing failure')
     return {'ok':True}
 
@@ -600,6 +605,11 @@ async def refresh_command_menu():
               BotCommand(command='logs',description='Логи')]
     await bot.set_my_commands(commands,scope=BotCommandScopeDefault())
     await bot.set_my_commands(commands,scope=BotCommandScopeAllPrivateChats())
+    for uid in registry.list_ids():
+        try:await bot.set_my_commands(commands,scope=BotCommandScopeChat(chat_id=uid))
+        except Exception:log.warning('Команды не установлены для отдельного чата')
+    try:await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    except Exception:log.exception('Не удалось включить командное меню Telegram')
     log.info('Меню Telegram обновлено: 3 команды')
 
 

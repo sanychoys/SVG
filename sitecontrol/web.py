@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 import time
+import traceback
 from collections import defaultdict, deque
 from pathlib import Path
 from urllib.parse import quote
@@ -17,7 +18,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from . import store
-from . import diagnostics, miniapp_auth, remote, project_files
+from . import diagnostics, miniapp_auth, remote, project_files, local_console
 
 app = FastAPI(title='Site Control API', docs_url=None, redoc_url=None, openapi_url=None)
 registry = None
@@ -114,7 +115,7 @@ def readiness():
                 db.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
     except Exception:
         raise HTTPException(503, 'Database unavailable')
-    return {'status':'ok','service':'Site Control','version':'1.4.0'}
+    return {'status':'ok','service':'Site Control','version':'1.6.0'}
 
 
 @app.get('/api/sc/health')
@@ -163,8 +164,12 @@ async def auth_miniapp(request:Request):
     body=await json_body(request,max_bytes=10000)
     from config import BOT_TOKEN
     try: admin_id=miniapp_auth.verify(body.get('init_data'), BOT_TOKEN)
-    except ValueError:raise HTTPException(401,'Не удалось подтвердить Telegram Mini App')
-    if not registry.is_admin(admin_id):raise HTTPException(403,'Нет доступа администратора')
+    except ValueError as exc:
+        site_log.warning('Mini App: initData rejected: %s', str(exc))
+        raise HTTPException(401,'Подпись Telegram не подтверждена. Откройте Mini App заново через /start.')
+    if not registry.is_admin(admin_id):
+        site_log.warning('Mini App: verified Telegram account is not admin')
+        raise HTTPException(403,'Telegram-аккаунт не включён в список администраторов. Проверьте, что используете нужный профиль.')
     # Mini App NEVER creates a reusable browser login cookie. Subsequent requests
     # supply signed initData and are authorized independently of web sessions.
     response=JSONResponse({'authorized':True,'admin_id':admin_id})
@@ -500,11 +505,63 @@ def _target(pid,server_id):
     except (ValueError,LookupError) as exc:error(exc)
 
 
+@app.post('/api/sc/projects/{project_id}/archive')
+async def archive_project(project_id:int, request:Request):
+    actor=write_guard(request)
+    if project_id<=0:raise HTTPException(400,'Нашу платформу удалить нельзя')
+    body=await json_body(request,2000)
+    if body.get('confirm')!='ARCHIVE':raise HTTPException(400,'Подтвердите перенос в архив')
+    try:return store.archive_site(project_id,True,actor)
+    except (ValueError,LookupError) as exc:error(exc)
+
+@app.post('/api/sc/projects/{project_id}/unarchive')
+async def unarchive_project(project_id:int, request:Request):
+    actor=write_guard(request)
+    if project_id<=0:raise HTTPException(400,'Недопустимый проект')
+    try:return store.archive_site(project_id,False,actor)
+    except (ValueError,LookupError) as exc:error(exc)
+
+@app.delete('/api/sc/projects/{project_id}')
+async def permanent_project_delete(project_id:int, request:Request):
+    actor=write_guard(request)
+    if project_id<=0:raise HTTPException(400,'Нашу платформу удалить нельзя')
+    body=await json_body(request,2000)
+    if body.get('confirm')!='DELETE':raise HTTPException(400,'Требуется подтверждение удаления')
+    try:return store.delete_site(project_id,body.get('slug'),actor)
+    except (ValueError,LookupError) as exc:error(exc)
+
+@app.get('/api/sc/platform/overview')
+def platform_overview(request:Request):
+    require_admin(request)
+    import platform
+    return {'service':'Site Control','app_root':str(project_files.ROOT),
+            'python':platform.python_version(),'server':'Локальный VPS',
+            'bot_name':'Главный бот Site Control','owner_id':registry.owner_id}
+
+@app.post('/api/sc/platform/execute')
+async def platform_execute(request:Request):
+    actor=write_guard(request)
+    body=await json_body(request,2000)
+    template=body.get('template')
+    if template=='manual' and body.get('confirm')!='EXECUTE':
+        raise HTTPException(400,'Подтвердите команду')
+    if template in ('site_restart',):
+        raise HTTPException(400,'Перезапуск текущего сервиса выполняйте через безопасный установщик')
+    try:
+        result=await asyncio.to_thread(local_console.execute,template,body.get('command'))
+    except ValueError as exc:error(exc)
+    except Exception:
+        site_log.exception('Ошибка локальной консоли')
+        raise HTTPException(502,'Команда не выполнена. Проверьте системный журнал')
+    with store.connect() as db:
+        store.audit(db,'admin:'+str(actor),'platform.command',None,str(template))
+    return result
+
 @app.get('/api/sc/projects')
 def projects(request:Request):
     require_admin(request)
     return {'projects':[{'id':0,'name':'Наша платформа','kind':'own','slug':'site-control','bot_name':'главный бот'}]+[
-        {'id':s['id'],'name':s['client_name'],'kind':'client','slug':s['slug'],'bot_name':s['bot_name'],'new_leads':s['new_leads']}
+        {'id':s['id'],'name':s['client_name'],'kind':'client','slug':s['slug'],'bot_name':s['bot_name'],'new_leads':s['new_leads'],'archived_at':s.get('archived_at')}
         for s in store.list_sites()]}
 
 
@@ -525,7 +582,10 @@ async def project_upload(project_id:int,request:Request,filename:str=''):
         total+=len(chunk)
         if total>project_files.MAX_UPLOAD:raise HTTPException(413,'Файл больше 30 МБ')
         parts.append(chunk)
-    try:return {'release':await asyncio.to_thread(project_files.stage,project_id,b''.join(parts),filename)}
+    try:
+        result=await asyncio.to_thread(project_files.stage,project_id,b''.join(parts),filename)
+        if project_id>0:diagnostics.project_event(project_id,'deploy','Загружены и проверены файлы обновления')
+        return {'release':result}
     except (ValueError,LookupError) as exc:error(exc)
 
 
@@ -534,10 +594,14 @@ async def project_apply(project_id:int,release_id:str,request:Request):
     write_guard(request)
     body=await json_body(request,2000)
     if body.get('confirm')!='DEPLOY':raise HTTPException(400,'Подтвердите публикацию словом DEPLOY')
-    try:return await asyncio.to_thread(project_files.deploy,project_id,release_id,body.get('server_id'))
+    try:
+        result=await asyncio.to_thread(project_files.deploy,project_id,release_id,body.get('server_id'))
+        if project_id>0:diagnostics.project_event(project_id,'deploy','Обновление опубликовано на сервере')
+        return result
     except (ValueError,LookupError) as exc:error(exc)
     except Exception:
         site_log.exception('Не удалось опубликовать файлы проекта %s',project_id)
+        if project_id>0:diagnostics.project_exception(project_id,'deploy','Ошибка публикации',traceback.format_exc())
         raise HTTPException(502,'Ошибка обновления. Подробности в логах.')
 
 
@@ -552,10 +616,14 @@ def project_backups(project_id:int,request:Request):
 async def project_backup(project_id:int,request:Request):
     write_guard(request)
     body=await json_body(request,2000)
-    try:return {'backup':await asyncio.to_thread(project_files.create_backup,project_id,body.get('server_id'))}
+    try:
+        result=await asyncio.to_thread(project_files.create_backup,project_id,body.get('server_id'))
+        if project_id>0:diagnostics.project_event(project_id,'deploy','Создан файловый бэкап')
+        return {'backup':result}
     except (ValueError,LookupError) as exc:error(exc)
     except Exception:
         site_log.exception('Не удалось создать бэкап проекта %s',project_id)
+        if project_id>0:diagnostics.project_exception(project_id,'deploy','Ошибка резервной копии',traceback.format_exc())
         raise HTTPException(502,'Ошибка создания бэкапа; см. логи')
 
 
@@ -588,6 +656,7 @@ async def project_restore(project_id:int,backup_id:str,request:Request):
     except (ValueError,LookupError) as exc:error(exc)
     except Exception:
         site_log.exception('Ошибка восстановления проекта %s',project_id)
+        if project_id>0:diagnostics.project_exception(project_id,'deploy','Ошибка восстановления',traceback.format_exc())
         raise HTTPException(502,'Ошибка восстановления; см. логи')
 
 
@@ -613,8 +682,24 @@ async def configure_deploy_root(server_id:int,request:Request):
     return {'ok':True}
 
 
+@app.get('/api/sc/projects/{project_id}/logs/{kind}')
+def project_log(project_id:int,kind:str,request:Request,server_id:int|None=None,download:int=0):
+    require_admin(request)
+    if project_id<=0 or not store.get_site(project_id):raise HTTPException(404,'Проект не найден')
+    if kind in ('bot','site','deploy'):
+        result=diagnostics.project_tail(project_id,kind)
+    elif kind=='server':
+        srv=store.get_server(server_id or 0)
+        if not srv or srv['site_id']!=project_id:raise HTTPException(403,'Этот VPS не принадлежит проекту')
+        try:result=remote.execute(srv,'site_logs')['output']
+        except Exception:site_log.exception('Ошибка журналов VPS проекта %s',project_id);raise HTTPException(502,'Не удалось получить журнал VPS')
+    else:raise HTTPException(404,'Неизвестный журнал')
+    headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}
+    if download:headers['Content-Disposition']=f'attachment; filename="project-{project_id}-{kind}.txt"'
+    return Response(result,media_type='text/plain; charset=utf-8',headers=headers)
+
 @app.get('/api/sc/exports/{kind}')
-def export_logs(kind:str,request:Request,server_id:int|None=None):
+def export_logs(kind:str,request:Request,server_id:int|None=None,download:int=1):
     require_admin(request)
     from . import diagnostics
     if kind in ('bot','site'):
@@ -622,13 +707,18 @@ def export_logs(kind:str,request:Request,server_id:int|None=None):
     elif kind=='deploy':
         logpath=Path(os.environ.get('SVGTRACKER_ADMIN_STATE_DIR','/var/lib/svgtracker-admin'))/'logs'/'deploy.log'
         result=logpath.read_text('utf-8',errors='replace')[-180000:] if logpath.is_file() else 'Записей ещё нет'
+    elif kind=='platform':
+        try:result=local_console.execute('site_logs')['output']
+        except Exception:site_log.exception('Журнал локального сервера');raise HTTPException(502,'Локальные логи недоступны')
     elif kind=='server':
         srv=store.get_server(int(server_id or 0))
         if not srv:raise HTTPException(404,'Сервер не найден')
         try:result=remote.execute(srv,'site_logs')['output']
         except Exception:site_log.exception('Логи VPS');raise HTTPException(502,'Не удалось получить логи VPS')
     else:raise HTTPException(404,'Неизвестный журнал')
-    return Response(result,media_type='text/plain; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="site-control-{kind}.txt"','Cache-Control':'no-store'})
+    headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}
+    if download:headers['Content-Disposition']=f'attachment; filename="site-control-{kind}.txt"'
+    return Response(result,media_type='text/plain; charset=utf-8',headers=headers)
 
 
 @app.get('/api/sc/public/{slug}',response_class=HTMLResponse)
@@ -673,6 +763,7 @@ async def public_lead(slug:str,request:Request):
         if not isinstance(data.get(field,''),str):raise HTTPException(400,'Проверьте форму')
     try:lead=store.add_lead(slug,data.get('customer',''),data.get('contact',''),data.get('message',''))
     except (LookupError,ValueError) as exc:error(exc)
+    diagnostics.project_event(lead['site_id'],'site','Получена новая заявка (данные посетителя не записываются в журнал)')
     try:await manager.notify_lead(lead)
     except Exception: pass # persisted lead must not fail due to Telegram outage
     return {'ok':True,'id':lead['id']}

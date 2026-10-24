@@ -130,6 +130,9 @@ def init():
         cols=[r['name'] for r in db.execute('PRAGMA table_info(remote_servers)')]
         if 'deploy_root' not in cols:
             db.execute("ALTER TABLE remote_servers ADD COLUMN deploy_root TEXT NOT NULL DEFAULT ''")
+        columns=[r['name'] for r in db.execute('PRAGMA table_info(sites)')]
+        if 'archived_at' not in columns:
+            db.execute('ALTER TABLE sites ADD COLUMN archived_at INTEGER')
     try: DB_PATH.chmod(0o600)
     except OSError: pass
 
@@ -227,7 +230,7 @@ def get_site(site_id):
 
 def list_sites():
     with connect() as db:
-        rows = db.execute('''SELECT s.id,s.tenant_id,s.slug,s.draft,s.published_version,s.client_telegram_id,
+        rows = db.execute('''SELECT s.id,s.tenant_id,s.slug,s.draft,s.published_version,s.client_telegram_id,s.archived_at,
            t.name AS client_name, (SELECT count(*) FROM leads l WHERE l.site_id=s.id AND l.status='new') AS new_leads,
            (SELECT username FROM bots b WHERE b.tenant_id=s.tenant_id AND b.enabled=1 ORDER BY id DESC LIMIT 1) AS bot_name
            FROM sites s JOIN tenants t ON s.tenant_id=t.id ORDER BY s.id DESC''').fetchall()
@@ -509,3 +512,38 @@ def server_set_root(server_id, root, actor):
         if row is None:raise LookupError('Сервер не найден')
         db.execute('UPDATE remote_servers SET deploy_root=? WHERE id=?',(root,server_id))
         audit(db,actor,'server.deploy_root',None,str(server_id))
+
+
+# Site Control v1.6: reversible archive and explicit permanent removal.
+def archive_site(site_id:int, archived:bool, actor):
+    with connect() as db:
+        row=db.execute('SELECT tenant_id, archived_at FROM sites WHERE id=?',(site_id,)).fetchone()
+        if row is None:raise LookupError('Проект не найден')
+        db.execute('UPDATE sites SET archived_at=? WHERE id=?',(now() if archived else None,site_id))
+        audit(db,'admin:'+str(actor),'project.archive' if archived else 'project.restore',row['tenant_id'],str(site_id))
+    return {'ok':True}
+
+
+def delete_site(site_id:int,slug:str,actor):
+    if not isinstance(slug,str):raise ValueError('Подтвердите название проекта')
+    with connect() as db:
+        row=db.execute('SELECT slug,tenant_id,archived_at FROM sites WHERE id=?',(site_id,)).fetchone()
+        if not row:raise LookupError('Проект не найден')
+        if row['archived_at'] is None:raise ValueError('Сначала перенесите проект в архив')
+        if row['slug']!=slug:raise ValueError('Название проекта не совпадает')
+        # Fail closed: attached VPS must be removed manually before irreversible deletion.
+        if db.execute('SELECT 1 FROM remote_servers WHERE site_id=?',(site_id,)).fetchone():
+            raise ValueError('Сначала отключите VPS от проекта, чтобы не потерять управление')
+        tenant=row['tenant_id']
+        if db.execute('SELECT 1 FROM sites WHERE tenant_id=? AND id!=?',(tenant,site_id)).fetchone():
+            raise ValueError('Клиент связан с другим сайтом; удаление требует отдельного переноса данных')
+        # Tokens on disk are not deleted here. Keep them encrypted/offline until explicit cleanup.
+        db.execute('DELETE FROM telegram_updates WHERE bot_id IN (SELECT id FROM bots WHERE tenant_id=?)',(tenant,))
+        db.execute('DELETE FROM bots WHERE tenant_id=?',(tenant,))
+        db.execute('DELETE FROM leads WHERE site_id=?',(site_id,))
+        db.execute('DELETE FROM releases WHERE site_id=?',(site_id,))
+        db.execute('DELETE FROM sites WHERE id=?',(site_id,))
+        db.execute('DELETE FROM tenants WHERE id=?',(tenant,))
+        audit(db,'admin:'+str(actor),'project.delete',tenant,'project ID '+str(site_id))
+    # Staged files and backups remain on disk for manual recovery; never delete admin state.
+    return {'ok':True,'orphaned_file_backups_preserved':True}

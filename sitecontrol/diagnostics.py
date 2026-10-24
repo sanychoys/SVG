@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from datetime import datetime,timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -61,3 +62,46 @@ def scrub_path(path: str) -> str:
     path=re.sub(r'/api/sc/hooks/[^/]+', '/api/sc/hooks/[hidden]', path)
     path=re.sub(r'/api/sc/auth/[^/]+', '/api/sc/auth/[hidden]', path)
     return path[:160]
+
+
+def project_event(project_id:int,kind:str,message:str):
+    """Isolated per-project operational log; never include user text or token material."""
+    if kind not in ('bot','site','deploy'):raise ValueError('Неизвестный журнал')
+    project_id=int(project_id)
+    if not 1<=project_id<=99999999:raise ValueError('Неверный проект')
+    folder=LOG_DIR/'projects'/str(project_id)
+    folder.mkdir(parents=True,exist_ok=True,mode=0o700)
+    path=folder/(kind+'.log')
+    text=str(message).replace('\r',' ').replace('\n',' ')[:500]
+    # keep bounded: 1MB per project and log kind
+    if path.is_file() and path.stat().st_size>1_000_000:
+        previous=folder/(kind+'.previous.log')
+        path.replace(previous)
+    fd=os.open(str(path),os.O_CREAT|os.O_WRONLY|os.O_APPEND,0o600)
+    with os.fdopen(fd,'a',encoding='utf-8') as out:
+        out.write(datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M:%S UTC')+' | '+text+'\n')
+
+
+def project_tail(project_id:int,kind:str):
+    if kind not in ('bot','site','deploy'):raise ValueError('Неизвестный журнал')
+    project_id=int(project_id)
+    if not 1<=project_id<=99999999:raise ValueError('Неверный проект')
+    path=LOG_DIR/'projects'/str(project_id)/(kind+'.log')
+    if not path.is_file():return 'Записей по этому проекту пока нет.\n'
+    with path.open('rb') as src:
+        src.seek(0,2);src.seek(max(0,src.tell()-140_000))
+        return src.read().decode('utf-8','replace')
+
+
+def project_exception(project_id:int,kind:str,message:str,detail:str):
+    """Keep bounded full traceback in a private per-project log."""
+    if kind not in ('bot','site','deploy'):raise ValueError('Неизвестный журнал')
+    project_id=int(project_id)
+    if not 1<=project_id<=99999999:raise ValueError('Неверный проект')
+    folder=LOG_DIR/'projects'/str(project_id)
+    folder.mkdir(parents=True,exist_ok=True,mode=0o700)
+    path=folder/(kind+'.log')
+    if path.is_file() and path.stat().st_size>1_000_000:path.replace(folder/(kind+'.previous.log'))
+    fd=os.open(str(path),os.O_CREAT|os.O_WRONLY|os.O_APPEND,0o600)
+    with os.fdopen(fd,'a',encoding='utf-8') as out:
+        out.write(datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M:%S UTC')+' | ERROR '+str(message)[:300]+'\n'+str(detail)[-18000:]+'\n')
