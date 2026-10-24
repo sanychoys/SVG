@@ -42,6 +42,17 @@ ADMIN_INPUT={}  # actor ID -> deadline for admin-add flow
 PROJECT_UPLOAD={}  # admin Telegram ID -> (project ID, expires)
 
 
+LAST_MENU={}  # chat_id -> message_id; keep one navigational bot message per chat
+
+async def screen(message:Message,text:str,reply_markup=None):
+    """Replace an existing bot screen when possible; never modify a user's message."""
+    if getattr(message,'from_user',None) and message.from_user.is_bot:
+        try:
+            return await message.edit_text(text,reply_markup=reply_markup)
+        except Exception:
+            pass
+    return await message.answer(text,reply_markup=reply_markup)
+
 async def send_chunks(message:Message, text:str):
     for pos in range(0,len(text),3700):
         await message.answer(text[pos:pos+3700])
@@ -103,7 +114,8 @@ async def send_status(message:Message):
     active=await asyncio.to_thread(subprocess.run,['systemctl','is-active','svgtracker.service'],capture_output=True,text=True,timeout=5)
     ok=active.returncode==0 and active.stdout.strip()=='active'
     output=await asyncio.to_thread(operations.status_text, STATE/'deploy_status.json',service_ok=ok,api_ok=(await asyncio.to_thread(operations.probe_api)))
-    await send_chunks(message,output)
+    if len(output)<=3700: await screen(message,output)
+    else: await send_chunks(message,output)
     # Exactly one attachment: the current user guide. No status dump in a file.
     guide=ROOT/'ИНСТРУКЦИЯ.txt'
     if guide.is_file():
@@ -139,7 +151,16 @@ async def welcome(message:Message):
         if approved:log.info('Администратор вошёл через Telegram')
         await message.answer('Вход подтверждён. Вернитесь на сайт.' if approved else 'Код входа неверен или устарел.')
         return
-    await message.answer('Site Control\nПроекты, серверы и состояние — здесь и в Mini App.',reply_markup=keyboard(message.from_user.id))
+    chat_id=message.chat.id
+    last=LAST_MENU.get(chat_id)
+    content='Site Control\n\nПроекты · Серверы · Обновления'
+    if last:
+        try:
+            await bot.edit_message_text(content,chat_id,last,reply_markup=keyboard(message.from_user.id))
+            return
+        except Exception:pass
+    sent=await message.answer(content,reply_markup=keyboard(message.from_user.id))
+    LAST_MENU[chat_id]=sent.message_id
 
 
 @dp.message(Command('logs'))
@@ -156,7 +177,7 @@ def site_keyboard():
 
 
 async def show_sites(message:Message):
-    await message.answer('Проекты Site Control. Выберите продукт:',reply_markup=site_keyboard())
+    await screen(message,'Проекты Site Control. Выберите продукт:',reply_markup=site_keyboard())
 
 
 @dp.message(Command('sites'))
@@ -235,7 +256,7 @@ async def show_admins(message:Message):
     ids=registry.list_ids()
     text='Администраторы Site Control\n\n'+'\n'.join(
         f'• {i}'+(' · владелец' if i==registry.owner_id else '') for i in ids)
-    await message.answer(text,reply_markup=admin_keyboard())
+    await screen(message,text,reply_markup=admin_keyboard())
 
 @dp.message(Command('admins'))
 async def admins(message:Message):
@@ -380,15 +401,15 @@ async def callbacks(callback:CallbackQuery):
         await callback.answer('Отменено');await callback.message.edit_text('Действие отменено.');return
     if action=='home':
         await callback.answer()
-        await callback.message.answer('Site Control',reply_markup=keyboard(callback.from_user.id))
+        await screen(callback.message,'Site Control',reply_markup=keyboard(callback.from_user.id))
         return
     if action=='upload':
         await callback.answer()
-        await callback.message.answer('Отправьте ZIP документом в этот чат.')
+        await screen(callback.message,'Отправьте ZIP документом в этот чат.')
         return
     if action=='logs':
         await callback.answer()
-        await callback.message.answer('Выберите журнал:',reply_markup=log_keyboard())
+        await screen(callback.message,'Выберите журнал:',reply_markup=log_keyboard())
         return
     if action=='log' and len(parts)==3 and parts[2] in diagnostics.KINDS:
         await callback.answer()
@@ -409,7 +430,7 @@ async def callbacks(callback:CallbackQuery):
                 path=await asyncio.to_thread(snapshot)
                 await asyncio.to_thread(helper,'backup')
                 log.info('Создана резервная копия Site Control')
-                await callback.message.answer('Резервная копия создана · '+operations.pretty_time(time.time())+'\nСохраните копию отдельно от VPS.')
+                await screen(callback.message,'Резервная копия создана · '+operations.pretty_time(time.time())+'\nСохраните копию отдельно от VPS.')
             except Exception:
                 log.exception('Ошибка создания резервной копии')
                 await send_error(callback.message,'Ошибка резервного копирования')
@@ -419,7 +440,7 @@ async def callbacks(callback:CallbackQuery):
     if action=='admadd':
         ADMIN_INPUT[callback.from_user.id]=time.time()+180
         await callback.answer()
-        await callback.message.answer('Отправьте Telegram ID нового администратора одним числом.\nНапример: 123456789\nДалее потребуется подтверждение.')
+        await screen(callback.message,'Отправьте Telegram ID нового администратора одним числом.\nНапример: 123456789\nДалее потребуется подтверждение.')
         return
     if action=='admrm' and len(parts)==3:
         try:
@@ -436,38 +457,40 @@ async def callbacks(callback:CallbackQuery):
             [InlineKeyboardButton(text=f'Удалить {uid}',callback_data='sc:role:'+token)],
             [InlineKeyboardButton(text='Отмена',callback_data='sc:cancel')]])
         await callback.answer()
-        await callback.message.answer(f'Отозвать доступ администратора {uid}?',reply_markup=kb)
+        await screen(callback.message,f'Отозвать доступ администратора {uid}?',reply_markup=kb)
         return
     if action=='sites':
         await callback.answer();await show_sites(callback.message);return
     if action=='servers':
-        await callback.answer();await callback.message.answer('Подключённые серверы:',reply_markup=server_keyboard());return
+        await callback.answer();await screen(callback.message,'Подключённые серверы:',reply_markup=server_keyboard());return
     if action=='serverhelp':
-        await callback.answer();await callback.message.answer('Создание подключений к VPS — в Site Control → Серверы.');return
+        await callback.answer();await screen(callback.message,'Создание подключений к VPS — в Site Control → Серверы.');return
     if action=='site' and len(parts)==3 and parts[2].isdigit():
         await callback.answer()
         pid=int(parts[2]);site=store.get_site(pid) if pid else None
-        if pid and not site:await callback.message.answer('Проект не найден');return
+        if pid and not site:await screen(callback.message,'Проект не найден');return
         title=site['client_name'] if site else 'Наша платформа'
         kb=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text='Загрузить ZIP или файл',callback_data=f'sc:pfile:{pid}')],
             [InlineKeyboardButton(text='Резервные копии',callback_data=f'sc:pbacks:{pid}')],
             [InlineKeyboardButton(text='Открыть Mini App',web_app=WebAppInfo(url=miniapp_url(callback.from_user.id)))],
             [InlineKeyboardButton(text='Назад к проектам',callback_data='sc:sites')]])
-        await callback.message.answer(title+' · проект',reply_markup=kb)
+        await screen(callback.message,title+' · проект',reply_markup=kb)
         return
     if action=='pfile' and len(parts)==3 and parts[2].isdigit():
         await callback.answer()
         PROJECT_UPLOAD[callback.from_user.id]=(int(parts[2]),time.time()+900)
-        await callback.message.answer('Отправьте отдельный файл или ZIP документом. После проверки выберете целевой VPS. Подтверждение действует 15 минут.')
+        await screen(callback.message,'Отправьте отдельный файл или ZIP документом. После проверки выберете целевой VPS. Подтверждение действует 15 минут.')
         return
     if action=='pbacks' and len(parts)==3 and parts[2].isdigit():
         await callback.answer()
         pid=int(parts[2]);backups=project_files.list_backups(pid)[:8]
-        if not backups:await callback.message.answer('Для этого проекта бэкапов нет. Создать копию можно в Mini App.');return
+        if not backups:await screen(callback.message,'Для этого проекта бэкапов нет. Создать копию можно в Mini App.');return
+        rows=[]
         for b in backups:
-            kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Скачать ZIP',callback_data=f'sc:bdown:{pid}:{b["id"]}')]])
-            await callback.message.answer(f'Бэкап {b["id"][:8]} · {b["server_name"]} · {operations.pretty_time(b["created_at"])}',reply_markup=kb)
+            rows.append([InlineKeyboardButton(text=f'↓ {b["id"][:8]} · {b["server_name"][:23]}',callback_data=f'sc:bdown:{pid}:{b["id"]}')])
+        rows.append([InlineKeyboardButton(text='Назад',callback_data=f'sc:site:{pid}')])
+        await screen(callback.message,'Резервные копии проекта. Выберите архив:',reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
         return
     if action=='bdown' and len(parts)==4 and parts[2].isdigit():
         await callback.answer()
@@ -475,7 +498,7 @@ async def callbacks(callback:CallbackQuery):
         try:
             _,archive=project_files.lookup_backup(pid,bid)
             if archive.stat().st_size>45*1024*1024:
-                await callback.message.answer('Архив крупный, скачайте его в Mini App.');return
+                await screen(callback.message,'Архив крупный, скачайте его в Mini App.');return
             from aiogram.types import FSInputFile
             await callback.message.answer_document(FSInputFile(archive,filename=f'project-{pid}-{bid}.zip'))
         except Exception:await send_error(callback.message,'Не удалось скачать бэкап')
@@ -483,12 +506,12 @@ async def callbacks(callback:CallbackQuery):
     if action=='server' and len(parts)==3 and parts[2].isdigit():
         await callback.answer()
         sid=int(parts[2]);server=store.get_server(sid)
-        if not server:await callback.message.answer('Сервер не найден');return
+        if not server:await screen(callback.message,'Сервер не найден');return
         kb=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text='Нагрузка',callback_data=f'sc:tmpl:{sid}:uptime'),InlineKeyboardButton(text='Диск',callback_data=f'sc:tmpl:{sid}:disk')],
             [InlineKeyboardButton(text='Память',callback_data=f'sc:tmpl:{sid}:memory'),InlineKeyboardButton(text='Служба',callback_data=f'sc:tmpl:{sid}:site_status')],
             [InlineKeyboardButton(text='Логи',callback_data=f'sc:tmpl:{sid}:site_logs'),InlineKeyboardButton(text='Перезапуск',callback_data=f'sc:tmpl:{sid}:site_restart')]])
-        await callback.message.answer(f'{server["name"]} · {server["host"]}',reply_markup=kb);return
+        await screen(callback.message,f'{server["name"]} · {server["host"]}',reply_markup=kb);return
     if action=='tmpl' and len(parts)==4 and parts[2].isdigit():
         await callback.answer();await prepare_remote(callback.message,int(parts[2]),parts[3]);return
     if len(parts)!=3:await callback.answer('Неверный запрос',show_alert=True);return
@@ -503,7 +526,7 @@ async def callbacks(callback:CallbackQuery):
         await callback.message.edit_text('Создаётся резервная копия и обновляются файлы…')
         try:
             result=await asyncio.to_thread(project_files.deploy,pid,rid,sid or None)
-            await callback.message.answer('Файлы опубликованы. Бэкап: '+result['backup']['id'][:8]+'. Изменения Python могут потребовать перезапуска службы.')
+            await screen(callback.message,'Файлы опубликованы. Бэкап: '+result['backup']['id'][:8]+'. Изменения Python могут потребовать перезапуска службы.')
         except Exception:await send_error(callback.message,'Ошибка публикации файлов')
         return
     if action=='run' and pending[2]=='remote':
@@ -526,7 +549,7 @@ async def callbacks(callback:CallbackQuery):
         PENDING.pop(token,None)
         _,uid,role,_=pending
         try:changed=registry.change(callback.from_user.id,uid,role)
-        except Exception as exc:await callback.answer('Не выполнено',show_alert=True);await callback.message.answer(str(exc)[:600]);return
+        except Exception as exc:await callback.answer('Не выполнено',show_alert=True);await screen(callback.message,str(exc)[:600]);return
         await callback.answer();await callback.message.edit_text(('Администратор добавлен.' if role=='grant' else 'Доступ отозван.') if changed else 'Изменений нет.')
         await show_admins(callback.message)
         return

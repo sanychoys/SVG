@@ -20,7 +20,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from . import store
-from . import diagnostics, miniapp_auth, remote, project_files, local_console
+from . import diagnostics, miniapp_auth, remote, project_files, local_console, self_update
 
 app = FastAPI(title='Site Control API', docs_url=None, redoc_url=None, openapi_url=None)
 registry = None
@@ -152,7 +152,7 @@ def readiness():
                 db.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
     except Exception:
         raise HTTPException(503, 'Database unavailable')
-    return {'status':'ok','service':'Site Control','version':'1.7.0'}
+    return {'status':'ok','service':'Site Control','version':'1.8.0'}
 
 
 @app.get('/api/sc/health')
@@ -629,6 +629,32 @@ def projects(request:Request):
         {'id':s['id'],'name':s['client_name'],'kind':'client','slug':s['slug'],'bot_name':s['bot_name'],'new_leads':s['new_leads'],'archived_at':s.get('archived_at')}
         for s in store.list_sites()]}
 
+
+@app.post('/api/sc/platform/updates/stage')
+async def self_update_stage(request: Request,filename:str='Site_Control.zip'):
+    write_guard(request)
+    chunks=[]; size=0
+    async for chunk in request.stream():
+        size+=len(chunk)
+        if size>self_update.MAX_SIZE:raise HTTPException(413,'Установочный ZIP больше 25 МБ')
+        chunks.append(chunk)
+    try:return {'update':await asyncio.to_thread(self_update.stage,b''.join(chunks),filename)}
+    except ValueError as exc:error(exc)
+
+@app.post('/api/sc/platform/updates/{rid}/install')
+async def self_update_install(rid:str,request:Request):
+    write_guard(request)
+    body=await json_body(request,1000)
+    if body.get('confirm')!='INSTALL':raise HTTPException(400,'Подтвердите установку')
+    try:return {'update':await asyncio.to_thread(self_update.launch,rid)}
+    except (ValueError,LookupError) as exc:error(exc)
+    except RuntimeError as exc:raise HTTPException(503,str(exc))
+
+@app.get('/api/sc/platform/updates/{rid}')
+def self_update_status(rid:str,request:Request):
+    require_admin(request)
+    try:return {'update':self_update.status(rid)}
+    except (ValueError,LookupError) as exc:error(exc)
 
 @app.get('/api/sc/projects/{project_id}/releases')
 def releases(project_id:int,request:Request):
