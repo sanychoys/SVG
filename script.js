@@ -66,7 +66,7 @@
             $('#loginStep').hidden=true;await bootstrap();
           }
         } catch (e) {
-          if (attempts % 10 === 0) console.info('Awaiting Telegram confirmation');
+          // Wait quietly; the user sees progress on screen.
         }
       }, 5000);
     } catch (e) {
@@ -91,9 +91,9 @@
     const target=$('#projects');
     if (!state.sites.length) {target.innerHTML='<div class="empty-state"><h3>Здесь будут ваши сайты</h3><p>Создайте первый проект и настройте его внешний вид, контент и Telegram-бота.</p></div>';return;}
     target.innerHTML=state.sites.map((s,i)=>`<article class="project-card">
-      <div class="project-art"><span class="big-icon">${['◆','◌','▧','◇','▦'][i%5]}</span><span class="${s.published_version?'published':'draft-badge'}">${s.published_version?'● Опубликован':'○ Черновик'}</span></div>
+      <div class="project-art"><span class="big-icon">${esc(s.client_name.slice(0,1).toUpperCase())}</span><span class="${s.published_version?'published':'draft-badge'}">${s.published_version?'Опубликован':'Черновик'}</span></div>
       <div class="project-body"><div class="project-name">${esc(s.client_name)}</div><div class="project-domain">/api/sc/public/${esc(s.slug)}</div>
-      <div class="project-footer"><span>${Number(s.new_leads)} новых заявок · ${s.bot_name?'TG подключён':'Без TG-бота'}</span><button data-open-site="${Number(s.id)}">Открыть ↗</button></div></div></article>`).join('');
+      <div class="project-footer"><span>${Number(s.new_leads)} новых заявок · ${s.bot_name?'Бот подключён':'Без бота'}</span><button data-open-site="${Number(s.id)}">Редактировать →</button></div></div></article>`).join('');
     $$('[data-open-site]').forEach(el=>el.addEventListener('click',()=>openSite(Number(el.dataset.openSite))));
   }
   function renderBots() {

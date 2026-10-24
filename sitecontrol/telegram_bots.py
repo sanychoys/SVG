@@ -84,9 +84,9 @@ class ClientBotManager:
             bot=await self.bot_for(info['id'])
             try:
                 await bot.send_message(site['client_telegram_id'],
-                    f'Новая заявка #{lead["id"]} на сайте {site["slug"]}.\nНажмите /leads для просмотра.')
+                    f'Новая заявка #{lead["id"]}\nИмя: {lead["customer"][:120]}\nКонтакт: {lead["contact"][:120]}\n\n/leads — все заявки')
             except Exception:
-                log.warning('Cannot deliver lead notification for client site %s',site['id'])
+                log.exception('Cannot deliver lead notification for client site %s',site['id'])
 
     async def close(self):
         for bot in self.cache.values():
@@ -105,23 +105,52 @@ def resolve(bot:Bot,user_id):
     return store.tenant_owner(bot_id,int(user_id))
 
 
+def client_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='Заявки',callback_data='cl:leads'),
+         InlineKeyboardButton(text='Товары и услуги',callback_data='cl:items')],
+        [InlineKeyboardButton(text='Данные сайта',callback_data='cl:content'),
+         InlineKeyboardButton(text='Как изменить',callback_data='cl:help')],
+    ])
+
+
 def help_text():
-    return ("Управление сайтом\n\n"
-            "/leads — заявки\n"
-            "/content — текущие данные\n"
-            "/items — товары и услуги\n"
-            "/title Текст — название сайта\n"
-            "/tagline Текст — главный подзаголовок\n"
-            "/description Текст — описание компании\n"
+    return ("Изменение сайта\n\n"
+            "/title Название — название компании\n"
+            "/tagline Текст — подзаголовок\n"
+            "/description Текст — описание\n"
             "/phone Телефон — контакты\n"
-            "/address Адрес — местоположение\n"
+            "/address Адрес — адрес\n"
             "/hours График — часы работы\n"
-            "/additem Название | Цена | Описание — добавить услугу\n"
-            "/price ID | Цена — изменить стоимость\n"
-            "/removeitem ID — удалить услугу\n"
-            "/done ID — закрыть заявку\n"
-            "/myid — узнать свой Telegram ID\n\n"
-            "Изменения клиента появляются на опубликованном сайте сразу.")
+            "/additem Название | Цена | Описание — добавить\n"
+            "/price ID | Цена — изменить цену\n"
+            "/removeitem ID — удалить товар/услугу\n"
+            "/done ID — закрыть заявку\n\n"
+            "Все изменения применяются сразу.")
+
+
+def content_text(site):
+    d=site['draft']
+    return (f'Данные сайта\n\nНазвание: {d["title"]}\n'
+            f'Подзаголовок: {d["tagline"]}\n'
+            f'Телефон: {d["phone"] or "—"}\n'
+            f'Адрес: {d["address"] or "—"}\n'
+            f'Часы работы: {d["hours"] or "—"}')[:3900]
+
+
+def leads_text(site):
+    rows=store.leads(site['id'],10)
+    if not rows:return 'Новых заявок пока нет.'
+    values={'new':'Новая','in_progress':'В работе','done':'Завершена','rejected':'Отклонена'}
+    return ('\n\n'.join(f'#{r["id"]} · {values.get(r["status"],r["status"])}\n'
+        f'{r["customer"]} · {r["contact"]}\n{r["message"][:250]}' for r in rows)[:3850]
+        +'\n\nЗакрыть: /done ID')
+
+
+def items_text(site):
+    items=site['draft']['items']
+    if not items:return 'Товаров и услуг пока нет. Добавить: /additem Название | Цена | Описание'
+    return ('Товары и услуги\n\n'+'\n'.join(f'{i["id"]} · {i["name"]} — {i["price"]}' for i in items))[:3900]
 
 
 @client_dp.message(Command('myid'))
@@ -135,38 +164,44 @@ async def start(message:Message,bot:Bot):
     if not site:
         await message.answer('Этот бот предназначен для владельца сайта.\nДля подключения передайте администратору свой Telegram ID: /myid')
         return
-    await message.answer(f'Сайт: {site["draft"]["title"]}\n\n'+help_text())
+    if (message.text or '').split()[0].split('@')[0].lower() == '/help':
+        await message.answer(help_text(),reply_markup=client_keyboard())
+        return
+    await message.answer(f'Управление сайтом\n{site["draft"]["title"]}\n\nВыберите раздел:',reply_markup=client_keyboard())
 
 
 @client_dp.message(Command('content'))
 async def content(message:Message,bot:Bot):
     site=resolve(bot,message.from_user.id if message.from_user else None)
-    if not site:return
-    d=site['draft']
-    await message.answer(f'Название: {d["title"]}\nПодзаголовок: {d["tagline"]}\nТелефон: {d["phone"] or "—"}\nАдрес: {d["address"] or "—"}\nГрафик: {d["hours"] or "—"}\n\nИзменить: /help'[:3900])
+    if site:await message.answer(content_text(site),reply_markup=client_keyboard())
 
 
 @client_dp.message(Command('leads'))
 async def leads(message:Message,bot:Bot):
     site=resolve(bot,message.from_user.id if message.from_user else None)
-    if not site:return
-    rows=store.leads(site['id'],10)
-    if not rows:
-        await message.answer('Заявок ещё нет.')
-        return
-    lines=[]
-    for r in rows:
-        lines.append(f'#{r["id"]} [{r["status"]}] {r["customer"]}\nКонтакт: {r["contact"]}\n{r["message"][:300]}')
-    await message.answer('\n\n'.join(lines)[:3900]+'\n\nЗакрыть заявку: /done ID')
+    if site:await message.answer(leads_text(site),reply_markup=client_keyboard())
 
 
 @client_dp.message(Command('items'))
 async def items(message:Message,bot:Bot):
     site=resolve(bot,message.from_user.id if message.from_user else None)
-    if not site:return
-    items=site['draft']['items']
-    if not items:await message.answer('Товаров и услуг пока нет. Добавить: /additem Название | Цена | Описание');return
-    await message.answer('\n'.join(f'{i["id"]} · {i["name"]} — {i["price"]}' for i in items)[:3900])
+    if site:await message.answer(items_text(site),reply_markup=client_keyboard())
+
+
+@client_dp.callback_query(F.data.startswith('cl:'))
+async def client_menu(callback:CallbackQuery,bot:Bot):
+    site=resolve(bot,callback.from_user.id if callback.from_user else None)
+    if not site or not callback.message:
+        await callback.answer('Нет доступа',show_alert=True)
+        return
+    action=(callback.data or '').partition(':')[2]
+    results={'leads':lambda:leads_text(site),'items':lambda:items_text(site),
+             'content':lambda:content_text(site),'help':help_text}
+    if action not in results:
+        await callback.answer('Недоступно',show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(results[action](),reply_markup=client_keyboard())
 
 
 @client_dp.message(F.text.startswith('/'))
@@ -219,4 +254,4 @@ async def client_commands(message:Message,bot:Bot):
         except (ValueError,LookupError):await message.answer('Укажите номер существующей заявки: /done 123');return
         await message.answer('Заявка закрыта.')
         return
-    await message.answer('Команда не найдена. Посмотрите /help')
+    await message.answer('Выберите раздел в меню /start.',reply_markup=client_keyboard())

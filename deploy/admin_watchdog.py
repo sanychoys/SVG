@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""External SVGTracker watchdog. Runs outside svgtracker.service via systemd timer.
+"""Site Control watchdog. Uses the existing V48 watchdog timer and service name.
 
-The watchdog deliberately uses several health attempts before and after a restart.
-SVGTracker normally needs a few seconds to import dependencies, initialize SQLite,
-start Telegram polling and bind Uvicorn, so a single early probe must never create
-an outage alert.
+Notify only when availability changes or recovery requires restart.
+Errors are detailed; routine healthy checks remain silent.
 """
 from __future__ import annotations
+import fcntl
 import json
 import os
 import subprocess
 import sys
 import time
+import traceback
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
@@ -94,12 +94,11 @@ def notify(text):
     token = bot_token()
     if not token:
         return
-    data = urllib.parse.urlencode({"chat_id": str(ADMIN_ID), "text": text[:3900]}).encode()
-    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data, method="POST")
-    try:
-        urllib.request.urlopen(req, timeout=8).read(1024)
-    except Exception:
-        pass
+    for i in range(0,len(text),3700):
+        data = urllib.parse.urlencode({"chat_id": str(ADMIN_ID), "text": text[i:i+3700]}).encode()
+        req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data, method="POST")
+        try:urllib.request.urlopen(req, timeout=8).read(1024)
+        except Exception:pass
 
 
 def read_state():
@@ -117,15 +116,16 @@ def write_state(data):
 
 
 def deploy_in_progress() -> bool:
-    if not DEPLOY_LOCK.exists():
-        return False
+    """Check the *actual* lock, not file mtime (lock file is intentionally persistent)."""
+    if not DEPLOY_LOCK.exists():return False
     try:
-        if time.time() - DEPLOY_LOCK.stat().st_mtime < 20 * 60:
-            return True
-        DEPLOY_LOCK.unlink(missing_ok=True)
+        with DEPLOY_LOCK.open('r+b') as handle:
+            try:fcntl.flock(handle.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:return True
+            fcntl.flock(handle.fileno(),fcntl.LOCK_UN)
+        return False
     except OSError:
         return True
-    return False
 
 
 def main():
@@ -139,7 +139,7 @@ def main():
             if state.get("down"):
                 state.update({"down": False, "recovered_at": now_iso(), "last_check": now_iso()})
                 write_state(state)
-                notify(f"✅ SVGTracker watchdog\n🕒 {local_now_text()}\nAPI снова доступен.")
+                notify(f"Site Control · {local_now_text()}\nAPI восстановлено")
             return 0
         if attempt + 1 < INITIAL_ATTEMPTS:
             time.sleep(INITIAL_DELAY)
@@ -158,12 +158,13 @@ def main():
     if before - last_notice >= COOLDOWN:
         state["last_notice_epoch"] = before
         if recovered:
-            notify(f"⚠️ SVGTracker watchdog\n🕒 {local_now_text()}\nAPI действительно перестал отвечать. Сервис перезапущен и снова работает.")
+            notify(f"Site Control · {local_now_text()}\nИзменение: API автоматически перезапущено и работает")
         else:
             detail = (proc.stderr or proc.stdout or "restart completed but API is still unavailable").strip()
             notify(
-                "🚨 SVGTracker watchdog\n"
-                f"API недоступен после restart и {int(RESTART_TIMEOUT)} секунд ожидания.\n\n{detail[:1800]}"
+                "Site Control · ошибка API\n"
+                f"{local_now_text()}\nAPI недоступен после перезапуска ({int(RESTART_TIMEOUT)} с).\n\n"
+                f"systemctl exit={proc.returncode}\n{detail}"
             )
     write_state(state)
     # Keep the timer unit healthy; the outage itself is recorded in state and Telegram.

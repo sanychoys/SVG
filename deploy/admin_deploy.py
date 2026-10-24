@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Safe, admin-triggered SVGTracker deploy/backup/rollback helper.
+"""Safe Site Control deploy/backup/rollback helper, compatible with V48.
 
 This helper is intentionally stdlib-only so it can run in a transient systemd
 unit even while svgtracker.service is being restarted.
@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import traceback
 import time
 import urllib.parse
 import urllib.request
@@ -51,7 +52,7 @@ MAX_FILES = 800
 HEALTH_URL = "http://127.0.0.1:8000/api/test"
 GITHUB_KEY_PATH = Path(os.environ.get("SVGTRACKER_GITHUB_KEY", "/root/.ssh/svgtracker_github"))
 GITHUB_STATE_FILE = STATE_DIR / "github.json"
-GIT_AUTHOR_NAME = os.environ.get("SVGTRACKER_GIT_AUTHOR_NAME", "SVGTracker Deploy Bot")
+GIT_AUTHOR_NAME = os.environ.get("SVGTRACKER_GIT_AUTHOR_NAME", "Site Control Deploy")
 GIT_AUTHOR_EMAIL = os.environ.get("SVGTRACKER_GIT_AUTHOR_EMAIL", "deploy@svgtracker.local")
 TIMEZONE_FILE = STATE_DIR / "timezone.json"
 
@@ -273,7 +274,7 @@ def validate_release(root: Path, relpaths: list[Path]) -> list[str]:
     notes: list[str] = []
     present = {str(path).replace("\\", "/") for path in relpaths}
     if not (CORE_FILES & present):
-        raise ValueError("Archive does not contain any SVGTracker core files")
+        raise ValueError("Archive does not contain any application core files")
     for rel in relpaths:
         if rel.suffix.lower() == ".py":
             source = (root / rel).read_text(encoding="utf-8")
@@ -575,20 +576,24 @@ def load_bot_token() -> str | None:
 
 
 def telegram_notify(chat_id: str | int | None, text: str) -> None:
+    """Short success notifications; full error reports may span multiple messages."""
     if not chat_id:
         return
     token = load_bot_token()
     if not token:
         return
-    payload = urllib.parse.urlencode({"chat_id": str(chat_id), "text": text[:3900]}).encode()
-    request = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage", data=payload, method="POST"
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=8) as response:
-            response.read(1024)
-    except Exception:
-        pass
+    parts = [text[i:i+3700] for i in range(0, len(text), 3700)] or ['']
+    for i, part in enumerate(parts):
+        payload = urllib.parse.urlencode({"chat_id": str(chat_id), "text": part}).encode()
+        request = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage", data=payload, method="POST"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=8) as response:
+                response.read(1024)
+        except Exception:
+            # Never fail deploy due to notification delivery.
+            pass
 
 
 
@@ -681,7 +686,7 @@ def ensure_github_key() -> str:
             GITHUB_KEY_PATH.unlink(missing_ok=True)
         pub.unlink(missing_ok=True)
         proc = subprocess.run(
-            ["ssh-keygen", "-t", "ed25519", "-C", "SVGTracker Deploy", "-f", str(GITHUB_KEY_PATH), "-N", ""],
+            ["ssh-keygen", "-t", "ed25519", "-C", "Site Control Deploy", "-f", str(GITHUB_KEY_PATH), "-N", ""],
             capture_output=True, text=True, timeout=20,
         )
         if proc.returncode != 0:
@@ -792,7 +797,7 @@ def git_commit_and_push(relpaths: list[Path], deployment_id: str, branch: str) -
     staged = run_git(["diff", "--cached", "--name-only"]).stdout.strip()
     if not staged:
         return run_git(["rev-parse", "--short", "HEAD"]).stdout.strip()
-    message = f"Deploy {deployment_id} via SVGTracker bot"
+    message = f"Deploy {deployment_id} via Site Control bot"
     run_git(["commit", "-m", message], timeout=40)
     commit = run_git(["rev-parse", "--short", "HEAD"]).stdout.strip()
     run_git(["push", "origin", f"HEAD:refs/heads/{branch}"], timeout=60, env=github_env())
@@ -842,7 +847,7 @@ def github_sync_current() -> dict:
     paths = safe_dirty_paths()
     if paths:
         run_git(["add", "--", *paths])
-        run_git(["commit", "-m", f"Sync production {local_now().strftime('%Y-%m-%d %H:%M %z')} via SVGTracker bot"], timeout=40)
+        run_git(["commit", "-m", f"Sync production {local_now().strftime('%Y-%m-%d %H:%M %z')} via Site Control bot"], timeout=40)
     commit = run_git(["rev-parse", "--short", "HEAD"]).stdout.strip()
     run_git(["push", "origin", f"HEAD:refs/heads/{branch}"], timeout=60, env=github_env())
     return {"commit": commit, "branch": branch, "files": paths, "repository": github_repo_slug()}
@@ -879,7 +884,7 @@ def _deploy_unlocked(zip_path: Path, admin_chat: str | int | None) -> int:
                 message = "ZIP проверен: изменений относительно production нет. GitHub и VPS остаются без изменений."
                 write_status("no_changes", message, deployment_id=deployment_id, archive=zip_path.name)
                 deploy_log("no-changes", message, deployment_id=deployment_id)
-                telegram_notify(admin_chat, "SVGTracker deploy\n\n" + message)
+                telegram_notify(admin_chat, "Site Control\n" + local_now_text() + "\nИзменений нет")
                 return 0
             backup, manifest = create_backup(changed_targets, include_db=False, label="predeploy")
             deploy_log("backup", "Pre-deploy backup created", deployment_id=deployment_id, backup=backup.name, files=len(changed_targets))
@@ -908,7 +913,7 @@ def _deploy_unlocked(zip_path: Path, admin_chat: str | int | None) -> int:
                     backup=backup.name, files=changed, health=health_detail,
                 )
                 deploy_log("rollback", message, deployment_id=deployment_id, backup=backup.name)
-                telegram_notify(admin_chat, "⚠️ SVGTracker deploy\n\n" + message)
+                telegram_notify(admin_chat, "Site Control · обновление отменено\n"+local_now_text()+"\n\n"+message)
                 return 2
 
             write_status(
@@ -937,7 +942,7 @@ def _deploy_unlocked(zip_path: Path, admin_chat: str | int | None) -> int:
                     backup=backup.name, files=changed,
                 )
                 deploy_log("github-rollback", message, deployment_id=deployment_id)
-                telegram_notify(admin_chat, "❌ SVGTracker deploy\n\n" + message)
+                telegram_notify(admin_chat, "Site Control · ошибка обновления\n"+local_now_text()+"\n\n"+message)
                 return 3
 
             message = (
@@ -952,13 +957,13 @@ def _deploy_unlocked(zip_path: Path, admin_chat: str | int | None) -> int:
                 backup=backup.name, files=changed, health="ok", notes=notes, github_commit=commit,
             )
             deploy_log("success", message, deployment_id=deployment_id, commit=commit)
-            telegram_notify(admin_chat, "✅ SVGTracker deploy\n\n" + message)
+            telegram_notify(admin_chat, "Site Control · обновлено\n" + local_now_text() + "\nИзменено файлов: " + str(len(changed)))
             return 0
     except Exception as exc:
         message = f"Deploy error: {type(exc).__name__}: {exc}"
-        write_status("error", message, deployment_id=deployment_id, archive=zip_path.name)
+        write_status("error", message, deployment_id=deployment_id, archive=zip_path.name, error_trace=traceback.format_exc())
         deploy_log("error", message, deployment_id=deployment_id, archive=zip_path.name)
-        telegram_notify(admin_chat, "❌ SVGTracker deploy\n\n" + message[:3500])
+        telegram_notify(admin_chat, "Site Control · ошибка установки\n" + local_now_text() + "\n\n" + message + "\n\n" + traceback.format_exc())
         return 1
     finally:
         try:
@@ -988,12 +993,12 @@ def _rollback_unlocked(backup: Path, admin_chat: str | int | None) -> int:
             raise RuntimeError(f"Rollback target failed health-check: {detail}")
         message = f"Rollback выполнен: {backup.name}\nВремя: {local_now_text()}\nSafety backup: {safety_backup.name}\nAPI: OK"
         write_status("rollback_success", message, backup=backup.name, safety_backup=safety_backup.name)
-        telegram_notify(admin_chat, "✅ SVGTracker rollback\n\n" + message)
+        telegram_notify(admin_chat, "Site Control · откат выполнен\n"+local_now_text()+"\nИзменение: восстановлена предыдущая версия")
         return 0
     except Exception as exc:
         message = f"Rollback error: {type(exc).__name__}: {exc}"
-        write_status("rollback_error", message, backup=backup.name if backup else None)
-        telegram_notify(admin_chat, "❌ SVGTracker rollback\n\n" + message)
+        write_status("rollback_error", message, backup=backup.name if backup else None, error_trace=traceback.format_exc())
+        telegram_notify(admin_chat, "Site Control · ошибка отката\n"+local_now_text()+"\n\n"+message+"\n\n"+traceback.format_exc())
         return 1
 
 
@@ -1011,8 +1016,7 @@ def _exclusive_worker(operation: str, func, admin_chat):
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             telegram_notify(admin_chat,
-                f"⚠️ SVGTracker: {operation} не запущен — другое обновление уже выполняется. "
-                "Дождись /deploy_status и не отправляй повторно ZIP.")
+                "Site Control · установка/откат уже выполняется. Новая задача не запущена.")
             return 4
         os.ftruncate(fd, 0)
         os.write(fd, json.dumps({"operation": operation, "started_at": utc_now()}).encode())
