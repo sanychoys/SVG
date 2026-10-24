@@ -4,8 +4,9 @@
   const $$ = selector => Array.from(document.querySelectorAll(selector));
   const esc = window.SCUtils.escape;
   const fmt = window.SCUtils.date;
-  const state = { sites: [], bots: [], servers: [], hostScanToken:null, site: null, tab: 'content', page: 'sites', currentCode: null, poller: null };
+  const state = { sites: [], bots: [], servers: [], admins: [], ownerId:0, hostScanToken:null, site: null, tab: 'content', page: 'sites', currentCode: null, poller: null };
   let toastTimer;
+  let bootPromise = null;
   function notify(message, isError = false) {
     const node = $('#toast'); node.textContent = String(message);
     node.classList.toggle('error', isError); node.classList.add('show');
@@ -25,8 +26,8 @@
   }
   function showPage(page) {
     state.page = page;
-    ['Sites','Editor','Bots','Servers'].forEach(v => $(`#view${v}`).hidden = v.toLowerCase() !== page);
-    $('#breadcrumb').textContent = page === 'sites' ? 'Проекты' : page === 'bots' ? 'Telegram-боты' : page === 'servers' ? 'Серверы' : (state.site?.client_name || 'Редактор');
+    ['Sites','Editor','Bots','Servers','Admins'].forEach(v => $(`#view${v}`).hidden = v.toLowerCase() !== page);
+    $('#breadcrumb').textContent = page === 'sites' ? 'Проекты' : page === 'bots' ? 'Telegram-боты' : page === 'servers' ? 'Серверы' : page === 'admins' ? 'Администраторы' : (state.site?.client_name || 'Редактор');
     $$('.nav').forEach(node => node.classList.toggle('active', node.dataset.nav === page));
     $('#sidebar').classList.remove('open');
     window.scrollTo({top:0,behavior:'instant'});
@@ -35,39 +36,45 @@
     $('#auth').hidden = loggedIn;
     $('#app').hidden = !loggedIn;
   }
-  let miniAuthAttempted = false;
-  const miniMode = new URLSearchParams(window.location.search).get('mode') === 'miniapp';
+  const miniMode = new URLSearchParams(window.location.search).get('mode') === 'miniapp' || Boolean(window.Telegram?.WebApp?.initData);
   function denyMiniApp() {
     $('#app').hidden = true;
     $('#auth').hidden = true;
     $('#denied').hidden = false;
   }
   async function tryMiniAppAuth() {
-    if (miniAuthAttempted) return false;
     const tg = window.Telegram?.WebApp;
-    if (!tg?.initData) return false;
-    miniAuthAttempted = true;
+    if (!tg?.initData) {$('#miniAuthReason').textContent='Нет данных Telegram. Откройте панель кнопкой из главного бота.'; return false;}
     try {
-      tg.ready();tg.expand();document.body.classList.add('tg-miniapp');
+      tg.ready();tg.expand();document.body.classList.add('tg-miniapp');$('#logout').hidden=true;
       const result=await api('/api/sc/auth/miniapp',{method:'POST',body:{init_data:tg.initData}});
       return Boolean(result.authorized);
-    } catch (_) { return false; }
+    } catch (error) { $('#miniAuthReason').textContent=error.message||'Проверка Telegram не удалась';return false; }
   }
   async function bootstrap() {
+    if (bootPromise) return bootPromise;
+    bootPromise=(async()=>{
     if (miniMode) {
       $('#app').hidden=true;$('#auth').hidden=true;
       if (!await tryMiniAppAuth()) {denyMiniApp();return;}
       try {
         const me = await api('/api/sc/auth/me');
         $('#adminLabel').textContent = 'Admin #'+me.admin_id;
-        $('#denied').hidden=true;applyAuth(true);await reloadAll();return;
-      } catch (_) {denyMiniApp();return;}
+      } catch (error) {
+        $('#miniAuthReason').textContent=error.message||'Не удалось проверить права администратора';
+        denyMiniApp();return;
+      }
+      $('#denied').hidden=true;applyAuth(true);
+      try {await reloadAll();} catch(error) {notify('Не удалось загрузить данные: '+error.message,true);}
+      return;
     }
     try {
       const me=await api('/api/sc/auth/me');
       $('#adminLabel').textContent='Admin #'+me.admin_id;
       applyAuth(true);await reloadAll();
     } catch (_) {applyAuth(false);}
+    })();
+    try {return await bootPromise;} finally {bootPromise=null;}
   }
   async function startLogin() {
     $('#loginBtn').disabled = true;
@@ -111,6 +118,40 @@
     $('#navCount').textContent=sites.sites.length;
     $('#projectCount').textContent=sites.sites.length+' сайтов';
     renderSites();renderBots();renderServers();
+  }
+  async function loadAdmins() {
+    const result=await api('/api/sc/admins');
+    state.admins=result.admins;state.ownerId=result.owner_id;
+    $('#adminCount').textContent=result.admins.length+' человек';
+    const list=$('#adminList');list.replaceChildren();
+    result.admins.forEach(id=>{
+      const card=document.createElement('div');card.className='admin-member';
+      const identity=document.createElement('div');identity.className='admin-identity';
+      const avatar=document.createElement('span');avatar.className='admin-avatar';avatar.textContent='A';
+      const info=document.createElement('div');
+      const title=document.createElement('strong');title.textContent='Telegram ID '+id;
+      const sub=document.createElement('small');sub.textContent=id===state.ownerId?'Основной администратор · защищён':'Администратор · полный доступ';
+      info.append(title,sub);identity.append(avatar,info);card.append(identity);
+      if(id!==state.ownerId){
+        const remove=document.createElement('button');remove.type='button';remove.className='secondary admin-remove';remove.textContent='Удалить';
+        remove.addEventListener('click',safeAction(async()=>{
+          if(!confirm('Отозвать полный доступ пользователя '+id+'?'))return;
+          await api('/api/sc/admins/'+id+'?confirm=REMOVE',{method:'DELETE'});
+          await loadAdmins();notify('Доступ отозван');
+        }));card.append(remove);
+      }
+      list.append(card);
+    });
+  }
+  async function addAdmin(event){
+    event.preventDefault();
+    const id=$('#adminNewId').value.trim();
+    if(!/^[1-9][0-9]{0,18}$/.test(id))return notify('Введите корректный Telegram ID',true);
+    if(!confirm('Предоставить полный доступ к серверам, проектам и заявкам пользователю '+id+'?'))return;
+    try {
+      await api('/api/sc/admins',{method:'POST',body:{telegram_id:id,confirm:'ADD'}});
+      $('#adminNewId').value='';await loadAdmins();notify('Администратор добавлен');
+    } catch(e){notify(e.message,true);}
   }
   function renderSites() {
     const target=$('#projects');
@@ -278,11 +319,11 @@
       const sdk=document.createElement('script');
       sdk.src='https://telegram.org/js/telegram-web-app.js';
       sdk.async=true;
-      sdk.onload=()=>{finish(); if (window.Telegram?.WebApp?.initData && (miniMode || ($('#auth') && !$('#auth').hidden))) bootstrap();};
+      sdk.onload=()=>{finish(); if (miniMode && !$('#denied').hidden && window.Telegram?.WebApp?.initData) bootstrap();}; // Retry only after a visible deny, never start simultaneous checks.
       sdk.onerror=finish;
       document.head.appendChild(sdk);
       // Browser log-in remains available even if Telegram's CDN is unavailable.
-      setTimeout(finish,1600);
+      setTimeout(finish,miniMode ? 5000 : 1600);
     });
   }
   document.addEventListener('DOMContentLoaded',()=>{
@@ -290,7 +331,8 @@
     $('#copyCode').addEventListener('click',safeAction(async()=>{await SCUtils.copy($('#loginCode').textContent);notify('Команда скопирована');}));
     $('#logout').addEventListener('click',safeAction(async()=>{await api('/api/sc/auth/logout',{method:'POST'});if(miniMode)denyMiniApp();else applyAuth(false);$('#sidebar').classList.remove('open');}));
     $('#mobileMenu').addEventListener('click',()=>$('#sidebar').classList.toggle('open'));
-    $$('[data-nav]').forEach(n=>n.addEventListener('click',async()=>{showPage(n.dataset.nav);if(['bots','servers'].includes(n.dataset.nav))await reloadAll().catch(e=>notify(e.message,true));}));
+    $$('[data-nav]').forEach(n=>n.addEventListener('click',async()=>{showPage(n.dataset.nav);if(['bots','servers'].includes(n.dataset.nav))await reloadAll().catch(e=>notify(e.message,true));if(n.dataset.nav==='admins')await loadAdmins().catch(e=>notify(e.message,true));}));
+    $('#adminAddForm').addEventListener('submit',addAdmin);
     $('#createBtn').addEventListener('click',openNewModal);
     $('#serverCreateBtn').addEventListener('click',safeAction(createServer));
     $('#makeSshKey').addEventListener('click',safeAction(async()=>{

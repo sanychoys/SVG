@@ -72,7 +72,7 @@ def require_admin(request: Request):
 
 
 def write_guard(request):
-    require_admin(request)
+    actor = require_admin(request)
     if request.headers.get('X-Site-Control') != '1':
         raise HTTPException(403, 'Недопустимый запрос')
     origin = request.headers.get('origin')
@@ -84,6 +84,7 @@ def write_guard(request):
                 raise HTTPException(403, 'Неверный Origin')
         except ValueError:
             raise HTTPException(403,'Неверный Origin')
+    return actor
 
 
 async def json_body(request, max_bytes=140_000):
@@ -113,7 +114,7 @@ def readiness():
                 db.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
     except Exception:
         raise HTTPException(503, 'Database unavailable')
-    return {'status':'ok','service':'Site Control','version':'1.3.0'}
+    return {'status':'ok','service':'Site Control','version':'1.4.0'}
 
 
 @app.get('/api/sc/health')
@@ -164,12 +165,39 @@ async def auth_miniapp(request:Request):
     try: admin_id=miniapp_auth.verify(body.get('init_data'), BOT_TOKEN)
     except ValueError:raise HTTPException(401,'Не удалось подтвердить Telegram Mini App')
     if not registry.is_admin(admin_id):raise HTTPException(403,'Нет доступа администратора')
-    session=store.create_session(admin_id)
+    # Mini App NEVER creates a reusable browser login cookie. Subsequent requests
+    # supply signed initData and are authorized independently of web sessions.
     response=JSONResponse({'authorized':True,'admin_id':admin_id})
-    response.set_cookie(COOKIE,session,httponly=True,secure=True,samesite='lax',max_age=7*86400,path='/')
     response.headers['Cache-Control']='no-store'
     site_log.info('Вход администратора через Telegram Mini App')
     return response
+
+
+@app.get('/api/sc/admins')
+def list_admins(request:Request):
+    require_admin(request)
+    return {'owner_id':registry.owner_id,'admins':registry.list_ids()}
+
+
+@app.post('/api/sc/admins')
+async def add_admin(request:Request):
+    actor=write_guard(request)
+    body=await json_body(request,1000)
+    if body.get('confirm')!='ADD':raise HTTPException(400,'Требуется подтверждение ADD')
+    try:changed=registry.change(actor,body.get('telegram_id'),'grant')
+    except (ValueError,TypeError,PermissionError) as exc:raise HTTPException(400,str(exc))
+    site_log.info('Обновлены права администраторов')
+    return {'ok':True,'changed':changed,'admins':registry.list_ids()}
+
+
+@app.delete('/api/sc/admins/{telegram_id}')
+def remove_admin(telegram_id:int,request:Request,confirm:str=''):
+    actor=write_guard(request)
+    if confirm!='REMOVE':raise HTTPException(400,'Требуется подтверждение REMOVE')
+    try:changed=registry.change(actor,telegram_id,'revoke')
+    except (ValueError,TypeError,PermissionError) as exc:raise HTTPException(400,str(exc))
+    site_log.info('Отозваны права администратора')
+    return {'ok':True,'changed':changed,'admins':registry.list_ids()}
 
 
 @app.get('/api/sc/auth/me')

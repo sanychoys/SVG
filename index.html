@@ -6,19 +6,20 @@
   <meta name="theme-color" content="#0C0D0F">
   <title>Site Control — управление сайтами</title>
   <meta name="description" content="Управление клиентскими сайтами, заявками и Telegram-ботами.">
-  <link rel="stylesheet" href="style.css?v=sc130">
-  <link rel="stylesheet" href="product.css?v=sc130">
-  <script src="product.js?v=sc130" defer></script>
-  <script src="script.js?v=sc130" defer></script>
+  <link rel="stylesheet" href="style.css?v=sc140">
+  <link rel="stylesheet" href="product.css?v=sc140">
+  <script src="product.js?v=sc140" defer></script>
+  <script src="script.js?v=sc140" defer></script>
 </head>
 <body>
   <div class="app" id="app" hidden>
     <aside class="sidebar" id="sidebar">
-      <div class="brand"><div class="brand-mark"><span></span><span></span><span></span><span></span></div><div><strong>SITE CONTROL</strong><small>СТУДИЯ / V1.3</small></div></div>
+      <div class="brand"><div class="brand-mark"><span></span><span></span><span></span><span></span></div><div><strong>SITE CONTROL</strong><small>СТУДИЯ / V1.4</small></div></div>
       <div class="side-group"><div class="side-label">ПЛАТФОРМА</div>
         <button class="nav active" data-nav="sites"><span class="nav-icon">▦</span> Проекты <span class="nav-count" id="navCount">0</span></button>
         <button class="nav" data-nav="bots"><span class="nav-icon">◎</span> Telegram-боты</button>
         <button class="nav" data-nav="servers"><span class="nav-icon">⌘</span> Серверы</button>
+        <button class="nav" data-nav="admins"><span class="nav-icon">◇</span> Администраторы</button>
       </div>
       <div class="side-bottom"><div class="server-indicator"><span class="pulse"></span> Платформа работает</div>
         <button class="nav small" id="logout">Выйти</button><small>SITE CONTROL</small>
@@ -62,6 +63,14 @@
           </div>
         </section>
         <section id="viewBots" class="view" hidden><div class="page-head"><div><div class="eyebrow">ИНТЕГРАЦИИ</div><h1>Боты клиентов<span class="accent">.</span></h1><p class="subtitle">Отдельный фирменный бот для каждого клиента, один общий backend.</p></div></div><div class="notice">Чтобы подключить бота, откройте проект и перейдите в раздел «Telegram».</div><div id="botsList" class="bots-grid"></div></section>
+        <section id="viewAdmins" class="view" hidden>
+          <div class="page-head"><div><div class="eyebrow">КОМАНДА</div><h1>Администраторы<span class="accent">.</span></h1><p class="subtitle">Только подтверждённые пользователи получают доступ к проектам и серверам.</p></div></div>
+          <div class="admin-panel"><div class="section-heading"><h2>Участники</h2><span id="adminCount">0 администраторов</span></div>
+            <div id="adminList" class="admin-list"></div>
+            <form id="adminAddForm" class="admin-add-form"><label>Telegram ID нового администратора<input id="adminNewId" inputmode="numeric" autocomplete="off" pattern="[0-9]+" maxlength="19" placeholder="123456789" required></label><button class="primary" type="submit">Добавить администратора</button></form>
+            <p class="hint">Новый администратор получит равные права. ID 382257126 — владелец; удалить его нельзя. Перед добавлением проверьте ID.</p>
+          </div>
+        </section>
         <section id="viewServers" class="view" hidden>
           <div class="page-head"><div><div class="eyebrow">ИНФРАСТРУКТУРА</div><h1>Серверы<span class="accent">.</span></h1><p class="subtitle">Управляйте клиентскими VPS через SSH. Все действия выполняются после подтверждения.</p></div></div>
           <div class="server-setup">
@@ -82,7 +91,7 @@
       </div>
     </main>
   </div>
-  <div id="denied" class="auth-screen" hidden><div class="auth-card"><h1>Доступ закрыт</h1><p>Панель доступна только администраторам Site Control.</p></div></div>
+  <div id="denied" class="auth-screen" hidden><div class="auth-card"><h1>Доступ закрыт</h1><p id="miniAuthReason">Панель доступна только администраторам Site Control.</p><small class="auth-note">Если это ваш аккаунт, откройте Mini App заново через /start в главном боте.</small></div></div>
   <div id="auth" class="auth-screen"><div class="auth-card"><div class="brand-mark large"><span></span><span></span><span></span><span></span></div><div class="eyebrow">ЗАКРЫТАЯ ПАНЕЛЬ</div><h1>Site Control<span class="accent">.</span></h1><p>Сайты, клиенты и заявки в одном месте.</p><button class="primary wide" id="loginBtn">Войти через Telegram →</button><div id="loginStep" hidden><p>Отправьте боту команду:</p><div class="login-code"><code id="loginCode"></code><button id="copyCode" aria-label="Копировать код">⧉</button></div><a id="loginLink" target="_blank" rel="noopener noreferrer" class="secondary wide text-center" href="#">Открыть Telegram</a><small>После подтверждения вход выполнится автоматически. Код действителен 10 минут.</small></div><p class="auth-note">Доступ предоставляется только администраторам Site Control.</p></div></div>
   <div class="modal-layer" id="modal" hidden><div class="modal"><div class="modal-header"><h2>Новый проект</h2><button class="icon-button" id="closeModal" aria-label="Закрыть">✕</button></div><label>Название клиента<input id="newName" maxlength="90" placeholder="Например, Кафе Уют"></label><label>Адрес проекта<input id="newSlug" maxlength="56" placeholder="cafe-uyut" pattern="[a-z0-9-]+"></label><label>Telegram ID клиента (необязательно)<input id="newClient" inputmode="numeric" placeholder="123456789"></label><p class="hint">Новый сайт появляется как черновик. Публичная страница станет доступна после публикации.</p><button class="primary wide" id="submitNew">Создать проект</button></div></div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

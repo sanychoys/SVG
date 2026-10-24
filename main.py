@@ -15,7 +15,7 @@ from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, WebAppInfo, BufferedInputFile, ErrorEvent
+from aiogram.types import (Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, WebAppInfo, BufferedInputFile, ErrorEvent, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats, BotCommandScopeAllChatAdministrators, BotCommandScopeChat)
 from fastapi import Request, HTTPException
 from urllib.parse import urlsplit,urlunsplit,parse_qsl,urlencode
 import uvicorn
@@ -28,7 +28,7 @@ from sitecontrol.telegram_bots import manager
 
 diagnostics.configure()
 log=logging.getLogger('sitecontrol.bot')
-admin_id=int(os.environ.get('SVGTRACKER_ADMIN_ID','382257126'))
+admin_id=382257126  # permanent bootstrap owner; legacy SVGTRACKER_ADMIN_ID must not override
 registry=AdminRegistry(admin_id,Path(os.environ.get('SVGTRACKER_ADMIN_STATE_DIR','/var/lib/svgtracker-admin')))
 bot=Bot(token=BOT_TOKEN)
 dp=Dispatcher()
@@ -38,6 +38,7 @@ ROOT=Path(__file__).resolve().parent
 DEPLOY=ROOT/'deploy'/'admin_deploy.py'
 STATE=Path(os.environ.get('SVGTRACKER_ADMIN_STATE_DIR','/var/lib/svgtracker-admin'))
 PENDING={}
+ADMIN_INPUT={}  # actor ID -> deadline for admin-add flow
 
 
 async def send_chunks(message:Message, text:str):
@@ -46,9 +47,13 @@ async def send_chunks(message:Message, text:str):
 
 
 async def send_error(message:Message, label:str='Ошибка'):
-    # Send complete traceback in chunks; Telegram messages have a size limit.
-    report=label+'\n'+traceback.format_exc()
-    await send_chunks(message,report)
+    # Detailed exception goes into the private rotating log, never the chat.
+    error_id=uuid.uuid4().hex[:8].upper()
+    log.error('%s [событие %s]\n%s',label,error_id,traceback.format_exc())
+    lower=traceback.format_exc().lower()
+    hint=('Не удаётся запустить установщик через systemd. Нужна разовая проверка прав службы на VPS.'
+          if 'systemd-run' in lower else 'Подробности доступны в «Логи» → «Telegram-бот».')
+    await message.answer(f'{label}.\n{hint}\nКод: {error_id}',reply_markup=log_keyboard())
 
 
 def is_admin(msg:Message):
@@ -62,7 +67,7 @@ def worker(args:list[str],purpose:str):
     cmd=['systemd-run','--unit',unit,'--collect','--property=Type=oneshot',str(py if py.is_file() else sys.executable),str(DEPLOY),*args]
     p=subprocess.run(cmd,capture_output=True,text=True,timeout=13)
     if p.returncode:
-        raise RuntimeError(p.stderr or p.stdout or 'systemd-run failed')
+        raise RuntimeError('systemd-run failed ('+str(p.returncode)+'): '+((p.stderr or p.stdout or 'systemd unavailable').strip()[:1200]))
     return unit
 
 
@@ -80,10 +85,11 @@ def keyboard():
     """The only visible controls: Mini App, status, logs, ZIP, backup."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='Открыть Mini App',web_app=WebAppInfo(url=miniapp_url()))],
-        [InlineKeyboardButton(text='Мои сайты',callback_data='sc:sites'),
+        [InlineKeyboardButton(text='Проекты',callback_data='sc:sites'),
          InlineKeyboardButton(text='Серверы',callback_data='sc:servers')],
         [InlineKeyboardButton(text='Состояние',callback_data='sc:status'),
          InlineKeyboardButton(text='Логи',callback_data='sc:logs')],
+        [InlineKeyboardButton(text='Администраторы',callback_data='sc:admins')],
         [InlineKeyboardButton(text='Обновить ZIP',callback_data='sc:upload'),
          InlineKeyboardButton(text='Резервная копия',callback_data='sc:backup')],
     ])
@@ -256,9 +262,23 @@ async def login(message:Message):
     await message.answer('Вход подтверждён. Вернитесь на сайт.' if approved else 'Код неверный или устарел. Создайте новый код на сайте.')
 
 
+def admin_keyboard():
+    admins=registry.list_ids()
+    rows=[[InlineKeyboardButton(text=f'Удалить {uid}',callback_data=f'sc:admrm:{uid}')]
+          for uid in admins if uid!=registry.owner_id]
+    rows.extend([[InlineKeyboardButton(text='Добавить администратора',callback_data='sc:admadd')],
+                 [InlineKeyboardButton(text='Назад',callback_data='sc:home')]])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+async def show_admins(message:Message):
+    ids=registry.list_ids()
+    text='Администраторы Site Control\n\n'+'\n'.join(
+        f'• {i}'+(' · владелец' if i==registry.owner_id else '') for i in ids)
+    await message.answer(text,reply_markup=admin_keyboard())
+
 @dp.message(Command('admins'))
 async def admins(message:Message):
-    if is_admin(message):await message.answer('Администраторы: '+', '.join(str(n) for n in registry.list_ids()))
+    if is_admin(message):await show_admins(message)
 
 
 @dp.message(Command('admin_add','admin_remove'))
@@ -325,6 +345,29 @@ async def rollback_info(message:Message):
     await message.answer('Откатить код на '+backups[0].name+'? Это восстановит прежний интерфейс и перезапустит приложение. База Site Control сохранится отдельно.',reply_markup=kb)
 
 
+@dp.message(F.text)
+async def admin_id_text(message:Message):
+    if not is_admin(message):return
+    expires=ADMIN_INPUT.get(message.from_user.id)
+    if not expires:return
+    ADMIN_INPUT.pop(message.from_user.id,None)
+    if expires<time.time():
+        await message.answer('Время добавления истекло. Откройте «Администраторы» снова.')
+        return
+    try:
+        from admin_access import _id
+        target=_id((message.text or '').strip())
+        if target==registry.owner_id:raise ValueError('Этот пользователь уже главный администратор')
+    except (ValueError,TypeError) as exc:
+        await message.answer('Неверный Telegram ID. Отправьте только цифры (например, 123456789).')
+        return
+    code=uuid.uuid4().hex[:11]
+    PENDING[code]=(message.from_user.id,target,'grant',time.time()+300)
+    kb=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f'Добавить {target}',callback_data='sc:role:'+code)],
+        [InlineKeyboardButton(text='Отмена',callback_data='sc:cancel')]])
+    await message.answer(f'Предоставить полный доступ администратору {target}?',reply_markup=kb)
+
 @dp.message(F.document)
 async def upload_zip(message:Message):
     if not is_admin(message) or not message.document:return
@@ -387,6 +430,30 @@ async def callbacks(callback:CallbackQuery):
                 log.exception('Ошибка создания резервной копии')
                 await send_error(callback.message,'Ошибка резервного копирования')
         return
+    if action=='admins':
+        await callback.answer();await show_admins(callback.message);return
+    if action=='admadd':
+        ADMIN_INPUT[callback.from_user.id]=time.time()+180
+        await callback.answer()
+        await callback.message.answer('Отправьте Telegram ID нового администратора одним числом.\nНапример: 123456789\nДалее потребуется подтверждение.')
+        return
+    if action=='admrm' and len(parts)==3:
+        try:
+            from admin_access import _id
+            uid=_id(parts[2])
+            if uid==registry.owner_id:raise ValueError('Владельца удалить нельзя')
+            if uid==callback.from_user.id:raise ValueError('Собственные права отозвать нельзя')
+            if not registry.is_admin(uid):raise ValueError('Этот ID не является администратором')
+        except (ValueError,TypeError) as exc:
+            await callback.answer(str(exc)[:150],show_alert=True);return
+        token=uuid.uuid4().hex[:11]
+        PENDING[token]=(callback.from_user.id,uid,'revoke',time.time()+300)
+        kb=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f'Удалить {uid}',callback_data='sc:role:'+token)],
+            [InlineKeyboardButton(text='Отмена',callback_data='sc:cancel')]])
+        await callback.answer()
+        await callback.message.answer(f'Отозвать доступ администратора {uid}?',reply_markup=kb)
+        return
     if action=='sites':
         await callback.answer();await show_sites(callback.message);return
     if action=='servers':
@@ -439,7 +506,8 @@ async def callbacks(callback:CallbackQuery):
         _,uid,role,_=pending
         try:changed=registry.change(callback.from_user.id,uid,role)
         except Exception as exc:await callback.answer('Не выполнено',show_alert=True);await callback.message.answer(str(exc)[:600]);return
-        await callback.answer();await callback.message.edit_text('Права обновлены.' if changed else 'Права не изменились.')
+        await callback.answer();await callback.message.edit_text(('Администратор добавлен.' if role=='grant' else 'Доступ отозван.') if changed else 'Изменений нет.')
+        await show_admins(callback.message)
         return
     if action=='cleanup' and pending[2]=='cleanup':
         try:await asyncio.to_thread(worker,['cleanup-legacy','--admin-chat',str(callback.from_user.id)],'cleanup')
@@ -496,11 +564,36 @@ async def client_webhook(hook_key:str,request:Request):
     return {'ok':True}
 
 
+async def refresh_command_menu():
+    # Telegram stores different lists for languages/scopes; clearing only DEFAULT
+    # leaves stale SVGTracker commands in the iOS menu for admins.
+    scopes=[BotCommandScopeDefault(),BotCommandScopeAllPrivateChats(),
+            BotCommandScopeAllGroupChats(),BotCommandScopeAllChatAdministrators()]
+    for uid in registry.list_ids():
+        scopes.append(BotCommandScopeChat(chat_id=uid))
+    failures=0
+    for scope in scopes:
+        for language in (None,'ru','en'):
+            try:
+                await bot.delete_my_commands(scope=scope,language_code=language)
+            except Exception:
+                failures+=1
+    if failures:
+        log.warning('Не все прежние наборы Telegram-команд очищены: %s',failures)
+    commands=[BotCommand(command='start',description='Открыть панель'),
+              BotCommand(command='status',description='Состояние'),
+              BotCommand(command='logs',description='Логи')]
+    await bot.set_my_commands(commands,scope=BotCommandScopeDefault())
+    await bot.set_my_commands(commands,scope=BotCommandScopeAllPrivateChats())
+    log.info('Меню Telegram обновлено: 3 команды')
+
+
 async def main():
     store.init()
     config=uvicorn.Config(app,host=os.environ.get('SVGTRACKER_BIND_HOST','127.0.0.1'),port=8000,server_header=False,log_level='warning',access_log=False)
     server=uvicorn.Server(config)
-    await bot.set_my_commands([BotCommand(command='start',description='Открыть Site Control'),BotCommand(command='status',description='Состояние + инструкция'),BotCommand(command='sites',description='Мои сайты'),BotCommand(command='servers',description='Удалённые серверы'),BotCommand(command='logs',description='Логи бота и сайта'),BotCommand(command='backup',description='Создать резервную копию')])
+    await refresh_command_menu()
+
     service=asyncio.create_task(server.serve(),name='api')
     polling=asyncio.create_task(dp.start_polling(bot,handle_signals=False),name='admin-bot')
     done,pending=await asyncio.wait({service,polling},return_when=asyncio.FIRST_COMPLETED)

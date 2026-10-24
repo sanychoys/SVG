@@ -576,7 +576,7 @@ def load_bot_token() -> str | None:
 
 
 def telegram_notify(chat_id: str | int | None, text: str) -> None:
-    """Short success notifications; full error reports may span multiple messages."""
+    """Compact user notifications; complete errors are stored in private status logs."""
     if not chat_id:
         return
     token = load_bot_token()
@@ -913,7 +913,7 @@ def _deploy_unlocked(zip_path: Path, admin_chat: str | int | None) -> int:
                     backup=backup.name, files=changed, health=health_detail,
                 )
                 deploy_log("rollback", message, deployment_id=deployment_id, backup=backup.name)
-                telegram_notify(admin_chat, "Site Control · обновление отменено\n"+local_now_text()+"\n\n"+message)
+                telegram_notify(admin_chat, "Site Control · обновление отменено\n"+local_now_text()+"\nНе прошла проверка работоспособности. Старые файлы восстановлены. Подробности — /status.")
                 return 2
 
             write_status(
@@ -942,7 +942,7 @@ def _deploy_unlocked(zip_path: Path, admin_chat: str | int | None) -> int:
                     backup=backup.name, files=changed,
                 )
                 deploy_log("github-rollback", message, deployment_id=deployment_id)
-                telegram_notify(admin_chat, "Site Control · ошибка обновления\n"+local_now_text()+"\n\n"+message)
+                telegram_notify(admin_chat, "Site Control · обновление откатано\n"+local_now_text()+"\nОшибка синхронизации GitHub. Предыдущая версия восстановлена. Подробности — /status.")
                 return 3
 
             message = (
@@ -963,7 +963,7 @@ def _deploy_unlocked(zip_path: Path, admin_chat: str | int | None) -> int:
         message = f"Deploy error: {type(exc).__name__}: {exc}"
         write_status("error", message, deployment_id=deployment_id, archive=zip_path.name, error_trace=traceback.format_exc())
         deploy_log("error", message, deployment_id=deployment_id, archive=zip_path.name)
-        telegram_notify(admin_chat, "Site Control · ошибка установки\n" + local_now_text() + "\n\n" + message + "\n\n" + traceback.format_exc())
+        telegram_notify(admin_chat, "Site Control · ошибка установки\n" + local_now_text() + "\nДетали доступны в журналах установки и /status.")
         return 1
     finally:
         try:
@@ -998,7 +998,7 @@ def _rollback_unlocked(backup: Path, admin_chat: str | int | None) -> int:
     except Exception as exc:
         message = f"Rollback error: {type(exc).__name__}: {exc}"
         write_status("rollback_error", message, backup=backup.name if backup else None, error_trace=traceback.format_exc())
-        telegram_notify(admin_chat, "Site Control · ошибка отката\n"+local_now_text()+"\n\n"+message+"\n\n"+traceback.format_exc())
+        telegram_notify(admin_chat, "Site Control · ошибка отката\n"+local_now_text()+"\nПодробности — в /status и журнале установки.")
         return 1
 
 
@@ -1074,7 +1074,7 @@ def cleanup_legacy_unlocked(admin_chat):
     except Exception:
         detail=traceback.format_exc()
         write_status('legacy_cleanup_error','Очистка не завершена',error_trace=detail)
-        telegram_notify(admin_chat,'Site Control · ошибка очистки\n'+local_now_text()+'\n\n'+detail)
+        telegram_notify(admin_chat,'Site Control · ошибка очистки\n'+local_now_text()+'\nПодробности — в /status и журнале установки.')
         return 1
 
 
