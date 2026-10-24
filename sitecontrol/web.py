@@ -1,0 +1,372 @@
+"""Admin API, isolated public lead forms, safe public site rendering."""
+from __future__ import annotations
+import asyncio
+import html
+import ipaddress
+import json
+import hmac
+import os
+import re
+import secrets
+import time
+from collections import defaultdict, deque
+from pathlib import Path
+from urllib.parse import quote
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from . import store
+
+app = FastAPI(title='Site Control API', docs_url=None, redoc_url=None, openapi_url=None)
+registry = None
+manager = None
+main_bot = None
+SITE_URL = os.environ.get('SITE_CONTROL_PUBLIC_URL') or os.environ.get('SVGTRACKER_PUBLIC_URL') or 'https://starslix.ru'
+SITE_URL = SITE_URL.strip().rstrip('/')
+COOKIE = 'sc_admin_session'
+LOGIN_COOKIE = 'sc_login_verify'
+LEAD_LIMIT = defaultdict(deque)
+LOGIN_LIMIT = defaultdict(deque)
+
+
+def wire(admin_registry, bot_manager, admin_bot):
+    global registry, manager, main_bot
+    registry, manager, main_bot = admin_registry, bot_manager, admin_bot
+
+
+def require_admin(request: Request):
+    admin_id = store.get_session(request.cookies.get(COOKIE))
+    if not admin_id or not registry.is_admin(admin_id):
+        raise HTTPException(401, 'Войдите через Telegram')
+    return admin_id
+
+
+def write_guard(request):
+    require_admin(request)
+    if request.headers.get('X-Site-Control') != '1':
+        raise HTTPException(403, 'Недопустимый запрос')
+    origin = request.headers.get('origin')
+    if origin:
+        try:
+            from urllib.parse import urlsplit
+            a,b=urlsplit(origin),urlsplit(str(request.base_url))
+            if a.hostname != b.hostname or a.scheme not in ('https','http'):
+                raise HTTPException(403, 'Неверный Origin')
+        except ValueError:
+            raise HTTPException(403,'Неверный Origin')
+
+
+async def json_body(request, max_bytes=140_000):
+    if int(request.headers.get('content-length') or '0') > max_bytes:
+        raise HTTPException(413,'Слишком большой запрос')
+    body = await request.body()
+    if len(body)>max_bytes:raise HTTPException(413,'Слишком большой запрос')
+    try:
+        obj=json.loads(body)
+        if not isinstance(obj,dict):raise ValueError()
+        return obj
+    except (ValueError,TypeError):
+        raise HTTPException(400,'Некорректный JSON')
+
+
+def error(exc):
+    if isinstance(exc, LookupError):raise HTTPException(404,str(exc))
+    if isinstance(exc, ValueError):raise HTTPException(400,str(exc))
+    raise exc
+
+
+@app.get('/api/test')
+def readiness():
+    try:
+        with store.connect() as db:
+            for table in ('tenants','sites','bots','leads','admin_sessions'):
+                db.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
+    except Exception:
+        raise HTTPException(503, 'Database unavailable')
+    return {'status':'ok','service':'Site Control','version':'1.0.0'}
+
+
+@app.get('/api/sc/health')
+def health():
+    return readiness()
+
+
+@app.post('/api/sc/auth/start')
+async def auth_start(request: Request):
+    peer=real_ip(request)
+    bucket=LOGIN_LIMIT[peer]
+    timestamp=time.monotonic()
+    while bucket and bucket[0]<timestamp-60: bucket.popleft()
+    if len(bucket)>=8: raise HTTPException(429,'Слишком много попыток входа')
+    bucket.append(timestamp)
+    code, verifier = store.create_login()
+    me = await main_bot.get_me()
+    response=JSONResponse({'code':code,'bot_username':me.username,'expires_seconds':600})
+    response.set_cookie(LOGIN_COOKIE,verifier,httponly=True,secure=True,samesite='strict',max_age=600,path='/api/sc')
+    response.headers['Cache-Control']='no-store'
+    return response
+
+
+@app.get('/api/sc/auth/status')
+def auth_status(request: Request, code: str=''):
+    if len(code)>100:raise HTTPException(400,'Неверный код')
+    verifier=request.cookies.get(LOGIN_COOKIE,'')
+    admin_id=store.consume_login(code,verifier) if verifier else None
+    if not admin_id:return {'authorized':False}
+    if not registry.is_admin(admin_id):raise HTTPException(403,'Доступ отозван')
+    session=store.create_session(admin_id)
+    response=JSONResponse({'authorized':True,'admin_id':admin_id})
+    response.set_cookie(COOKIE,session,httponly=True,secure=True,samesite='lax',max_age=7*86400,path='/')
+    response.delete_cookie(LOGIN_COOKIE,path='/api/sc')
+    response.headers['Cache-Control']='no-store'
+    return response
+
+
+@app.get('/api/sc/auth/me')
+def auth_me(request:Request):
+    return {'admin_id':require_admin(request)}
+
+
+@app.post('/api/sc/auth/logout')
+def auth_logout(request:Request):
+    write_guard(request)
+    store.revoke_session(request.cookies.get(COOKIE))
+    result=JSONResponse({'ok':True})
+    result.delete_cookie(COOKIE,path='/')
+    return result
+
+
+@app.get('/api/sc/sites')
+def sites(request:Request):
+    require_admin(request)
+    return {'sites':store.list_sites()}
+
+
+@app.post('/api/sc/sites')
+async def create_site(request:Request):
+    write_guard(request)
+    body=await json_body(request)
+    try: site_id=store.create_site(body.get('name',''), body.get('slug',''), body.get('client_telegram_id'))
+    except Exception as exc: error(exc)
+    return {'ok':True,'id':site_id}
+
+
+@app.get('/api/sc/sites/{site_id}')
+def site_detail(site_id:int,request:Request):
+    require_admin(request)
+    row=store.get_site(site_id)
+    if not row:raise HTTPException(404,'Сайт не найден')
+    return {'site':store.site_payload(row),'leads':store.leads(site_id),
+            'versions':store.versions(site_id),'bots':store.bots_for_tenant(row['tenant_id'])}
+
+
+@app.put('/api/sc/sites/{site_id}')
+async def update_site(site_id:int,request:Request):
+    write_guard(request)
+    body=await json_body(request)
+    try:
+        value=store.save_draft(site_id,body.get('draft',{}),body.get('client_telegram_id'))
+    except Exception as exc:error(exc)
+    return {'ok':True,'draft':value}
+
+
+@app.post('/api/sc/sites/{site_id}/publish')
+def publish_site(site_id:int,request:Request):
+    write_guard(request)
+    try: version=store.publish(site_id,'admin:'+str(require_admin(request)))
+    except Exception as exc: error(exc)
+    return {'ok':True,'version':version}
+
+
+@app.post('/api/sc/sites/{site_id}/rollback/{version}')
+def rollback_site(site_id:int,version:int,request:Request):
+    write_guard(request)
+    try: latest=store.rollback(site_id,version)
+    except Exception as exc:error(exc)
+    return {'ok':True,'version':latest}
+
+
+@app.patch('/api/sc/sites/{site_id}/leads/{lead_id}')
+async def update_lead(site_id:int,lead_id:int,request:Request):
+    admin=write_guard(request)
+    body=await json_body(request)
+    row=store.get_site(site_id)
+    if not row:raise HTTPException(404,'Сайт не найден')
+    try:store.lead_status(row['tenant_id'],lead_id,body.get('status'),f'admin:{admin}')
+    except Exception as exc:error(exc)
+    return {'ok':True}
+
+
+@app.get('/api/sc/bots')
+def bots(request:Request):
+    require_admin(request)
+    return {'bots':store.list_bots(),'public_url':SITE_URL}
+
+
+@app.post('/api/sc/bots')
+async def attach_bot(request:Request):
+    write_guard(request)
+    data=await json_body(request)
+    token=str(data.get('token','')).strip()
+    try:tenant_id=int(data.get('tenant_id'))
+    except (ValueError,TypeError): raise HTTPException(400,'Выберите клиента')
+    from config import BOT_TOKEN
+    if hmac.compare_digest(token, BOT_TOKEN):
+        raise HTTPException(400,'Нельзя подключить управляющего бота как клиентского: это отключит его polling.')
+    if not re.fullmatch(r'[0-9]{5,15}:[A-Za-z0-9_-]{30,}',token):
+        raise HTTPException(400,'Неверный формат токена BotFather')
+    if not SITE_URL.startswith('https://'):
+        raise HTTPException(503,'Для webhook нужен SITE_CONTROL_PUBLIC_URL на HTTPS')
+    try:
+        result=await manager.attach(tenant_id,token,SITE_URL)
+    except (LookupError,ValueError) as exc:error(exc)
+    return {'ok':True,'bot':{'id':result['id'],'username':result['username']}}
+
+
+@app.post('/api/sc/bots/{bot_id}/disable')
+async def detach_bot(bot_id:int,request:Request):
+    write_guard(request)
+    try:await manager.detach(bot_id)
+    except (LookupError,ValueError) as exc:error(exc)
+    return {'ok':True}
+
+
+@app.post('/api/sc/sites/{site_id}/media')
+async def media_upload(site_id:int,request:Request):
+    write_guard(request)
+    row=store.get_site(site_id)
+    if not row:raise HTTPException(404,'Сайт не найден')
+    if int(request.headers.get('content-length') or '0') > 900_000:
+        raise HTTPException(413,'Максимальный размер изображения: 900 КБ')
+    body=await request.body()
+    if not body or len(body)>900_000:raise HTTPException(413,'Максимальный размер изображения: 900 КБ')
+    if body.startswith(b'\x89PNG\r\n\x1a\n'): ext='png'; ctype='image/png'
+    elif body.startswith(b'\xff\xd8\xff'): ext='jpg'; ctype='image/jpeg'
+    elif body.startswith(b'RIFF') and body[8:12]==b'WEBP': ext='webp'; ctype='image/webp'
+    else:raise HTTPException(400,'Разрешены только PNG, JPEG или WebP')
+    path=store.STATE/'media'/str(row['tenant_id'])
+    path.mkdir(parents=True,exist_ok=True)
+    path.chmod(0o700)
+    name=secrets.token_hex(12)+'.'+ext
+    fd=os.open(path/name,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+    with os.fdopen(fd,'wb') as f:f.write(body)
+    return {'url':f'/api/sc/media/{row["tenant_id"]}/{name}','type':ctype}
+
+
+@app.get('/api/sc/media/{tenant_id}/{filename}')
+def media(tenant_id:int,filename:str,request:Request):
+    if not re.fullmatch(r'[a-f0-9]{24}\.(png|jpg|webp)',filename):raise HTTPException(404)
+    with store.connect() as db:
+        found=db.execute('SELECT 1 FROM sites WHERE tenant_id=? AND published IS NOT NULL',(tenant_id,)).fetchone()
+    if not found:
+        try:require_admin(request)
+        except HTTPException:raise HTTPException(404)
+    p=store.STATE/'media'/str(tenant_id)/filename
+    if not p.is_file():raise HTTPException(404)
+    ext=filename.rsplit('.',1)[-1]
+    return Response(p.read_bytes(),media_type={'jpg':'image/jpeg','png':'image/png','webp':'image/webp'}[ext],
+                    headers={'Cache-Control':'public, max-age=31536000, immutable','X-Content-Type-Options':'nosniff'})
+
+
+def safe(s):
+    return html.escape(str(s or ''),quote=True)
+
+
+def render_site(slug, data, preview=False):
+    title=safe(data.get('title','Сайт'))
+    desc=safe(data.get('description'))
+    tagline=safe(data.get('tagline'))
+    phone=safe(data.get('phone'))
+    address=safe(data.get('address'))
+    hours=safe(data.get('hours'))
+    button=safe(data.get('button') or 'Оставить заявку')
+    accent=data['accent']; bg=data['background']
+    theme=data['theme']; animation=data['animation']
+    if theme == 'dark': bg='#111218'; fg='#f9f9fb'; panel='#1b1c26'; muted='#b1b1c1'
+    elif theme == 'editorial': fg='#191919';panel='#f5f0e8';muted='#6b665d'
+    else:fg='#16171b';panel='#f6f6f8';muted='#666977'
+    img=data.get('hero_image') or ''
+    hero=f'<img class="hero-img" src="{safe(img)}" alt="{title}" loading="lazy">' if img else ''
+    cards=''.join(f'<article class="item"><h3>{safe(i["name"])}</h3><p>{safe(i["description"])}</p><strong>{safe(i["price"])}</strong></article>' for i in data['items'])
+    cards=cards or '<p class="muted">Оставьте заявку — расскажем об услугах подробнее.</p>'
+    link=f'/api/sc/public/{quote(slug)}'
+    preview_banner='<aside class="preview">Предпросмотр черновика · формы заявок отключены</aside>' if preview else ''
+    script='''<script>
+      const f=document.querySelector('#leadform'),status=document.querySelector('#status');
+      if(f)f.addEventListener('submit',async e=>{e.preventDefault();const b=f.querySelector('button');b.disabled=true;status.textContent='Отправляем...';
+      try{const r=await fetch(f.action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(f)))});
+      const d=await r.json();if(!r.ok)throw Error(d.detail||'Ошибка отправки');status.textContent='Заявка отправлена. Спасибо!';f.reset();}
+      catch(x){status.textContent=String(x.message||x)}finally{b.disabled=false}});
+    </script>'''
+    return f'''<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+      <meta name="description" content="{desc[:200]}"><title>{title}</title><style>
+      :root{{--accent:{accent};--bg:{bg};--fg:{fg};--panel:{panel};--muted:{muted}}}*{{box-sizing:border-box}}html{{scroll-behavior:smooth}}
+      body{{margin:0;background:var(--bg);color:var(--fg);font-family:Inter,-apple-system,BlinkMacSystemFont,Arial,sans-serif;line-height:1.55}}
+      .wrap{{max-width:1100px;padding:0 24px;margin:auto}}header{{padding:26px 0;display:flex;justify-content:space-between;align-items:center;gap:16px}}
+      .brand{{font-size:20px;font-weight:800;letter-spacing:-.6px}}a{{color:inherit}}.btn{{border:0;background:var(--accent);color:#fff;text-decoration:none;padding:14px 22px;border-radius:13px;display:inline-block;font:inherit;font-weight:700;cursor:pointer}}
+      .hero{{padding:88px 0 100px;display:grid;grid-template-columns:1.1fr 1fr;gap:40px;align-items:center}}.eyebrow{{color:var(--accent);font-weight:700}}
+      h1{{font-size:clamp(40px,7vw,78px);line-height:1.03;letter-spacing:-.065em;margin:14px 0 24px}}h2{{font-size:clamp(30px,4vw,46px);letter-spacing:-.05em;margin:0 0 16px}}h3{{margin:0 0 8px}}
+      .lead{{font-size:19px;color:var(--muted);max-width:580px;margin:0 0 28px;white-space:pre-wrap}}.hero-img{{width:100%;max-height:450px;object-fit:cover;border-radius:28px}}
+      .abstract{{height:350px;border-radius:28px;background:radial-gradient(circle at 35% 40%,var(--accent),transparent 55%),linear-gradient(120deg,var(--panel),var(--bg));border:1px solid var(--panel)}}
+      section{{padding:62px 0}}.muted{{color:var(--muted)}}.items{{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:26px 0 0}}.item{{padding:24px;background:var(--panel);border-radius:20px;min-height:165px}}
+      .item p{{color:var(--muted);white-space:pre-wrap}}.item strong{{color:var(--accent)}}.contact{{display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:start}}
+      input,textarea{{width:100%;border:1px solid #8885;border-radius:12px;background:var(--panel);color:var(--fg);padding:14px;font:inherit;margin-bottom:12px;font-size:16px}}
+      textarea{{min-height:110px;resize:vertical}}.small{{font-size:14px}}footer{{padding:40px 0;color:var(--muted);border-top:1px solid #8883;margin-top:50px}}
+      .preview{{background:#222;color:white;text-align:center;padding:9px;font-size:13px}}
+      {'.hero,.item{animation:appear .6s both}@keyframes appear{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}' if animation=='soft' else '.item{transition:transform .25s}.item:hover{transform:translateY(-5px)}' if animation=='lift' else ''}
+      @media(max-width:760px){{.hero,.contact{{grid-template-columns:1fr}}.hero{{padding:45px 0}}.items{{grid-template-columns:1fr}}.abstract{{height:200px}}header{{padding:20px 0}}section{{padding:36px 0}}}}
+      @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important}}}}
+      </style></head><body>{preview_banner}<div class="wrap"><header><div class="brand">{title}</div><a href="#contact">Контакты ↗</a></header>
+      <main><section class="hero"><div><div class="eyebrow">Добро пожаловать</div><h1>{title}</h1><p class="lead">{tagline}</p><a class="btn" href="#contact">{button}</a></div>
+      <div>{hero or '<div class="abstract" role="img" aria-label="Декоративный элемент"></div>'}</div></section>
+      <section id="about"><h2>О нас</h2><p class="lead">{desc}</p></section>
+      <section id="services"><h2>Товары и услуги</h2><div class="items">{cards}</div></section>
+      <section id="contact" class="contact"><div><h2>Связаться с нами</h2><p>{phone}</p><p>{address}</p><p>{hours}</p></div>
+      <div><h3>Оставить заявку</h3>{'<p class="muted">Предпросмотр: отправка отключена.</p>' if preview else f'<form id="leadform" action="/api/sc/public/{quote(slug)}/lead"><input name="customer" placeholder="Ваше имя" maxlength="120" required><input name="contact" placeholder="Телефон или Telegram" maxlength="160" required><textarea name="message" placeholder="Что вас интересует?" maxlength="1200"></textarea><input name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true"><button class="btn" type="submit">Отправить заявку</button><p id="status" role="status" class="small"></p><p class="small muted">Отправляя заявку, вы соглашаетесь, что компания свяжется с вами по указанным контактам.</p></form>'}</div></section></main><footer>{title} · {phone}</footer></div>{'' if preview else script}</body></html>'''
+
+
+@app.get('/api/sc/public/{slug}',response_class=HTMLResponse)
+def public_page(slug:str):
+    row=store.public_site(slug)
+    if not row or not row.get('published'):raise HTTPException(404,'Сайт ещё не опубликован')
+    return HTMLResponse(render_site(slug,row['published']),headers={'Cache-Control':'public, max-age=30','X-Content-Type-Options':'nosniff'})
+
+
+@app.get('/api/sc/preview/{site_id}',response_class=HTMLResponse)
+def preview(site_id:int,request:Request):
+    require_admin(request)
+    row=store.get_site(site_id)
+    if not row:raise HTTPException(404)
+    return HTMLResponse(render_site(row['slug'],store.json_obj(row['draft']),True),headers={'Cache-Control':'no-store','X-Frame-Options':'SAMEORIGIN'})
+
+
+def real_ip(request):
+    peer = request.client.host if request.client else 'unknown'
+    if peer in ('127.0.0.1','::1'):
+        candidate=request.headers.get('x-forwarded-for','').split(',')[0].strip()
+        try: return str(ipaddress.ip_address(candidate))
+        except ValueError: pass
+    return peer
+
+
+@app.post('/api/sc/public/{slug}/lead')
+async def public_lead(slug:str,request:Request):
+    if not store.SLUG.fullmatch(slug): raise HTTPException(404)
+    bucket=(slug,real_ip(request))
+    timestamp=time.monotonic()
+    queue=LEAD_LIMIT[bucket]
+    while queue and queue[0] < timestamp-60:queue.popleft()
+    if len(queue)>=5:raise HTTPException(429,'Слишком много заявок. Попробуйте позже.')
+    queue.append(timestamp)
+    if len(LEAD_LIMIT)>20000:
+        for k in list(LEAD_LIMIT)[:10000]:
+            if not LEAD_LIMIT[k] or LEAD_LIMIT[k][-1]<timestamp-60: LEAD_LIMIT.pop(k,None)
+    data=await json_body(request,5_000)
+    if data.get('website'):return {'ok':True}
+    for field in ('customer','contact','message'):
+        if not isinstance(data.get(field,''),str):raise HTTPException(400,'Проверьте форму')
+    try:lead=store.add_lead(slug,data.get('customer',''),data.get('contact',''),data.get('message',''))
+    except (LookupError,ValueError) as exc:error(exc)
+    try:await manager.notify_lead(lead)
+    except Exception: pass # persisted lead must not fail due to Telegram outage
+    return {'ok':True,'id':lead['id']}
