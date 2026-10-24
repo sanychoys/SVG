@@ -601,7 +601,8 @@ def platform_overview(request:Request):
     import platform
     return {'service':'Site Control','app_root':str(project_files.ROOT),
             'python':platform.python_version(),'server':'Локальный VPS',
-            'bot_name':'Главный бот Site Control','owner_id':registry.owner_id}
+            'bot_name':'Главный бот Site Control','owner_id':registry.owner_id,
+            'console_mode':'diagnostics_only' if os.geteuid()==0 else 'restricted_shell'}
 
 @app.post('/api/sc/platform/execute')
 async def platform_execute(request:Request):
@@ -615,9 +616,12 @@ async def platform_execute(request:Request):
     try:
         result=await asyncio.to_thread(local_console.execute,template,body.get('command'))
     except ValueError as exc:error(exc)
+    except local_console.ConsolePermissionError as exc:
+        site_log.warning('Ручная консоль требует безопасной настройки прав: %s',exc)
+        raise HTTPException(409,str(exc)) from None
     except Exception:
         site_log.exception('Ошибка локальной консоли')
-        raise HTTPException(502,'Команда не выполнена. Проверьте системный журнал')
+        raise HTTPException(502,'Не удалось прочитать состояние сервера. Подробности — в журнале сайта.')
     with store.connect() as db:
         store.audit(db,'admin:'+str(actor),'platform.command',None,str(template))
     return result
