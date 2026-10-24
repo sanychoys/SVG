@@ -1,4 +1,4 @@
-"""Site Control 1.2: clean admin bot, live Mini App and focused diagnostics."""
+"""Site Control 1.3: admin Mini App, project management and remote VPS control."""
 from __future__ import annotations
 import asyncio
 import hmac
@@ -17,11 +17,12 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, WebAppInfo, BufferedInputFile, ErrorEvent
 from fastapi import Request, HTTPException
+from urllib.parse import urlsplit,urlunsplit,parse_qsl,urlencode
 import uvicorn
 
 from config import BOT_TOKEN
 from admin_access import AdminRegistry
-from sitecontrol import store, web, operations, diagnostics
+from sitecontrol import store, web, operations, diagnostics, remote
 from sitecontrol.maintenance import snapshot
 from sitecontrol.telegram_bots import manager
 
@@ -72,10 +73,15 @@ def helper(subcommand):
     return (p.stdout or '')[:4000]
 
 
+def miniapp_url():
+    return web.SITE_URL+'/?mode=miniapp'
+
 def keyboard():
     """The only visible controls: Mini App, status, logs, ZIP, backup."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='Открыть Mini App',web_app=WebAppInfo(url=web.SITE_URL))],
+        [InlineKeyboardButton(text='Открыть Mini App',web_app=WebAppInfo(url=miniapp_url()))],
+        [InlineKeyboardButton(text='Мои сайты',callback_data='sc:sites'),
+         InlineKeyboardButton(text='Серверы',callback_data='sc:servers')],
         [InlineKeyboardButton(text='Состояние',callback_data='sc:status'),
          InlineKeyboardButton(text='Логи',callback_data='sc:logs')],
         [InlineKeyboardButton(text='Обновить ZIP',callback_data='sc:upload'),
@@ -87,14 +93,11 @@ async def send_status(message:Message):
     active=await asyncio.to_thread(subprocess.run,['systemctl','is-active','svgtracker.service'],capture_output=True,text=True,timeout=5)
     ok=active.returncode==0 and active.stdout.strip()=='active'
     output=await asyncio.to_thread(operations.status_text, STATE/'deploy_status.json',service_ok=ok,api_ok=(await asyncio.to_thread(operations.probe_api)))
-    instructions=('\n\nЧто делать:\n'
-       '• Сервис и API работают — ничего предпринимать не нужно.\n'
-       '• Сервис или API недоступен — выберите «Логи» → «Логи сайта».\n'
-       '• Если установка завершилась ошибкой — сохраните полный текст ошибки из журнала.\n'
-       '• Для нового обновления отправьте ZIP документом в этот чат.\n')
-    report=output+instructions
-    await message.answer_document(BufferedInputFile(report.encode('utf-8'),filename='Site_Control_Состояние.txt'),
-        caption='Состояние Site Control · отчёт и инструкция в файле.')
+    await send_chunks(message,output)
+    # Exactly one attachment: the current user guide. No status dump in a file.
+    guide=ROOT/'ИНСТРУКЦИЯ.txt'
+    if guide.is_file():
+        await message.answer_document(BufferedInputFile(guide.read_bytes(),filename='Site_Control_Инструкция.txt'),caption='Актуальная инструкция Site Control')
 
 
 def log_keyboard():
@@ -123,12 +126,117 @@ async def welcome(message:Message):
         if approved:log.info('Администратор вошёл через Telegram')
         await message.answer('Вход подтверждён. Вернитесь на сайт.' if approved else 'Код входа неверен или устарел.')
         return
-    await message.answer('Site Control\nУправление сайтами и клиентами — в Mini App. Здесь обновления, состояние и журналы.',reply_markup=keyboard())
+    await message.answer('Site Control\nПроекты, серверы и состояние — здесь и в Mini App.',reply_markup=keyboard())
 
 
 @dp.message(Command('logs'))
 async def logs(message:Message):
     if is_admin(message):await message.answer('Какой журнал показать?',reply_markup=log_keyboard())
+
+
+
+def site_keyboard():
+    rows=[]
+    for r in store.list_sites()[:20]:
+        rows.append([InlineKeyboardButton(text=f'Редактировать: {str(r["client_name"])[:35]}',callback_data=f'sc:site:{r["id"]}')])
+    rows.append([InlineKeyboardButton(text='Новый проект — инструкция',callback_data='sc:newhelp')])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def show_sites(message:Message):
+    sites=store.list_sites()
+    if not sites:
+        await message.answer('Проектов ещё нет. Добавить: /newsite Название | slug',reply_markup=site_keyboard())
+    else:
+        await message.answer(f'Мои сайты: {len(sites)}\nВыберите проект:',reply_markup=site_keyboard())
+
+
+@dp.message(Command('sites'))
+async def sites_command(message:Message):
+    if is_admin(message):await show_sites(message)
+
+
+@dp.message(Command('newsite'))
+async def newsite(message:Message):
+    if not is_admin(message):return
+    parts=(message.text or '').partition(' ')[2].split('|')
+    if len(parts)!=2:
+        await message.answer('Создание сайта: /newsite Название компании | latin-slug');return
+    try:
+        sid=store.create_site(parts[0].strip(),parts[1].strip().lower())
+        await message.answer(f'Сайт #{sid} создан как черновик.\nРедактировать: /edit {sid} title Новый заголовок\nПубликация: /publish {sid}',reply_markup=site_keyboard())
+    except (ValueError,LookupError) as exc:await message.answer(str(exc))
+
+
+BOT_FIELDS={'title','tagline','description','phone','address','hours','button'}
+
+
+@dp.message(Command('edit'))
+async def edit_site(message:Message):
+    if not is_admin(message):return
+    parts=(message.text or '').split(' ',3)
+    if len(parts)<4 or not parts[1].isdigit() or parts[2] not in BOT_FIELDS:
+        await message.answer('Изменить поле: /edit ID title Новый заголовок\nПоля: '+', '.join(sorted(BOT_FIELDS)));return
+    try:
+        sid=int(parts[1]);site=store.get_site(sid)
+        if not site:raise LookupError('Сайт не найден')
+        data=store.json_obj(site['draft']);data[parts[2]]=parts[3]
+        store.save_draft(sid,data)
+        await message.answer(f'Сайт #{sid}: черновик сохранён. Чтобы изменения увидели посетители: /publish {sid}')
+    except (ValueError,LookupError) as exc:await message.answer(str(exc))
+
+
+@dp.message(Command('publish'))
+async def publish_site_bot(message:Message):
+    if not is_admin(message):return
+    arg=(message.text or '').partition(' ')[2].strip()
+    if not arg.isdigit():await message.answer('Использование: /publish ID');return
+    try:
+        version=store.publish(int(arg),'admin:'+str(message.from_user.id))
+        await message.answer(f'Сайт #{arg} опубликован · версия {version}')
+    except (ValueError,LookupError) as exc:await message.answer(str(exc))
+
+
+def server_keyboard():
+    rows=[]
+    for r in store.list_servers()[:20]:
+        rows.append([InlineKeyboardButton(text=f'{r["name"]} · {r["host"]}',callback_data=f'sc:server:{r["id"]}')])
+    return InlineKeyboardMarkup(inline_keyboard=rows or [[InlineKeyboardButton(text='Подключение — инструкция',callback_data='sc:serverhelp')]])
+
+
+@dp.message(Command('servers'))
+async def servers_command(message:Message):
+    if is_admin(message):await message.answer('Серверы: выберите подключение. Для настройки используйте веб-панель.',reply_markup=server_keyboard())
+
+
+@dp.message(Command('server'))
+async def server_command(message:Message):
+    if not is_admin(message):return
+    parts=(message.text or '').split(maxsplit=2)
+    if len(parts)!=3 or not parts[1].isdigit() or parts[2] not in remote.TEMPLATES:
+        await message.answer('Команда: /server ID uptime\nШаблоны: '+', '.join(remote.TEMPLATES));return
+    await prepare_remote(message,int(parts[1]),parts[2])
+
+
+@dp.message(Command('exec'))
+async def exec_command(message:Message):
+    if not is_admin(message):return
+    parts=(message.text or '').split(maxsplit=2)
+    if len(parts)!=3 or not parts[1].isdigit():
+        await message.answer('Ручная SSH-команда: /exec ID команда. Перед выполнением потребуется подтверждение.');return
+    await prepare_remote(message,int(parts[1]),'manual',parts[2])
+
+
+async def prepare_remote(message,server_id,template,command=None):
+    server=store.get_server(server_id)
+    if not server:
+        await message.answer('Сервер не найден.');return
+    try: text=remote.build_command(server,template,command)
+    except ValueError as exc:await message.answer(str(exc));return
+    token=uuid.uuid4().hex[:12]
+    PENDING[token]=(message.chat.id, (server_id,template,command), 'remote',time.time()+300)
+    kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Выполнить SSH-команду',callback_data='sc:run:'+token)],[InlineKeyboardButton(text='Отменить',callback_data='sc:cancel')]])
+    await message.answer(f'Сервер: {server["name"]}\nКоманда:\n{text[:1300]}\n\nВыполнить?',reply_markup=kb)
 
 
 @dp.errors()
@@ -279,11 +387,53 @@ async def callbacks(callback:CallbackQuery):
                 log.exception('Ошибка создания резервной копии')
                 await send_error(callback.message,'Ошибка резервного копирования')
         return
+    if action=='sites':
+        await callback.answer();await show_sites(callback.message);return
+    if action=='servers':
+        await callback.answer();await callback.message.answer('Подключённые серверы:',reply_markup=server_keyboard());return
+    if action=='newhelp':
+        await callback.answer();await callback.message.answer('Создание: /newsite Кафе Уют | cafe-uyut');return
+    if action=='serverhelp':
+        await callback.answer();await callback.message.answer('Создание подключений к VPS — в Site Control → Серверы.');return
+    if action=='site' and len(parts)==3 and parts[2].isdigit():
+        await callback.answer()
+        site=store.get_site(int(parts[2]))
+        if not site:await callback.message.answer('Проект не найден');return
+        d=store.json_obj(site['draft'])
+        await callback.message.answer(f'#{site["id"]} · {site["client_name"]}\nЗаголовок: {d["title"]}\nПубликация: {site["published_version"]}\n\nИзменить: /edit {site["id"]} title Новый заголовок\nОпубликовать: /publish {site["id"]}')
+        return
+    if action=='server' and len(parts)==3 and parts[2].isdigit():
+        await callback.answer()
+        sid=int(parts[2]);server=store.get_server(sid)
+        if not server:await callback.message.answer('Сервер не найден');return
+        kb=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text='Нагрузка',callback_data=f'sc:tmpl:{sid}:uptime'),InlineKeyboardButton(text='Диск',callback_data=f'sc:tmpl:{sid}:disk')],
+            [InlineKeyboardButton(text='Память',callback_data=f'sc:tmpl:{sid}:memory'),InlineKeyboardButton(text='Служба',callback_data=f'sc:tmpl:{sid}:site_status')],
+            [InlineKeyboardButton(text='Логи',callback_data=f'sc:tmpl:{sid}:site_logs'),InlineKeyboardButton(text='Перезапуск',callback_data=f'sc:tmpl:{sid}:site_restart')]])
+        await callback.message.answer(f'{server["name"]} · {server["host"]}',reply_markup=kb);return
+    if action=='tmpl' and len(parts)==4 and parts[2].isdigit():
+        await callback.answer();await prepare_remote(callback.message,int(parts[2]),parts[3]);return
     if len(parts)!=3:await callback.answer('Неверный запрос',show_alert=True);return
     token=parts[2]
     pending=PENDING.get(token)
     if not pending or pending[0]!=callback.from_user.id or pending[-1]<time.time():
         await callback.answer('Подтверждение устарело',show_alert=True);return
+    if action=='run' and pending[2]=='remote':
+        PENDING.pop(token,None)
+        sid,template,command=pending[1]
+        server=store.get_server(sid)
+        if not server:await callback.answer('Сервер не найден',show_alert=True);return
+        await callback.answer('Запущено')
+        await callback.message.edit_text('SSH-команда выполняется…')
+        try:
+            result=await asyncio.to_thread(remote.execute,server,template,command)
+            store.log_server_run(sid,'admin:'+str(callback.from_user.id),template,result['ok'])
+            await send_chunks(callback.message,f'{server["name"]} · код {result["exit_code"]}\n\n'+result['output']+('\n\nВывод сокращён.' if result['truncated'] else ''))
+        except Exception:
+            log.exception('Сбой SSH-управления %s',sid)
+            store.log_server_run(sid,'admin:'+str(callback.from_user.id),template,False)
+            await send_error(callback.message,'Ошибка SSH-команды')
+        return
     if action=='role':
         PENDING.pop(token,None)
         _,uid,role,_=pending
@@ -350,7 +500,7 @@ async def main():
     store.init()
     config=uvicorn.Config(app,host=os.environ.get('SVGTRACKER_BIND_HOST','127.0.0.1'),port=8000,server_header=False,log_level='warning',access_log=False)
     server=uvicorn.Server(config)
-    await bot.set_my_commands([BotCommand(command='start',description='Открыть Site Control'),BotCommand(command='status',description='Состояние (TXT)'),BotCommand(command='logs',description='Логи бота и сайта'),BotCommand(command='backup',description='Создать резервную копию')])
+    await bot.set_my_commands([BotCommand(command='start',description='Открыть Site Control'),BotCommand(command='status',description='Состояние + инструкция'),BotCommand(command='sites',description='Мои сайты'),BotCommand(command='servers',description='Удалённые серверы'),BotCommand(command='logs',description='Логи бота и сайта'),BotCommand(command='backup',description='Создать резервную копию')])
     service=asyncio.create_task(server.serve(),name='api')
     polling=asyncio.create_task(dp.start_polling(bot,handle_signals=False),name='admin-bot')
     done,pending=await asyncio.wait({service,polling},return_when=asyncio.FIRST_COMPLETED)

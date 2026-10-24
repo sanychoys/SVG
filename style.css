@@ -112,3 +112,17 @@ body.tg-miniapp .auth-screen {min-height:100dvh}
   .editor-panel {padding:17px}
 }
 @media(prefers-reduced-motion:reduce) {*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+/* Site Control 1.3 — managed remote servers */
+.server-setup,.server-card{background:#17191d;border:1px solid #303238;border-radius:18px;padding:22px;margin:12px 0 22px}
+.server-setup h2{font-size:22px;margin:0 0 8px}
+.server-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:15px;align-items:start}
+.server-card{margin:0;min-width:0}
+.server-card-head{display:flex;justify-content:space-between;gap:8px;align-items:start;margin-bottom:15px}
+.server-card-head strong{display:block;font-size:18px;overflow-wrap:anywhere}
+.server-card-head small{display:block;color:#a3a6ae;margin-top:5px;overflow-wrap:anywhere}
+.server-actions{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}
+.server-actions button{border:1px solid #41434a;background:#26282d;border-radius:10px;color:#eee;padding:8px 11px;cursor:pointer}
+.server-actions button:hover{border-color:#ff862e}
+.ssh-output{white-space:pre-wrap;overflow-wrap:anywhere;background:#080a0c;border:1px solid #303238;color:#d8f2ee;border-radius:12px;min-height:75px;max-height:360px;overflow:auto;padding:13px;font:12px/1.5 ui-monospace,monospace}
+.server-card label{margin-bottom:10px}
+@media(max-width:600px){.server-setup,.server-card{padding:15px}.server-list{grid-template-columns:1fr}}

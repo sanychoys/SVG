@@ -1,11 +1,14 @@
-# Site Control 1.2 — deployment compatibility
+# Site Control 1.3 — deployment compatibility
 
-The existing systemd service name and Git-backed ZIP installer remain unchanged to avoid
-breaking the live VPS. The new UI, administration logic and Mini App are Site Control only.
+The live V48 ZIP installer and systemd service still use legacy service/path names. They are retained **only as an installation bridge**, not as tracker functionality. Renaming the service and repository is a separate VPS migration.
 
-- Run /backup before first install; export a copy outside the server.
-- /start opens the Mini App, /status sends TXT, /logs sends separate bot/site logs.
-- /cleanup_legacy is a separate confirmed and backed-up migration, never automatic.
-- Live data lives in /var/lib/sitecontrol; config.py and Nginx are not overwritten.
-- Main app is bound to the existing local port 8000. Requires HTTPS public Site URL.
-- GitHub ZIP preflight, health check and rollback are kept for compatibility.
+- Telegram `/start`: Mini App for admin automatically; unauthorized users have no access.
+- `/status`: concise status as Telegram **text**, then the latest `ИНСТРУКЦИЯ.txt` attachment.
+- `/sites`, `/newsite`, `/edit`, `/publish`: project operations from admin Telegram bot.
+- `/servers`, `/server`, `/exec`: remote VPS management. SSH client required on central VPS.
+- `/logs`: bot/site logs; exceptions retain stacktraces.
+- `/backup` before update; save external offsite copy.
+- `/cleanup_legacy`: **explicit** confirmed legacy clean after the updated app passes health checks, with a verified backup and Git synchronization.
+- Runtime database `/var/lib/sitecontrol/sitecontrol.db` and private SSH keys `/var/lib/sitecontrol/ssh` **must not be deleted**.
+- GitHub preflight, health check and transactional rollback remain.
+- This ZIP **does not** install OpenSSH on the VPS or change Nginx, TLS, DNS, systemd unit name.

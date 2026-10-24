@@ -895,7 +895,7 @@ def _deploy_unlocked(zip_path: Path, admin_chat: str | int | None) -> int:
             changed = apply_release(extracted, relpaths)
             deploy_log("applied", "Files copied to production", deployment_id=deployment_id, files=",".join(changed))
             service_restart()
-            deploy_log("restart", "svgtracker.service restart requested", deployment_id=deployment_id)
+            deploy_log("restart", "Service restart requested", deployment_id=deployment_id)
             ok, health_detail = wait_health(timeout=35.0)
             deploy_log("health", "Health-check finished", deployment_id=deployment_id, ok=ok, detail=health_detail[:500])
             if not ok:
@@ -1021,7 +1021,7 @@ def legacy_files() -> list[Path]:
         rel=path.relative_to(PROJECT_ROOT)
         name=rel.as_posix()
         if name in LEGACY_FILE_NAMES or (len(rel.parts)==1 and re.fullmatch(r'V[0-9]+_RELEASE_NOTES\.md',rel.name)) or (
-            len(rel.parts)==2 and rel.parts[0]=='tests' and rel.suffix=='.py'
+            len(rel.parts)==2 and rel.parts[0]=='tests' and rel.suffix=='.py' and (rel.name.startswith('test_v') or rel.name.startswith('smoke_browser_v') or rel.name.startswith('test_profile_v'))
         ) or (len(rel.parts)==2 and rel.parts[0]=='deploy' and re.fullmatch(r'V[0-9]+_PHONE_POST_DEPLOY\.md',rel.name)):
             if safe_rel_path(name) is not None:result.append(rel)
     return sorted(result,key=lambda item:item.as_posix())

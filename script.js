@@ -4,7 +4,7 @@
   const $$ = selector => Array.from(document.querySelectorAll(selector));
   const esc = window.SCUtils.escape;
   const fmt = window.SCUtils.date;
-  const state = { sites: [], bots: [], site: null, tab: 'content', page: 'sites', currentCode: null, poller: null };
+  const state = { sites: [], bots: [], servers: [], hostScanToken:null, site: null, tab: 'content', page: 'sites', currentCode: null, poller: null };
   let toastTimer;
   function notify(message, isError = false) {
     const node = $('#toast'); node.textContent = String(message);
@@ -13,6 +13,7 @@
   }
   async function api(path, options = {}) {
     const headers = {'X-Site-Control': '1', ...(options.headers || {})};
+    if (miniMode && window.Telegram?.WebApp?.initData) headers['X-Telegram-Init-Data'] = window.Telegram.WebApp.initData;
     if (options.body !== undefined && typeof options.body !== 'string' && !(options.body instanceof Blob)) {
       options.body = JSON.stringify(options.body);
       headers['Content-Type'] = 'application/json';
@@ -24,8 +25,8 @@
   }
   function showPage(page) {
     state.page = page;
-    ['Sites','Editor','Bots'].forEach(v => $(`#view${v}`).hidden = v.toLowerCase() !== page);
-    $('#breadcrumb').textContent = page === 'sites' ? 'Проекты' : page === 'bots' ? 'Telegram-боты' : (state.site?.client_name || 'Редактор');
+    ['Sites','Editor','Bots','Servers'].forEach(v => $(`#view${v}`).hidden = v.toLowerCase() !== page);
+    $('#breadcrumb').textContent = page === 'sites' ? 'Проекты' : page === 'bots' ? 'Telegram-боты' : page === 'servers' ? 'Серверы' : (state.site?.client_name || 'Редактор');
     $$('.nav').forEach(node => node.classList.toggle('active', node.dataset.nav === page));
     $('#sidebar').classList.remove('open');
     window.scrollTo({top:0,behavior:'instant'});
@@ -35,32 +36,38 @@
     $('#app').hidden = !loggedIn;
   }
   let miniAuthAttempted = false;
+  const miniMode = new URLSearchParams(window.location.search).get('mode') === 'miniapp';
+  function denyMiniApp() {
+    $('#app').hidden = true;
+    $('#auth').hidden = true;
+    $('#denied').hidden = false;
+  }
   async function tryMiniAppAuth() {
     if (miniAuthAttempted) return false;
     const tg = window.Telegram?.WebApp;
     if (!tg?.initData) return false;
     miniAuthAttempted = true;
     try {
-      tg.ready();
-      tg.expand();
-      document.body.classList.add('tg-miniapp');
-      const result = await api('/api/sc/auth/miniapp', {method:'POST',body:{init_data:tg.initData}});
+      tg.ready();tg.expand();document.body.classList.add('tg-miniapp');
+      const result=await api('/api/sc/auth/miniapp',{method:'POST',body:{init_data:tg.initData}});
       return Boolean(result.authorized);
-    } catch(e) {
-      notify('Авторизация Mini App: '+e.message, true);
-      return false;
-    }
+    } catch (_) { return false; }
   }
   async function bootstrap() {
-    try {
-      await tryMiniAppAuth();
-      const me = await api('/api/sc/auth/me');
-      $('#adminLabel').textContent = `Admin #${me.admin_id}`;
-      applyAuth(true);
-      await reloadAll();
-    } catch {
-      applyAuth(false);
+    if (miniMode) {
+      $('#app').hidden=true;$('#auth').hidden=true;
+      if (!await tryMiniAppAuth()) {denyMiniApp();return;}
+      try {
+        const me = await api('/api/sc/auth/me');
+        $('#adminLabel').textContent = 'Admin #'+me.admin_id;
+        $('#denied').hidden=true;applyAuth(true);await reloadAll();return;
+      } catch (_) {denyMiniApp();return;}
     }
+    try {
+      const me=await api('/api/sc/auth/me');
+      $('#adminLabel').textContent='Admin #'+me.admin_id;
+      applyAuth(true);await reloadAll();
+    } catch (_) {applyAuth(false);}
   }
   async function startLogin() {
     $('#loginBtn').disabled = true;
@@ -95,15 +102,15 @@
     }
   }
   async function reloadAll() {
-    const [sites,bots] = await Promise.all([api('/api/sc/sites'),api('/api/sc/bots')]);
-    state.sites=sites.sites;state.bots=bots.bots;
+    const [sites,bots,servers] = await Promise.all([api('/api/sc/sites'),api('/api/sc/bots'),api('/api/sc/servers')]);
+    state.sites=sites.sites;state.bots=bots.bots;state.servers=servers.servers;
     $('#statSites').textContent=sites.sites.length;
     $('#statPublished').textContent=sites.sites.filter(s=>s.published_version>0).length;
     $('#statLeads').textContent=sites.sites.reduce((n,s)=>n+s.new_leads,0);
     $('#statBots').textContent=bots.bots.filter(b=>b.enabled).length;
     $('#navCount').textContent=sites.sites.length;
     $('#projectCount').textContent=sites.sites.length+' сайтов';
-    renderSites();renderBots();
+    renderSites();renderBots();renderServers();
   }
   function renderSites() {
     const target=$('#projects');
@@ -232,6 +239,36 @@
       notify('Проект создан');await reloadAll();await openSite(result.id);
     }catch(e){notify(e.message,true);}
   }
+  function renderServers() {
+    const select=$('#serverSite');
+    const chosen=select.value;
+    select.innerHTML='<option value="">Без привязки к сайту</option>'+state.sites.map(s=>`<option value="${Number(s.id)}">${esc(s.client_name)}</option>`).join('');
+    select.value=chosen;
+    const list=$('#serversList');
+    list.innerHTML=state.servers.length?state.servers.map(s=>`<article class="server-card" data-server-id="${Number(s.id)}"><div class="server-card-head"><div><strong>${esc(s.name)}</strong><small>${esc(s.username)}@${esc(s.host)}:${Number(s.port)} · ${esc(s.site_slug||'Не привязан')}</small></div><span class="published">SSH</span></div><div class="server-actions"><button data-remote-template="uptime">Нагрузка</button><button data-remote-template="disk">Диск</button><button data-remote-template="memory">Память</button><button data-remote-template="site_status">Сервис</button><button data-remote-template="site_logs">Логи</button><button data-remote-template="site_restart">Перезапуск</button></div><label>Ручная SSH-команда<input data-remote-input placeholder="Например, ls -la /srv" maxlength="1200" autocomplete="off"></label><button class="secondary compact" data-remote-template="manual">Выполнить вручную</button><button class="danger-link" data-remote-delete>Удалить подключение</button><pre class="ssh-output" data-remote-output>Результат выполнения появится здесь.</pre></article>`).join(''):'<div class="empty-state"><h3>Подключённых серверов нет</h3><p>Добавьте VPS и настройте SSH-ключ по инструкции.</p></div>';
+    list.querySelectorAll('[data-remote-template]').forEach(btn=>btn.addEventListener('click',safeAction(async()=>{
+      const card=btn.closest('[data-server-id]'),id=Number(card.dataset.serverId),template=btn.dataset.remoteTemplate;
+      const command=template==='manual'?card.querySelector('[data-remote-input]').value.trim():undefined;
+      if (template==='manual' && !command)return notify('Введите SSH-команду',true);
+      if (!SCUtils.confirmDanger(`Выполнить на VPS #${id}: ${command||template}?`))return;
+      const confirm=['manual','site_restart'].includes(template)?prompt('Для подтверждения введите EXECUTE'):undefined;
+      if (['manual','site_restart'].includes(template) && confirm!=='EXECUTE')return;
+      const output=card.querySelector('[data-remote-output]');output.textContent='Выполняется…';
+      try {const res=await api(`/api/sc/servers/${id}/execute`,{method:'POST',body:{template,command,confirm}});output.textContent=`Код ${res.exit_code}${res.truncated?' · вывод сокращён':''}\n\n${res.output}`;notify(res.ok?'Команда выполнена':'Команда вернула ошибку',!res.ok);}
+      catch(e){output.textContent=e.message;notify(e.message,true);}
+    })));
+    list.querySelectorAll('[data-remote-delete]').forEach(btn=>btn.addEventListener('click',safeAction(async()=>{
+      const id=Number(btn.closest('[data-server-id]').dataset.serverId);
+      if(!SCUtils.confirmDanger('Удалить SSH-подключение? Сайт и удалённый сервер не удаляются.'))return;
+      await api(`/api/sc/servers/${id}`,{method:'DELETE'});notify('Подключение удалено');await reloadAll();
+    })));
+  }
+  async function createServer() {
+    const data={name:$('#serverName').value.trim(),host:$('#serverHost').value.trim(),port:Number($('#serverPort').value),username:$('#serverUser').value.trim(),key_alias:$('#serverKey').value.trim(),service:$('#serverService').value.trim(),site_id:$('#serverSite').value||null};
+    await api('/api/sc/servers',{method:'POST',body:data});
+    notify('Подключение сохранено. SSH доступ проверится при первой команде.');
+    await reloadAll();
+  }
   const safeAction=fn=>async()=>{try{await fn();}catch(e){notify(e.message,true);}};
   function prepareTelegramSdk() {
     if (window.Telegram?.WebApp) return Promise.resolve();
@@ -241,7 +278,7 @@
       const sdk=document.createElement('script');
       sdk.src='https://telegram.org/js/telegram-web-app.js';
       sdk.async=true;
-      sdk.onload=()=>{finish(); if($('#auth') && !$('#auth').hidden && window.Telegram?.WebApp?.initData) bootstrap();};
+      sdk.onload=()=>{finish(); if (window.Telegram?.WebApp?.initData && (miniMode || ($('#auth') && !$('#auth').hidden))) bootstrap();};
       sdk.onerror=finish;
       document.head.appendChild(sdk);
       // Browser log-in remains available even if Telegram's CDN is unavailable.
@@ -251,10 +288,27 @@
   document.addEventListener('DOMContentLoaded',()=>{
     $('#loginBtn').addEventListener('click',startLogin);
     $('#copyCode').addEventListener('click',safeAction(async()=>{await SCUtils.copy($('#loginCode').textContent);notify('Команда скопирована');}));
-    $('#logout').addEventListener('click',safeAction(async()=>{await api('/api/sc/auth/logout',{method:'POST'});applyAuth(false);$('#sidebar').classList.remove('open');}));
+    $('#logout').addEventListener('click',safeAction(async()=>{await api('/api/sc/auth/logout',{method:'POST'});if(miniMode)denyMiniApp();else applyAuth(false);$('#sidebar').classList.remove('open');}));
     $('#mobileMenu').addEventListener('click',()=>$('#sidebar').classList.toggle('open'));
-    $$('[data-nav]').forEach(n=>n.addEventListener('click',async()=>{showPage(n.dataset.nav);if(n.dataset.nav==='bots')await reloadAll().catch(e=>notify(e.message,true));}));
+    $$('[data-nav]').forEach(n=>n.addEventListener('click',async()=>{showPage(n.dataset.nav);if(['bots','servers'].includes(n.dataset.nav))await reloadAll().catch(e=>notify(e.message,true));}));
     $('#createBtn').addEventListener('click',openNewModal);
+    $('#serverCreateBtn').addEventListener('click',safeAction(createServer));
+    $('#makeSshKey').addEventListener('click',safeAction(async()=>{
+      const alias=$('#serverKey').value.trim();
+      const result=await api('/api/sc/ssh/key',{method:'POST',body:{alias}});
+      $('#sshPublic').value=result.public_key;notify('Публичный ключ готов. Скопируйте его на целевой VPS.');
+    }));
+    $('#scanHost').addEventListener('click',safeAction(async()=>{
+      const result=await api('/api/sc/ssh/scan',{method:'POST',body:{host:$('#serverHost').value.trim(),port:Number($('#serverPort').value)}});
+      state.hostScanToken=result.token;$('#hostFingerprint').value=result.fingerprint;notify('Сверьте отпечаток с целевым VPS перед подтверждением.');
+    }));
+    $('#trustHost').addEventListener('click',safeAction(async()=>{
+      if(!state.hostScanToken)return notify('Сначала получите отпечаток',true);
+      const fingerprint=$('#hostFingerprintConfirm').value.trim();
+      if(!SCUtils.confirmDanger('Отпечаток точно сверен непосредственно на целевом сервере?'))return;
+      await api('/api/sc/ssh/trust',{method:'POST',body:{token:state.hostScanToken,fingerprint}});
+      state.hostScanToken=null;notify('Отпечаток сохранён. SSH-подключение готово к проверке.');
+    }));
     $('#closeModal').addEventListener('click',()=>$('#modal').hidden=true);
     $('#modal').addEventListener('click',event=>{if(event.target===$('#modal'))$('#modal').hidden=true;});
     $('#submitNew').addEventListener('click',safeAction(createNew));

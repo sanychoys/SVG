@@ -108,6 +108,18 @@ def init():
             bot_id INTEGER NOT NULL, update_id INTEGER NOT NULL,
             received_at INTEGER NOT NULL, PRIMARY KEY(bot_id, update_id)
         );
+        CREATE TABLE IF NOT EXISTS remote_servers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+            host TEXT NOT NULL, port INTEGER NOT NULL,
+            username TEXT NOT NULL, key_alias TEXT NOT NULL,
+            service TEXT NOT NULL, site_id INTEGER REFERENCES sites(id),
+            created_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS remote_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, server_id INTEGER NOT NULL,
+            actor TEXT NOT NULL, template TEXT NOT NULL,
+            success INTEGER NOT NULL, created_at INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS audit (
             id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL,
             action TEXT NOT NULL, tenant_id INTEGER,
@@ -450,3 +462,38 @@ def release_update(bot_id, update_id):
     with connect() as db:
         db.execute('DELETE FROM telegram_updates WHERE bot_id=? AND update_id=?',
                    (int(bot_id),int(update_id)))
+
+
+# Remote server metadata never contains passwords, SSH private keys or arbitrary scripts.
+def list_servers():
+    with connect() as db:
+        return [dict(r) for r in db.execute('SELECT r.*,s.slug AS site_slug FROM remote_servers r LEFT JOIN sites s ON s.id=r.site_id ORDER BY r.id DESC')]
+
+
+def get_server(server_id):
+    with connect() as db:
+        row=db.execute('SELECT * FROM remote_servers WHERE id=?',(server_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def add_server(data, actor):
+    with connect() as db:
+        cur=db.execute('INSERT INTO remote_servers(name,host,port,username,key_alias,service,site_id,created_at) VALUES(?,?,?,?,?,?,?,?)',
+            (data['name'],data['host'],data['port'],data['username'],data['key_alias'],data['service'],data['site_id'],now()))
+        audit(db,actor,'server.create',None,data['name'])
+        return cur.lastrowid
+
+
+def remove_server(server_id,actor):
+    with connect() as db:
+        row=db.execute('SELECT name FROM remote_servers WHERE id=?',(server_id,)).fetchone()
+        if not row:raise LookupError('Сервер не найден')
+        db.execute('DELETE FROM remote_servers WHERE id=?',(server_id,))
+        audit(db,actor,'server.remove',None,row['name'])
+
+
+def log_server_run(server_id,actor,template,success):
+    with connect() as db:
+        db.execute('INSERT INTO remote_runs(server_id,actor,template,success,created_at) VALUES(?,?,?,?,?)',
+            (server_id,actor,template,int(success),now()))
+        audit(db,actor,'server.command',None,str(server_id)+':'+str(template))

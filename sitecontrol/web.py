@@ -17,7 +17,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from . import store
-from . import diagnostics, miniapp_auth
+from . import diagnostics, miniapp_auth, remote
 
 app = FastAPI(title='Site Control API', docs_url=None, redoc_url=None, openapi_url=None)
 registry = None
@@ -30,6 +30,7 @@ COOKIE = 'sc_admin_session'
 LOGIN_COOKIE = 'sc_login_verify'
 LEAD_LIMIT = defaultdict(deque)
 LOGIN_LIMIT = defaultdict(deque)
+PENDING_HOSTKEYS = {}
 
 
 def wire(admin_registry, bot_manager, admin_bot):
@@ -57,6 +58,13 @@ async def minimal_site_logging(request:Request, call_next):
 
 
 def require_admin(request: Request):
+    signed = request.headers.get('X-Telegram-Init-Data')
+    if signed:
+        from config import BOT_TOKEN
+        try: verified=miniapp_auth.verify(signed,BOT_TOKEN)
+        except ValueError:raise HTTPException(401,'Подпись Mini App недействительна')
+        if not registry.is_admin(verified):raise HTTPException(403,'Доступ запрещён')
+        return verified
     admin_id = store.get_session(request.cookies.get(COOKIE))
     if not admin_id or not registry.is_admin(admin_id):
         raise HTTPException(401, 'Войдите через Telegram')
@@ -105,7 +113,7 @@ def readiness():
                 db.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
     except Exception:
         raise HTTPException(503, 'Database unavailable')
-    return {'status':'ok','service':'Site Control','version':'1.2.0'}
+    return {'status':'ok','service':'Site Control','version':'1.3.0'}
 
 
 @app.get('/api/sc/health')
@@ -243,6 +251,96 @@ async def update_lead(site_id:int,lead_id:int,request:Request):
 def bots(request:Request):
     require_admin(request)
     return {'bots':store.list_bots(),'public_url':SITE_URL}
+
+
+@app.post('/api/sc/ssh/key')
+async def ssh_create_key(request:Request):
+    write_guard(request)
+    data=await json_body(request,2000)
+    try:pub=await asyncio.to_thread(remote.public_key,data.get('alias'),True)
+    except (ValueError,LookupError) as exc:error(exc)
+    return {'public_key':pub}
+
+
+@app.post('/api/sc/ssh/scan')
+async def ssh_scan(request:Request):
+    admin=write_guard(request)
+    data=await json_body(request,2000)
+    try:key,fingerprint=await asyncio.to_thread(remote.host_scan,data.get('host'),data.get('port',22))
+    except ValueError as exc:error(exc)
+    except Exception as exc:
+        site_log.exception('SSH host-key scan failed')
+        raise HTTPException(502,'Сервер недоступен для SSH-сканирования')
+    token=secrets.token_urlsafe(24)
+    # A key scan is never automatically trusted: admin compares fingerprints on VPS.
+    PENDING_HOSTKEYS[token]=(admin,key,fingerprint,time.monotonic()+180)
+    if len(PENDING_HOSTKEYS)>300:
+        for k,v in list(PENDING_HOSTKEYS.items()):
+            if v[3] < time.monotonic():PENDING_HOSTKEYS.pop(k,None)
+    return {'token':token,'fingerprint':fingerprint,'warning':'Сверьте SHA256 с ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub на целевом сервере.'}
+
+
+@app.post('/api/sc/ssh/trust')
+async def ssh_trust(request:Request):
+    admin=write_guard(request)
+    data=await json_body(request,1000)
+    token=data.get('token');expected=data.get('fingerprint')
+    pending=PENDING_HOSTKEYS.get(token)
+    if not pending or pending[0]!=admin or pending[3]<time.monotonic():raise HTTPException(400,'Проверка устарела')
+    if not isinstance(expected,str) or not hmac.compare_digest(expected,pending[2]):
+        raise HTTPException(400,'Отпечаток не совпадает')
+    PENDING_HOSTKEYS.pop(token,None)
+    remote.trust_host(pending[1])
+    return {'ok':True}
+
+
+@app.get('/api/sc/servers')
+def servers(request:Request):
+    require_admin(request)
+    return {'servers':store.list_servers(),'templates':{k:v[0] for k,v in remote.TEMPLATES.items()}}
+
+
+@app.post('/api/sc/servers')
+async def server_create(request:Request):
+    actor=write_guard(request)
+    data=await json_body(request,5000)
+    try:
+        cleaned=remote.validate(data.get('name'),data.get('host'),data.get('port',22),
+            data.get('username'),data.get('key_alias'),data.get('service','sitecontrol'),data.get('site_id'))
+        server_id=store.add_server(cleaned,'admin:'+str(actor))
+    except (ValueError,LookupError) as exc:error(exc)
+    return {'ok':True,'id':server_id}
+
+
+@app.delete('/api/sc/servers/{server_id}')
+def server_remove(server_id:int,request:Request):
+    actor=write_guard(request)
+    try:store.remove_server(server_id,'admin:'+str(actor))
+    except LookupError as exc:error(exc)
+    return {'ok':True}
+
+
+@app.post('/api/sc/servers/{server_id}/execute')
+async def server_execute(server_id:int,request:Request):
+    actor=write_guard(request)
+    server=store.get_server(server_id)
+    if not server:raise HTTPException(404,'Сервер не найден')
+    body=await json_body(request,3000)
+    template=body.get('template')
+    custom=body.get('command')
+    # Destructive actions and arbitrary shell are never silently executed.
+    if template in ('manual','site_restart') and body.get('confirm')!='EXECUTE':
+        raise HTTPException(400,'Подтвердите команду словом EXECUTE')
+    try:remote.build_command(server,template,custom)
+    except ValueError as exc:error(exc)
+    try:
+        result=await asyncio.to_thread(remote.execute,server,template,custom)
+    except Exception as exc:
+        store.log_server_run(server_id,'admin:'+str(actor),str(template),False)
+        site_log.exception('SSH ошибка сервера %s',server_id)
+        raise HTTPException(502,'Не удалось выполнить SSH-команду: '+str(exc)[:240])
+    store.log_server_run(server_id,'admin:'+str(actor),str(template),result['ok'])
+    return result
 
 
 @app.post('/api/sc/bots')

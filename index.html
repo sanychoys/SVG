@@ -6,18 +6,19 @@
   <meta name="theme-color" content="#0C0D0F">
   <title>Site Control — управление сайтами</title>
   <meta name="description" content="Управление клиентскими сайтами, заявками и Telegram-ботами.">
-  <link rel="stylesheet" href="style.css?v=sc120">
-  <link rel="stylesheet" href="product.css?v=sc120">
-  <script src="product.js?v=sc120" defer></script>
-  <script src="script.js?v=sc120" defer></script>
+  <link rel="stylesheet" href="style.css?v=sc130">
+  <link rel="stylesheet" href="product.css?v=sc130">
+  <script src="product.js?v=sc130" defer></script>
+  <script src="script.js?v=sc130" defer></script>
 </head>
 <body>
   <div class="app" id="app" hidden>
     <aside class="sidebar" id="sidebar">
-      <div class="brand"><div class="brand-mark"><span></span><span></span><span></span><span></span></div><div><strong>SITE CONTROL</strong><small>СТУДИЯ / V1.2</small></div></div>
+      <div class="brand"><div class="brand-mark"><span></span><span></span><span></span><span></span></div><div><strong>SITE CONTROL</strong><small>СТУДИЯ / V1.3</small></div></div>
       <div class="side-group"><div class="side-label">ПЛАТФОРМА</div>
         <button class="nav active" data-nav="sites"><span class="nav-icon">▦</span> Проекты <span class="nav-count" id="navCount">0</span></button>
         <button class="nav" data-nav="bots"><span class="nav-icon">◎</span> Telegram-боты</button>
+        <button class="nav" data-nav="servers"><span class="nav-icon">⌘</span> Серверы</button>
       </div>
       <div class="side-bottom"><div class="server-indicator"><span class="pulse"></span> Платформа работает</div>
         <button class="nav small" id="logout">Выйти</button><small>SITE CONTROL</small>
@@ -61,9 +62,27 @@
           </div>
         </section>
         <section id="viewBots" class="view" hidden><div class="page-head"><div><div class="eyebrow">ИНТЕГРАЦИИ</div><h1>Боты клиентов<span class="accent">.</span></h1><p class="subtitle">Отдельный фирменный бот для каждого клиента, один общий backend.</p></div></div><div class="notice">Чтобы подключить бота, откройте проект и перейдите в раздел «Telegram».</div><div id="botsList" class="bots-grid"></div></section>
+        <section id="viewServers" class="view" hidden>
+          <div class="page-head"><div><div class="eyebrow">ИНФРАСТРУКТУРА</div><h1>Серверы<span class="accent">.</span></h1><p class="subtitle">Управляйте клиентскими VPS через SSH. Все действия выполняются после подтверждения.</p></div></div>
+          <div class="server-setup">
+            <div><h2>Новое SSH-подключение</h2><p class="hint">На целевом VPS нужно один раз создать SSH-пользователя, добавить публичный ключ Site Control и проверить отпечаток SSH-хоста. Пароли в панель не вводятся.</p></div>
+            <div class="form-grid"><label>Название<input id="serverName" placeholder="Клиентский VPS №1"></label><label>Хост или IP<input id="serverHost" placeholder="203.0.113.10"></label><label>SSH-порт<input id="serverPort" type="number" min="1" max="65535" value="22"></label><label>SSH-пользователь<input id="serverUser" value="scdeploy"></label><label>Имя ключа<input id="serverKey" placeholder="client1"></label><label>Служба systemd<input id="serverService" value="nginx"></label><label>Клиентский сайт<select id="serverSite"><option value="">Без привязки</option></select></label></div>
+            <button class="primary" id="serverCreateBtn">Добавить сервер</button>
+            <div class="server-setup wizard"><h3>Первоначальная настройка SSH</h3>
+              <p class="hint">1. Укажите имя ключа выше и создайте публичный ключ. 2. Добавьте его на клиентский VPS в authorized_keys. 3. Проверьте отпечаток сервера на самом VPS и подтвердите его здесь.</p>
+              <div class="server-actions"><button id="makeSshKey">Создать / показать публичный ключ</button><button id="scanHost">Получить отпечаток VPS</button><button id="trustHost">Подтвердить отпечаток VPS</button></div>
+              <label>Публичный ключ (можно копировать)<textarea id="sshPublic" rows="3" readonly></textarea></label>
+              <label>Отпечаток ED25519 (сверить на VPS)<input id="hostFingerprint" placeholder="SHA256:..." readonly></label>
+              <label>Подтверждённый отпечаток с VPS<input id="hostFingerprintConfirm" placeholder="Вставьте SHA256 с целевого VPS"></label>
+            </div>
+            <p class="hint">Подключение использует /var/lib/sitecontrol/ssh/&lt;имя_ключа&gt;.key и проверенный known_hosts. Инструкция по первичной настройке — в ZIP.</p>
+          </div>
+          <div class="section-heading"><h2>Подключённые VPS</h2></div><div class="server-list" id="serversList"></div>
+        </section>
       </div>
     </main>
   </div>
+  <div id="denied" class="auth-screen" hidden><div class="auth-card"><h1>Доступ закрыт</h1><p>Панель доступна только администраторам Site Control.</p></div></div>
   <div id="auth" class="auth-screen"><div class="auth-card"><div class="brand-mark large"><span></span><span></span><span></span><span></span></div><div class="eyebrow">ЗАКРЫТАЯ ПАНЕЛЬ</div><h1>Site Control<span class="accent">.</span></h1><p>Сайты, клиенты и заявки в одном месте.</p><button class="primary wide" id="loginBtn">Войти через Telegram →</button><div id="loginStep" hidden><p>Отправьте боту команду:</p><div class="login-code"><code id="loginCode"></code><button id="copyCode" aria-label="Копировать код">⧉</button></div><a id="loginLink" target="_blank" rel="noopener noreferrer" class="secondary wide text-center" href="#">Открыть Telegram</a><small>После подтверждения вход выполнится автоматически. Код действителен 10 минут.</small></div><p class="auth-note">Доступ предоставляется только администраторам Site Control.</p></div></div>
   <div class="modal-layer" id="modal" hidden><div class="modal"><div class="modal-header"><h2>Новый проект</h2><button class="icon-button" id="closeModal" aria-label="Закрыть">✕</button></div><label>Название клиента<input id="newName" maxlength="90" placeholder="Например, Кафе Уют"></label><label>Адрес проекта<input id="newSlug" maxlength="56" placeholder="cafe-uyut" pattern="[a-z0-9-]+"></label><label>Telegram ID клиента (необязательно)<input id="newClient" inputmode="numeric" placeholder="123456789"></label><p class="hint">Новый сайт появляется как черновик. Публичная страница станет доступна после публикации.</p><button class="primary wide" id="submitNew">Создать проект</button></div></div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
