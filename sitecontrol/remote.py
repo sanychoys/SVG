@@ -22,7 +22,7 @@ TEMPLATES = {
     'memory': ('Память','free -h'),
     'services': ('Активные службы','systemctl --no-pager --failed'),
     'nginx_check': ('Проверка Nginx','nginx -t'),
-    'site_logs': ('Логи сайта','journalctl --no-pager -n 80 -u {service}'),
+    'site_logs': ('Логи сайта','journalctl --no-pager -n 80 --since="24 hours ago" --utc --output=short-iso -u {service}'),
     'site_status': ('Состояние сайта','systemctl --no-pager status {service}'),
     'site_restart': ('Перезапустить сервис','sudo -n systemctl restart {service}'),
 }
@@ -107,21 +107,30 @@ def public_key(alias:str, create:bool=False):
 
 def host_scan(host:str, port:int=22):
     validate('Проверка',host,port,'scdeploy','default','nginx')
-    proc=subprocess.run(['ssh-keyscan','-T','5','-p',str(port),'-t','ed25519',host],capture_output=True,timeout=9)
-    keys=[line for line in proc.stdout.decode('utf-8','replace').splitlines() if line and not line.startswith('#')]
-    if len(keys)!=1:raise RuntimeError('Не удалось получить единственный ED25519-ключ сервера')
-    key=keys[0]
-    match=re.fullmatch(r'\S+ ssh-ed25519 [A-Za-z0-9+/=]+(?:\s+.*)?',key)
-    if not match:raise RuntimeError('Некорректный SSH-ключ сервера')
-    print_result=subprocess.run(['ssh-keygen','-lf','-'],input=(key+'\n').encode(),capture_output=True,timeout=5)
-    if print_result.returncode:raise RuntimeError('Не удалось прочитать отпечаток ключа')
-    fingerprint=re.search(r'SHA256:[A-Za-z0-9+/]+',print_result.stdout.decode())
-    if not fingerprint:raise RuntimeError('Некорректный отпечаток')
-    return key,fingerprint.group(0)
+    if not shutil.which('ssh-keyscan') or not shutil.which('ssh-keygen'):
+        raise RuntimeError('Установите openssh-client на VPS Site Control')
+    proc=subprocess.run(['ssh-keyscan','-T','6','-p',str(port),'-t','ed25519,ecdsa,rsa',host],capture_output=True,timeout=12)
+    lines=[line.strip() for line in proc.stdout.decode('utf-8','replace').splitlines() if line and not line.startswith('#')]
+    candidates={}
+    for line in lines:
+        fields=line.split()
+        if len(fields)<3 or fields[1] not in ('ssh-ed25519','ecdsa-sha2-nistp256','ecdsa-sha2-nistp384','ecdsa-sha2-nistp521','ssh-rsa'):
+            continue
+        key=' '.join(fields[:3]);candidates[(fields[1],fields[2])]=key
+    for preferred in ('ssh-ed25519','ecdsa-sha2-nistp256','ecdsa-sha2-nistp384','ecdsa-sha2-nistp521','ssh-rsa'):
+        selected=next((v for (type_,_),v in candidates.items() if type_==preferred),None)
+        if selected:break
+    else:
+        raise RuntimeError('Не получен SSH-ключ: проверьте IP, порт 22, доступность SSH и firewall')
+    printed=subprocess.run(['ssh-keygen','-lf','-'],input=(selected+'\n').encode(),capture_output=True,timeout=5)
+    if printed.returncode:raise RuntimeError('Не удалось прочитать SSH-отпечаток')
+    match=re.search(r'SHA256:[A-Za-z0-9+/]+',printed.stdout.decode('utf-8','replace'))
+    if not match:raise RuntimeError('Нет SSH-отпечатка сервера')
+    return selected,match.group(0)
 
 
 def trust_host(key:str):
-    if not isinstance(key,str) or not re.fullmatch(r'\S+ ssh-ed25519 [A-Za-z0-9+/=]+(?: [^\r\n]{0,150})?',key):
+    if not isinstance(key,str) or not re.fullmatch(r'\S+ (?:ssh-ed25519|ecdsa-sha2-nistp(?:256|384|521)|ssh-rsa) [A-Za-z0-9+/=]+(?: [^\r\n]{0,150})?',key):
         raise ValueError('Некорректный ключ сервера')
     KEY_DIR.mkdir(parents=True,exist_ok=True,mode=0o700)
     KEY_DIR.chmod(0o700)

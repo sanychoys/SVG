@@ -11,6 +11,8 @@ import re
 import secrets
 import time
 import traceback
+import threading
+import hashlib
 from collections import defaultdict, deque
 from pathlib import Path
 from urllib.parse import quote
@@ -32,6 +34,37 @@ LOGIN_COOKIE = 'sc_login_verify'
 LEAD_LIMIT = defaultdict(deque)
 LOGIN_LIMIT = defaultdict(deque)
 PENDING_HOSTKEYS = {}
+LAUNCH_TICKETS = {}  # SHA-256 digest -> (Telegram ID, expiry); never persist raw tokens
+LAUNCH_LOCK = threading.Lock()
+
+def issue_mini_launch(admin_id: int) -> str:
+    """Issue only from the private chat of an authenticated main-bot admin."""
+    if registry is None or not registry.is_admin(admin_id):
+        raise PermissionError('Только администратор может открыть Mini App')
+    token=secrets.token_urlsafe(32)
+    with LAUNCH_LOCK:
+        now=time.monotonic()
+        for key, value in list(LAUNCH_TICKETS.items()):
+            if value[1]<=now: LAUNCH_TICKETS.pop(key,None)
+        if len(LAUNCH_TICKETS)>400:
+            LAUNCH_TICKETS.clear()
+        LAUNCH_TICKETS[hashlib.sha256(token.encode()).hexdigest()] = (int(admin_id),now+90)
+    return token
+
+def consume_mini_launch(ticket: str) -> int | None:
+    if not isinstance(ticket,str) or len(ticket)>150 or len(ticket)<35:return None
+    with LAUNCH_LOCK:
+        entry=LAUNCH_TICKETS.pop(hashlib.sha256(ticket.encode()).hexdigest(),None)
+    if entry and entry[1]>=time.monotonic() and registry.is_admin(entry[0]):return entry[0]
+    return None
+
+def telegram_init_token():
+    """Use the active bot instance rather than a potentially stale config import."""
+    if main_bot is not None and getattr(main_bot,"token",None):
+        return main_bot.token
+    from config import BOT_TOKEN
+    return BOT_TOKEN
+
 
 
 def wire(admin_registry, bot_manager, admin_bot):
@@ -48,7 +81,7 @@ async def minimal_site_logging(request:Request, call_next):
         # No routine GET/access noise. Record updates and failed requests only.
         if response.status_code>=500:
             site_log.error('%s %s · HTTP %s',request.method,path,response.status_code)
-        elif response.status_code>=400 and not path.startswith('/api/sc/auth/'):
+        elif response.status_code>=400 and not path.startswith('/api/sc/auth/') and not path.startswith(('/api/notes','/api/training/','/api/finance/','/api/profile','/api/schedule/','/api/diagnostics/frontend')):
             site_log.warning('%s %s · HTTP %s',request.method,path,response.status_code)
         elif request.method in ('POST','PUT','PATCH','DELETE') and response.status_code<400 and not path.startswith('/api/sc/auth/'):
             site_log.info('%s %s · HTTP %s',request.method,path,response.status_code)
@@ -61,9 +94,13 @@ async def minimal_site_logging(request:Request, call_next):
 def require_admin(request: Request):
     signed = request.headers.get('X-Telegram-Init-Data')
     if signed:
-        from config import BOT_TOKEN
-        try: verified=miniapp_auth.verify(signed,BOT_TOKEN)
-        except ValueError:raise HTTPException(401,'Подпись Mini App недействительна')
+        try: verified=miniapp_auth.verify(signed,telegram_init_token())
+        except ValueError:
+            # A valid short-lived, HttpOnly Mini App session is also accepted.
+            # A failed signature alone must NEVER grant access.
+            session_id=store.get_session(request.cookies.get(COOKIE))
+            if session_id and registry.is_admin(session_id):return session_id
+            raise HTTPException(401,'Подпись Mini App недействительна')
         if not registry.is_admin(verified):raise HTTPException(403,'Доступ запрещён')
         return verified
     admin_id = store.get_session(request.cookies.get(COOKIE))
@@ -115,7 +152,7 @@ def readiness():
                 db.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
     except Exception:
         raise HTTPException(503, 'Database unavailable')
-    return {'status':'ok','service':'Site Control','version':'1.6.0'}
+    return {'status':'ok','service':'Site Control','version':'1.7.0'}
 
 
 @app.get('/api/sc/health')
@@ -157,25 +194,53 @@ def auth_status(request: Request, code: str=''):
 
 @app.post('/api/sc/auth/miniapp')
 async def auth_miniapp(request:Request):
-    """Log in Telegram Mini App without a copyable /login code.
-
-    Works only for authenticated Telegram admins. Normal browsers use the code flow.
+    """Prefer Telegram-signed initData; allow a single-use ticket issued by the
+    authenticated admin bot at /start. Never trust Telegram initDataUnsafe or ID
+    from an unauthenticated request body.
     """
     body=await json_body(request,max_bytes=10000)
-    from config import BOT_TOKEN
-    try: admin_id=miniapp_auth.verify(body.get('init_data'), BOT_TOKEN)
-    except ValueError as exc:
-        site_log.warning('Mini App: initData rejected: %s', str(exc))
-        raise HTTPException(401,'Подпись Telegram не подтверждена. Откройте Mini App заново через /start.')
+    admin_id=None
+    reason=''
+    signed=body.get('init_data')
+    if signed:
+        try:admin_id=miniapp_auth.verify(signed,telegram_init_token())
+        except ValueError as exc:reason=str(exc)
+    if admin_id is None:
+        admin_id=consume_mini_launch(body.get('launch_ticket'))
+        if admin_id is None:
+            existing=store.get_session(request.cookies.get(COOKIE))
+            if existing and registry.is_admin(existing):admin_id=existing
+        if admin_id is None:
+            # No user secrets or raw Telegram parameters in logs.
+            site_log.warning('Вход Mini App не подтверждён: %s',reason or 'нет проверенных данных')
+            raise HTTPException(401,'Откройте Mini App через свежую кнопку /start в главном боте.')
+    if body.get('launch_ticket') and signed and not reason:
+        consume_mini_launch(body.get('launch_ticket'))
     if not registry.is_admin(admin_id):
-        site_log.warning('Mini App: verified Telegram account is not admin')
-        raise HTTPException(403,'Telegram-аккаунт не включён в список администраторов. Проверьте, что используете нужный профиль.')
-    # Mini App NEVER creates a reusable browser login cookie. Subsequent requests
-    # supply signed initData and are authorized independently of web sessions.
+        site_log.warning('Mini App: вход пользователя без прав администратора')
+        raise HTTPException(403,'Ваш Telegram-аккаунт не имеет прав администратора')
     response=JSONResponse({'authorized':True,'admin_id':admin_id})
     response.headers['Cache-Control']='no-store'
-    site_log.info('Вход администратора через Telegram Mini App')
+    if signed:
+        try:miniapp_auth.verify(signed,telegram_init_token())
+        except ValueError:
+            # Only a verified one-time bot ticket can create this scoped session.
+            session=store.create_session(admin_id,ttl=2*3600)
+            response.set_cookie(COOKIE,session,httponly=True,secure=True,samesite='strict',max_age=2*3600,path='/')
+    else:
+        session=store.create_session(admin_id,ttl=2*3600)
+        response.set_cookie(COOKIE,session,httponly=True,secure=True,samesite='strict',max_age=2*3600,path='/')
+    site_log.info('Авторизован администратор Mini App')
     return response
+
+
+@app.post('/api/sc/profile/timezone')
+async def save_device_timezone(request:Request):
+    admin=write_guard(request)
+    data=await json_body(request,1000)
+    try:store.set_admin_timezone(admin,data.get('timezone'))
+    except ValueError as exc:error(exc)
+    return {'ok':True}
 
 
 @app.get('/api/sc/admins')
@@ -687,14 +752,14 @@ def project_log(project_id:int,kind:str,request:Request,server_id:int|None=None,
     require_admin(request)
     if project_id<=0 or not store.get_site(project_id):raise HTTPException(404,'Проект не найден')
     if kind in ('bot','site','deploy'):
-        result=diagnostics.project_tail(project_id,kind)
+        result=diagnostics.project_tail(project_id,kind,limit=30,hours=24)
     elif kind=='server':
         srv=store.get_server(server_id or 0)
         if not srv or srv['site_id']!=project_id:raise HTTPException(403,'Этот VPS не принадлежит проекту')
-        try:result=remote.execute(srv,'site_logs')['output']
+        try:result=diagnostics.recent_journal(remote.execute(srv,'site_logs')['output'])
         except Exception:site_log.exception('Ошибка журналов VPS проекта %s',project_id);raise HTTPException(502,'Не удалось получить журнал VPS')
     else:raise HTTPException(404,'Неизвестный журнал')
-    headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}
+    headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-SC-Log-Timezone':'UTC'}
     if download:headers['Content-Disposition']=f'attachment; filename="project-{project_id}-{kind}.txt"'
     return Response(result,media_type='text/plain; charset=utf-8',headers=headers)
 
@@ -703,20 +768,20 @@ def export_logs(kind:str,request:Request,server_id:int|None=None,download:int=1)
     require_admin(request)
     from . import diagnostics
     if kind in ('bot','site'):
-        result=diagnostics.tail(kind,400)
+        result=diagnostics.tail(kind,30,hours=24)
     elif kind=='deploy':
         logpath=Path(os.environ.get('SVGTRACKER_ADMIN_STATE_DIR','/var/lib/svgtracker-admin'))/'logs'/'deploy.log'
-        result=logpath.read_text('utf-8',errors='replace')[-180000:] if logpath.is_file() else 'Записей ещё нет'
+        result=diagnostics.recent_file(logpath,limit=30,hours=24) if logpath.is_file() else 'Записей ещё нет'
     elif kind=='platform':
-        try:result=local_console.execute('site_logs')['output']
+        try:result=diagnostics.recent_journal(local_console.execute('site_logs')['output'])
         except Exception:site_log.exception('Журнал локального сервера');raise HTTPException(502,'Локальные логи недоступны')
     elif kind=='server':
         srv=store.get_server(int(server_id or 0))
         if not srv:raise HTTPException(404,'Сервер не найден')
-        try:result=remote.execute(srv,'site_logs')['output']
+        try:result=diagnostics.recent_journal(remote.execute(srv,'site_logs')['output'])
         except Exception:site_log.exception('Логи VPS');raise HTTPException(502,'Не удалось получить логи VPS')
     else:raise HTTPException(404,'Неизвестный журнал')
-    headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}
+    headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-SC-Log-Timezone':'UTC'}
     if download:headers['Content-Disposition']=f'attachment; filename="site-control-{kind}.txt"'
     return Response(result,media_type='text/plain; charset=utf-8',headers=headers)
 

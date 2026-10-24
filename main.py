@@ -1,4 +1,4 @@
-"""Site Control 1.6: admin Mini App, project management and remote VPS control."""
+"""Site Control 1.7: admin Mini App, project management and remote VPS control."""
 from __future__ import annotations
 import asyncio
 import hmac
@@ -79,13 +79,16 @@ def helper(subcommand):
     return (p.stdout or '')[:4000]
 
 
-def miniapp_url():
-    return web.SITE_URL+'/?mode=miniapp'
+def miniapp_url(admin_user_id=None):
+    base=web.SITE_URL+'/?mode=miniapp'
+    if admin_user_id and registry.is_admin(admin_user_id):
+        return base+'&ticket='+web.issue_mini_launch(admin_user_id)
+    return base
 
-def keyboard():
+def keyboard(admin_user_id=None):
     """The only visible controls: Mini App, status, logs, ZIP, backup."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='Открыть Mini App',web_app=WebAppInfo(url=miniapp_url()))],
+        [InlineKeyboardButton(text='Открыть Mini App',web_app=WebAppInfo(url=miniapp_url(admin_user_id)))],
         [InlineKeyboardButton(text='Проекты',callback_data='sc:sites'),
          InlineKeyboardButton(text='Серверы',callback_data='sc:servers')],
         [InlineKeyboardButton(text='Состояние',callback_data='sc:status'),
@@ -115,11 +118,14 @@ def log_keyboard():
     ])
 
 
-async def send_log(message:Message,kind:str):
-    content=await asyncio.to_thread(diagnostics.tail,kind,300)
+async def send_log(message:Message,kind:str,viewer_id:int|None=None):
+    content=await asyncio.to_thread(diagnostics.tail,kind,30,24)
     label='бота' if kind=='bot' else 'сайта и API'
+    if viewer_id is None and message.from_user and not message.from_user.is_bot:viewer_id=message.from_user.id
+    timezone_name=store.get_admin_timezone(viewer_id) if viewer_id else 'UTC'
+    content=diagnostics.format_for_timezone(content,timezone_name)
     await message.answer_document(BufferedInputFile(content.encode('utf-8'),filename='Site_Control_'+kind+'_log.txt'),
-        caption=f'Журнал {label} · последние записи. Ошибки сохранены полностью в пределах выбранного фрагмента.')
+        caption=f'Журнал {label} · последние 24 часа, до 30 событий · время {timezone_name}.')
 
 
 @dp.message(Command('start'))
@@ -133,7 +139,7 @@ async def welcome(message:Message):
         if approved:log.info('Администратор вошёл через Telegram')
         await message.answer('Вход подтверждён. Вернитесь на сайт.' if approved else 'Код входа неверен или устарел.')
         return
-    await message.answer('Site Control\nПроекты, серверы и состояние — здесь и в Mini App.',reply_markup=keyboard())
+    await message.answer('Site Control\nПроекты, серверы и состояние — здесь и в Mini App.',reply_markup=keyboard(message.from_user.id))
 
 
 @dp.message(Command('logs'))
@@ -374,7 +380,7 @@ async def callbacks(callback:CallbackQuery):
         await callback.answer('Отменено');await callback.message.edit_text('Действие отменено.');return
     if action=='home':
         await callback.answer()
-        await callback.message.answer('Site Control',reply_markup=keyboard())
+        await callback.message.answer('Site Control',reply_markup=keyboard(callback.from_user.id))
         return
     if action=='upload':
         await callback.answer()
@@ -386,7 +392,7 @@ async def callbacks(callback:CallbackQuery):
         return
     if action=='log' and len(parts)==3 and parts[2] in diagnostics.KINDS:
         await callback.answer()
-        try:await send_log(callback.message,parts[2])
+        try:await send_log(callback.message,parts[2],callback.from_user.id)
         except Exception:
             log.exception('Не удалось отправить журнал %s',parts[2])
             await send_error(callback.message,'Ошибка чтения журнала')
@@ -446,7 +452,7 @@ async def callbacks(callback:CallbackQuery):
         kb=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text='Загрузить ZIP или файл',callback_data=f'sc:pfile:{pid}')],
             [InlineKeyboardButton(text='Резервные копии',callback_data=f'sc:pbacks:{pid}')],
-            [InlineKeyboardButton(text='Открыть Mini App',web_app=WebAppInfo(url=miniapp_url()))],
+            [InlineKeyboardButton(text='Открыть Mini App',web_app=WebAppInfo(url=miniapp_url(callback.from_user.id)))],
             [InlineKeyboardButton(text='Назад к проектам',callback_data='sc:sites')]])
         await callback.message.answer(title+' · проект',reply_markup=kb)
         return

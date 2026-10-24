@@ -95,6 +95,10 @@ def init():
             author TEXT NOT NULL, created_at INTEGER NOT NULL,
             UNIQUE(site_id,version)
         );
+        CREATE TABLE IF NOT EXISTS admin_timezones (
+            admin_id INTEGER PRIMARY KEY,
+            timezone_name TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS admin_sessions (
             digest TEXT PRIMARY KEY, admin_id INTEGER NOT NULL,
             expires INTEGER NOT NULL
@@ -402,11 +406,11 @@ def consume_login(code, verifier):
         return row['admin_id']
 
 
-def create_session(admin_id):
+def create_session(admin_id,ttl=7*86400):
     token=secrets.token_urlsafe(38)
     with connect() as db:
         db.execute('DELETE FROM admin_sessions WHERE expires<?',(now(),))
-        db.execute('INSERT INTO admin_sessions(digest,admin_id,expires) VALUES(?,?,?)',(digest(token),admin_id,now()+7*86400))
+        db.execute('INSERT INTO admin_sessions(digest,admin_id,expires) VALUES(?,?,?)',(digest(token),admin_id,now()+max(60,min(int(ttl),7*86400))))
     return token
 
 
@@ -547,3 +551,19 @@ def delete_site(site_id:int,slug:str,actor):
         audit(db,'admin:'+str(actor),'project.delete',tenant,'project ID '+str(site_id))
     # Staged files and backups remain on disk for manual recovery; never delete admin state.
     return {'ok':True,'orphaned_file_backups_preserved':True}
+
+
+def set_admin_timezone(admin_id:int,timezone_name:str):
+    from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
+    if not isinstance(timezone_name,str) or not 1<=len(timezone_name)<=64 or not __import__('re').fullmatch(r'[A-Za-z0-9_+./-]+',timezone_name):
+        raise ValueError('Неверный часовой пояс')
+    try:ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError,ValueError):raise ValueError('Часовой пояс не поддерживается') from None
+    with connect() as db:
+        db.execute('INSERT INTO admin_timezones(admin_id,timezone_name) VALUES (?,?) ON CONFLICT(admin_id) DO UPDATE SET timezone_name=excluded.timezone_name',(admin_id,timezone_name))
+
+
+def get_admin_timezone(admin_id:int)->str:
+    with connect() as db:
+        row=db.execute('SELECT timezone_name FROM admin_timezones WHERE admin_id=?',(int(admin_id),)).fetchone()
+    return row['timezone_name'] if row else 'UTC'
