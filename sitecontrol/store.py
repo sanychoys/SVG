@@ -126,6 +126,10 @@ def init():
             detail TEXT NOT NULL, created_at INTEGER NOT NULL
         );
         ''')
+    with connect() as db:
+        cols=[r['name'] for r in db.execute('PRAGMA table_info(remote_servers)')]
+        if 'deploy_root' not in cols:
+            db.execute("ALTER TABLE remote_servers ADD COLUMN deploy_root TEXT NOT NULL DEFAULT ''")
     try: DB_PATH.chmod(0o600)
     except OSError: pass
 
@@ -478,8 +482,8 @@ def get_server(server_id):
 
 def add_server(data, actor):
     with connect() as db:
-        cur=db.execute('INSERT INTO remote_servers(name,host,port,username,key_alias,service,site_id,created_at) VALUES(?,?,?,?,?,?,?,?)',
-            (data['name'],data['host'],data['port'],data['username'],data['key_alias'],data['service'],data['site_id'],now()))
+        cur=db.execute('INSERT INTO remote_servers(name,host,port,username,key_alias,service,site_id,created_at,deploy_root) VALUES(?,?,?,?,?,?,?,?,?)',
+            (data['name'],data['host'],data['port'],data['username'],data['key_alias'],data['service'],data['site_id'],now(),data.get('deploy_root','')))
         audit(db,actor,'server.create',None,data['name'])
         return cur.lastrowid
 
@@ -497,3 +501,11 @@ def log_server_run(server_id,actor,template,success):
         db.execute('INSERT INTO remote_runs(server_id,actor,template,success,created_at) VALUES(?,?,?,?,?)',
             (server_id,actor,template,int(success),now()))
         audit(db,actor,'server.command',None,str(server_id)+':'+str(template))
+
+
+def server_set_root(server_id, root, actor):
+    with connect() as db:
+        row=db.execute('SELECT site_id FROM remote_servers WHERE id=?',(server_id,)).fetchone()
+        if row is None:raise LookupError('Сервер не найден')
+        db.execute('UPDATE remote_servers SET deploy_root=? WHERE id=?',(root,server_id))
+        audit(db,actor,'server.deploy_root',None,str(server_id))

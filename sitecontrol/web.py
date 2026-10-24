@@ -17,7 +17,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from . import store
-from . import diagnostics, miniapp_auth, remote
+from . import diagnostics, miniapp_auth, remote, project_files
 
 app = FastAPI(title='Site Control API', docs_url=None, redoc_url=None, openapi_url=None)
 registry = None
@@ -334,7 +334,7 @@ async def server_create(request:Request):
     data=await json_body(request,5000)
     try:
         cleaned=remote.validate(data.get('name'),data.get('host'),data.get('port',22),
-            data.get('username'),data.get('key_alias'),data.get('service','sitecontrol'),data.get('site_id'))
+            data.get('username'),data.get('key_alias'),data.get('service','sitecontrol'),data.get('site_id'),data.get('deploy_root',''))
         server_id=store.add_server(cleaned,'admin:'+str(actor))
     except (ValueError,LookupError) as exc:error(exc)
     return {'ok':True,'id':server_id}
@@ -491,6 +491,144 @@ def render_site(slug, data, preview=False):
       <section id="services"><h2>Товары и услуги</h2><div class="items">{cards}</div></section>
       <section id="contact" class="contact"><div><h2>Связаться с нами</h2><p>{phone}</p><p>{address}</p><p>{hours}</p></div>
       <div><h3>Оставить заявку</h3>{'<p class="muted">Предпросмотр: отправка отключена.</p>' if preview else f'<form id="leadform" action="/api/sc/public/{quote(slug)}/lead"><input name="customer" placeholder="Ваше имя" maxlength="120" required><input name="contact" placeholder="Телефон или Telegram" maxlength="160" required><textarea name="message" placeholder="Что вас интересует?" maxlength="1200"></textarea><input name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true"><button class="btn" type="submit">Отправить заявку</button><p id="status" role="status" class="small"></p><p class="small muted">Отправляя заявку, вы соглашаетесь, что компания свяжется с вами по указанным контактам.</p></form>'}</div></section></main><footer>{title} · {phone}</footer></div>{'' if preview else script}</body></html>'''
+
+
+# ------------------ v1.5 file-based projects ---------------------
+
+def _target(pid,server_id):
+    try:return project_files.root_for(pid,server_id)
+    except (ValueError,LookupError) as exc:error(exc)
+
+
+@app.get('/api/sc/projects')
+def projects(request:Request):
+    require_admin(request)
+    return {'projects':[{'id':0,'name':'Наша платформа','kind':'own','slug':'site-control','bot_name':'главный бот'}]+[
+        {'id':s['id'],'name':s['client_name'],'kind':'client','slug':s['slug'],'bot_name':s['bot_name'],'new_leads':s['new_leads']}
+        for s in store.list_sites()]}
+
+
+@app.get('/api/sc/projects/{project_id}/releases')
+def releases(project_id:int,request:Request):
+    require_admin(request)
+    try:return {'releases':project_files.list_releases(project_id)}
+    except (ValueError,LookupError) as exc:error(exc)
+
+
+@app.post('/api/sc/projects/{project_id}/upload')
+async def project_upload(project_id:int,request:Request,filename:str=''):
+    write_guard(request)
+    if int(request.headers.get('content-length') or '0')>project_files.MAX_UPLOAD:
+        raise HTTPException(413,'Файл больше 30 МБ')
+    parts=[];total=0
+    async for chunk in request.stream():
+        total+=len(chunk)
+        if total>project_files.MAX_UPLOAD:raise HTTPException(413,'Файл больше 30 МБ')
+        parts.append(chunk)
+    try:return {'release':await asyncio.to_thread(project_files.stage,project_id,b''.join(parts),filename)}
+    except (ValueError,LookupError) as exc:error(exc)
+
+
+@app.post('/api/sc/projects/{project_id}/apply/{release_id}')
+async def project_apply(project_id:int,release_id:str,request:Request):
+    write_guard(request)
+    body=await json_body(request,2000)
+    if body.get('confirm')!='DEPLOY':raise HTTPException(400,'Подтвердите публикацию словом DEPLOY')
+    try:return await asyncio.to_thread(project_files.deploy,project_id,release_id,body.get('server_id'))
+    except (ValueError,LookupError) as exc:error(exc)
+    except Exception:
+        site_log.exception('Не удалось опубликовать файлы проекта %s',project_id)
+        raise HTTPException(502,'Ошибка обновления. Подробности в логах.')
+
+
+@app.get('/api/sc/projects/{project_id}/backups')
+def project_backups(project_id:int,request:Request):
+    require_admin(request)
+    try:return {'backups':project_files.list_backups(project_id)}
+    except (ValueError,LookupError) as exc:error(exc)
+
+
+@app.post('/api/sc/projects/{project_id}/backups')
+async def project_backup(project_id:int,request:Request):
+    write_guard(request)
+    body=await json_body(request,2000)
+    try:return {'backup':await asyncio.to_thread(project_files.create_backup,project_id,body.get('server_id'))}
+    except (ValueError,LookupError) as exc:error(exc)
+    except Exception:
+        site_log.exception('Не удалось создать бэкап проекта %s',project_id)
+        raise HTTPException(502,'Ошибка создания бэкапа; см. логи')
+
+
+@app.post('/api/sc/projects/{project_id}/backups/import')
+async def project_backup_import(project_id:int,request:Request,server_id:int|None=None):
+    write_guard(request)
+    chunks=[];total=0
+    async for chunk in request.stream():
+        total+=len(chunk)
+        if total>project_files.MAX_BACKUP:raise HTTPException(413,'Бэкап больше 110 МБ')
+        chunks.append(chunk)
+    try:return {'backup':await asyncio.to_thread(project_files.import_backup,project_id,b''.join(chunks),server_id)}
+    except (ValueError,LookupError) as exc:error(exc)
+
+
+@app.get('/api/sc/projects/{project_id}/backups/{backup_id}/download')
+def project_backup_download(project_id:int,backup_id:str,request:Request):
+    require_admin(request)
+    try:meta,path=project_files.lookup_backup(project_id,backup_id)
+    except (ValueError,LookupError) as exc:error(exc)
+    return Response(path.read_bytes(),media_type='application/zip',headers={'Content-Disposition':f'attachment; filename="project-{project_id}-{backup_id}.zip"','Cache-Control':'no-store'})
+
+
+@app.post('/api/sc/projects/{project_id}/backups/{backup_id}/restore')
+async def project_restore(project_id:int,backup_id:str,request:Request):
+    write_guard(request)
+    body=await json_body(request,2000)
+    if body.get('confirm')!='RESTORE':raise HTTPException(400,'Подтвердите восстановление словом RESTORE')
+    try:return await asyncio.to_thread(project_files.restore,project_id,backup_id)
+    except (ValueError,LookupError) as exc:error(exc)
+    except Exception:
+        site_log.exception('Ошибка восстановления проекта %s',project_id)
+        raise HTTPException(502,'Ошибка восстановления; см. логи')
+
+
+@app.delete('/api/sc/projects/{project_id}/backups/{backup_id}')
+def project_backup_delete(project_id:int,backup_id:str,request:Request,confirm:str=''):
+    write_guard(request)
+    if confirm!='DELETE':raise HTTPException(400,'Подтвердите удаление')
+    try:return project_files.delete_backup(project_id,backup_id)
+    except (ValueError,LookupError) as exc:error(exc)
+
+
+@app.patch('/api/sc/servers/{server_id}/deploy-root')
+async def configure_deploy_root(server_id:int,request:Request):
+    admin=write_guard(request)
+    body=await json_body(request,2000)
+    current=store.get_server(server_id)
+    if not current:raise HTTPException(404,'Сервер не найден')
+    try:
+        validated=remote.validate(current['name'],current['host'],current['port'],current['username'],current['key_alias'],current['service'],current['site_id'],body.get('deploy_root',''))
+        if not validated['deploy_root']:raise ValueError('Укажите путь к файлам продукта')
+        store.server_set_root(server_id,validated['deploy_root'],'admin:'+str(admin))
+    except (ValueError,LookupError) as exc:error(exc)
+    return {'ok':True}
+
+
+@app.get('/api/sc/exports/{kind}')
+def export_logs(kind:str,request:Request,server_id:int|None=None):
+    require_admin(request)
+    from . import diagnostics
+    if kind in ('bot','site'):
+        result=diagnostics.tail(kind,400)
+    elif kind=='deploy':
+        logpath=Path(os.environ.get('SVGTRACKER_ADMIN_STATE_DIR','/var/lib/svgtracker-admin'))/'logs'/'deploy.log'
+        result=logpath.read_text('utf-8',errors='replace')[-180000:] if logpath.is_file() else 'Записей ещё нет'
+    elif kind=='server':
+        srv=store.get_server(int(server_id or 0))
+        if not srv:raise HTTPException(404,'Сервер не найден')
+        try:result=remote.execute(srv,'site_logs')['output']
+        except Exception:site_log.exception('Логи VPS');raise HTTPException(502,'Не удалось получить логи VPS')
+    else:raise HTTPException(404,'Неизвестный журнал')
+    return Response(result,media_type='text/plain; charset=utf-8',headers={'Content-Disposition':f'attachment; filename="site-control-{kind}.txt"','Cache-Control':'no-store'})
 
 
 @app.get('/api/sc/public/{slug}',response_class=HTMLResponse)

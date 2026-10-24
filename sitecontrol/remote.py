@@ -28,7 +28,7 @@ TEMPLATES = {
 }
 
 
-def validate(name, host, port, username, key_alias, service, site_id=None):
+def validate(name, host, port, username, key_alias, service, site_id=None, deploy_root=""):
     if not isinstance(name,str) or not 2 <= len(name.strip()) <= 70:raise ValueError('Название сервера: 2–70 символов')
     if not isinstance(host,str) or not HOST.fullmatch(host) or '..' in host:raise ValueError('Некорректный адрес сервера')
     try:port=int(port)
@@ -42,7 +42,8 @@ def validate(name, host, port, username, key_alias, service, site_id=None):
         except (ValueError,TypeError):raise ValueError('Некорректный проект')
         if not store.get_site(site_id):raise ValueError('Проект не найден')
     else:site_id=None
-    return {'name':name.strip(),'host':host,'port':port,'username':username,'key_alias':key_alias,'service':service,'site_id':site_id}
+    if deploy_root and (not isinstance(deploy_root,str) or '..' in deploy_root.split('/') or len(deploy_root)>250 or not deploy_root.startswith(('/var/www/','/srv/','/home/'))):raise ValueError('Папка проекта должна начинаться с /srv/, /var/www/ или /home/')
+    return {'name':name.strip(),'host':host,'port':port,'username':username,'key_alias':key_alias,'service':service,'site_id':site_id,'deploy_root':deploy_root}
 
 
 def build_command(server, template, custom=None):

@@ -22,7 +22,7 @@ import uvicorn
 
 from config import BOT_TOKEN
 from admin_access import AdminRegistry
-from sitecontrol import store, web, operations, diagnostics, remote
+from sitecontrol import store, web, operations, diagnostics, remote, project_files
 from sitecontrol.maintenance import snapshot
 from sitecontrol.telegram_bots import manager
 
@@ -39,6 +39,7 @@ DEPLOY=ROOT/'deploy'/'admin_deploy.py'
 STATE=Path(os.environ.get('SVGTRACKER_ADMIN_STATE_DIR','/var/lib/svgtracker-admin'))
 PENDING={}
 ADMIN_INPUT={}  # actor ID -> deadline for admin-add flow
+PROJECT_UPLOAD={}  # admin Telegram ID -> (project ID, expires)
 
 
 async def send_chunks(message:Message, text:str):
@@ -142,65 +143,19 @@ async def logs(message:Message):
 
 
 def site_keyboard():
-    rows=[]
+    rows=[[InlineKeyboardButton(text='◆ Наша платформа',callback_data='sc:site:0')]]
     for r in store.list_sites()[:20]:
-        rows.append([InlineKeyboardButton(text=f'Редактировать: {str(r["client_name"])[:35]}',callback_data=f'sc:site:{r["id"]}')])
-    rows.append([InlineKeyboardButton(text='Новый проект — инструкция',callback_data='sc:newhelp')])
+        rows.append([InlineKeyboardButton(text=str(r['client_name'])[:36],callback_data=f'sc:site:{r["id"]}')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def show_sites(message:Message):
-    sites=store.list_sites()
-    if not sites:
-        await message.answer('Проектов ещё нет. Добавить: /newsite Название | slug',reply_markup=site_keyboard())
-    else:
-        await message.answer(f'Мои сайты: {len(sites)}\nВыберите проект:',reply_markup=site_keyboard())
+    await message.answer('Проекты Site Control. Выберите продукт:',reply_markup=site_keyboard())
 
 
 @dp.message(Command('sites'))
 async def sites_command(message:Message):
     if is_admin(message):await show_sites(message)
-
-
-@dp.message(Command('newsite'))
-async def newsite(message:Message):
-    if not is_admin(message):return
-    parts=(message.text or '').partition(' ')[2].split('|')
-    if len(parts)!=2:
-        await message.answer('Создание сайта: /newsite Название компании | latin-slug');return
-    try:
-        sid=store.create_site(parts[0].strip(),parts[1].strip().lower())
-        await message.answer(f'Сайт #{sid} создан как черновик.\nРедактировать: /edit {sid} title Новый заголовок\nПубликация: /publish {sid}',reply_markup=site_keyboard())
-    except (ValueError,LookupError) as exc:await message.answer(str(exc))
-
-
-BOT_FIELDS={'title','tagline','description','phone','address','hours','button'}
-
-
-@dp.message(Command('edit'))
-async def edit_site(message:Message):
-    if not is_admin(message):return
-    parts=(message.text or '').split(' ',3)
-    if len(parts)<4 or not parts[1].isdigit() or parts[2] not in BOT_FIELDS:
-        await message.answer('Изменить поле: /edit ID title Новый заголовок\nПоля: '+', '.join(sorted(BOT_FIELDS)));return
-    try:
-        sid=int(parts[1]);site=store.get_site(sid)
-        if not site:raise LookupError('Сайт не найден')
-        data=store.json_obj(site['draft']);data[parts[2]]=parts[3]
-        store.save_draft(sid,data)
-        await message.answer(f'Сайт #{sid}: черновик сохранён. Чтобы изменения увидели посетители: /publish {sid}')
-    except (ValueError,LookupError) as exc:await message.answer(str(exc))
-
-
-@dp.message(Command('publish'))
-async def publish_site_bot(message:Message):
-    if not is_admin(message):return
-    arg=(message.text or '').partition(' ')[2].strip()
-    if not arg.isdigit():await message.answer('Использование: /publish ID');return
-    try:
-        version=store.publish(int(arg),'admin:'+str(message.from_user.id))
-        await message.answer(f'Сайт #{arg} опубликован · версия {version}')
-    except (ValueError,LookupError) as exc:await message.answer(str(exc))
 
 
 def server_keyboard():
@@ -372,6 +327,29 @@ async def admin_id_text(message:Message):
 async def upload_zip(message:Message):
     if not is_admin(message) or not message.document:return
     name=str(message.document.file_name or '')
+    pending_project=PROJECT_UPLOAD.get(message.from_user.id)
+    if pending_project and pending_project[1] >= time.time():
+        project_id=pending_project[0];PROJECT_UPLOAD.pop(message.from_user.id,None)
+        if not 0<int(message.document.file_size or 0)<=project_files.MAX_UPLOAD:
+            await message.answer('Файл должен быть не больше 30 МБ.');return
+        try:
+            from io import BytesIO
+            buffer=BytesIO()
+            await bot.download(message.document,destination=buffer)
+            release=await asyncio.to_thread(project_files.stage,project_id,buffer.getvalue(),name)
+            servers=([None] if project_id==0 else [r for r in store.list_servers() if r['site_id']==project_id])
+            if not servers:
+                await message.answer('Файлы проверены, но VPS проекта пока не подключён. Подключите его через Mini App.');return
+            choices=[]
+            for srv in servers[:12]:
+                sid=srv['id'] if srv else 0
+                token=uuid.uuid4().hex[:10]
+                PENDING[token]=(message.from_user.id,(project_id,release['id'],sid),'projectrelease',time.time()+900)
+                choices.append([InlineKeyboardButton(text='Опубликовать: '+(srv['name'] if srv else 'Наша платформа'),callback_data='sc:pub:'+token)])
+            await message.answer('Файл проверен и подготовлен. Выберите сервер для публикации:',reply_markup=InlineKeyboardMarkup(inline_keyboard=choices))
+        except Exception:
+            await send_error(message,'Не удалось подготовить файлы проекта')
+        return
     if not name.lower().endswith('.zip'):return
     size=int(message.document.file_size or 0)
     if not 0<size<=20*1024*1024:
@@ -458,16 +436,43 @@ async def callbacks(callback:CallbackQuery):
         await callback.answer();await show_sites(callback.message);return
     if action=='servers':
         await callback.answer();await callback.message.answer('Подключённые серверы:',reply_markup=server_keyboard());return
-    if action=='newhelp':
-        await callback.answer();await callback.message.answer('Создание: /newsite Кафе Уют | cafe-uyut');return
     if action=='serverhelp':
         await callback.answer();await callback.message.answer('Создание подключений к VPS — в Site Control → Серверы.');return
     if action=='site' and len(parts)==3 and parts[2].isdigit():
         await callback.answer()
-        site=store.get_site(int(parts[2]))
-        if not site:await callback.message.answer('Проект не найден');return
-        d=store.json_obj(site['draft'])
-        await callback.message.answer(f'#{site["id"]} · {site["client_name"]}\nЗаголовок: {d["title"]}\nПубликация: {site["published_version"]}\n\nИзменить: /edit {site["id"]} title Новый заголовок\nОпубликовать: /publish {site["id"]}')
+        pid=int(parts[2]);site=store.get_site(pid) if pid else None
+        if pid and not site:await callback.message.answer('Проект не найден');return
+        title=site['client_name'] if site else 'Наша платформа'
+        kb=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text='Загрузить ZIP или файл',callback_data=f'sc:pfile:{pid}')],
+            [InlineKeyboardButton(text='Резервные копии',callback_data=f'sc:pbacks:{pid}')],
+            [InlineKeyboardButton(text='Открыть Mini App',web_app=WebAppInfo(url=miniapp_url()))],
+            [InlineKeyboardButton(text='Назад к проектам',callback_data='sc:sites')]])
+        await callback.message.answer(title+' · проект',reply_markup=kb)
+        return
+    if action=='pfile' and len(parts)==3 and parts[2].isdigit():
+        await callback.answer()
+        PROJECT_UPLOAD[callback.from_user.id]=(int(parts[2]),time.time()+900)
+        await callback.message.answer('Отправьте отдельный файл или ZIP документом. После проверки выберете целевой VPS. Подтверждение действует 15 минут.')
+        return
+    if action=='pbacks' and len(parts)==3 and parts[2].isdigit():
+        await callback.answer()
+        pid=int(parts[2]);backups=project_files.list_backups(pid)[:8]
+        if not backups:await callback.message.answer('Для этого проекта бэкапов нет. Создать копию можно в Mini App.');return
+        for b in backups:
+            kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Скачать ZIP',callback_data=f'sc:bdown:{pid}:{b["id"]}')]])
+            await callback.message.answer(f'Бэкап {b["id"][:8]} · {b["server_name"]} · {operations.pretty_time(b["created_at"])}',reply_markup=kb)
+        return
+    if action=='bdown' and len(parts)==4 and parts[2].isdigit():
+        await callback.answer()
+        pid=int(parts[2]);bid=parts[3]
+        try:
+            _,archive=project_files.lookup_backup(pid,bid)
+            if archive.stat().st_size>45*1024*1024:
+                await callback.message.answer('Архив крупный, скачайте его в Mini App.');return
+            from aiogram.types import FSInputFile
+            await callback.message.answer_document(FSInputFile(archive,filename=f'project-{pid}-{bid}.zip'))
+        except Exception:await send_error(callback.message,'Не удалось скачать бэкап')
         return
     if action=='server' and len(parts)==3 and parts[2].isdigit():
         await callback.answer()
@@ -485,6 +490,16 @@ async def callbacks(callback:CallbackQuery):
     pending=PENDING.get(token)
     if not pending or pending[0]!=callback.from_user.id or pending[-1]<time.time():
         await callback.answer('Подтверждение устарело',show_alert=True);return
+    if action=='pub' and pending[2]=='projectrelease':
+        PENDING.pop(token,None)
+        pid,rid,sid=pending[1]
+        await callback.answer('Публикация')
+        await callback.message.edit_text('Создаётся резервная копия и обновляются файлы…')
+        try:
+            result=await asyncio.to_thread(project_files.deploy,pid,rid,sid or None)
+            await callback.message.answer('Файлы опубликованы. Бэкап: '+result['backup']['id'][:8]+'. Изменения Python могут потребовать перезапуска службы.')
+        except Exception:await send_error(callback.message,'Ошибка публикации файлов')
+        return
     if action=='run' and pending[2]=='remote':
         PENDING.pop(token,None)
         sid,template,command=pending[1]

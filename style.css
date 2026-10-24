@@ -139,3 +139,23 @@ body.tg-miniapp .auth-screen {min-height:100dvh}
 .admin-add-form{display:flex;align-items:end;gap:12px;padding-top:10px;border-top:1px solid #36383f}
 .admin-add-form label{flex:1;min-width:0}.admin-add-form button{min-height:45px;white-space:nowrap}
 @media(max-width:560px){.admin-panel{padding:15px}.admin-add-form{flex-direction:column;align-items:stretch}.admin-member{padding:11px}.admin-identity strong{font-size:12px}.admin-remove{font-size:12px;padding:7px 9px}}
+/* v1.5 project workspace: aligned button-centered tabs */
+.tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin:24px 0 20px;background:#181a1d;padding:7px;border:1px solid #303238;border-radius:16px}
+.tabs>.tab{min-width:0;min-height:44px;padding:10px 5px;display:flex;align-items:center;justify-content:center;text-align:center;border:1px solid transparent;border-radius:10px;background:transparent;color:#aeb0b9;font:inherit;font-size:13px;font-weight:700;cursor:pointer;line-height:1.2}
+.tabs>.tab.active{background:#fd8739;color:#111;box-shadow:0 4px 14px #fd873933;border-color:#fd8739}
+.tabs>.tab:hover:not(.active){background:#292d31;color:#fff}
+.work-panel{background:#191b20;border:1px solid #30343c;padding:26px;border-radius:17px;margin:18px 0 24px;min-width:0}
+.work-panel h2{font-size:21px;letter-spacing:-.5px;margin:0 0 10px}.work-panel label{display:flex;flex-direction:column;gap:9px;color:#b8bec7;font-size:12px;font-weight:600;margin:10px 0 16px;min-width:0}
+.work-panel input,.work-panel select,.work-panel textarea{width:100%;min-width:0;box-sizing:border-box;background:#111318;color:#fff;border:1px solid #383c44;border-radius:10px;padding:13px;font-size:16px}
+.work-panel .primary{margin:8px 0 12px}.work-panel p{line-height:1.6}
+.stack-list{display:grid;gap:12px;margin-top:14px}.stack-card{padding:18px;border-radius:14px;background:#202329;border:1px solid #353940;display:flex;gap:14px;align-items:center;justify-content:space-between;min-width:0;flex-wrap:wrap}.stack-card strong{font-size:14px;overflow-wrap:anywhere}.stack-card small{display:block;color:#acb0bb;margin-top:7px;overflow-wrap:anywhere}.stack-buttons{display:flex;flex-wrap:wrap;gap:8px}.stack-buttons button,.stack-buttons a{font-size:12px;text-decoration:none;padding:10px 13px;text-align:center;border-radius:9px;color:white;border:1px solid #525761;background:#292d35}.stack-buttons button:hover,.stack-buttons a:hover{border-color:#ff934e}.stack-buttons button.emph{background:#e8792f;color:#111;border-color:#e8792f;font-weight:800}
+.command-grid,.download-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:16px 0}.command-grid button,.download-grid a,.download-grid button{padding:12px 7px;min-height:47px;text-decoration:none;text-align:center;display:flex;justify-content:center;align-items:center;background:#272b32;color:#e3e5e9;border:1px solid #3c424c;border-radius:10px;font-size:12px;font-weight:650;cursor:pointer}.terminal{min-height:210px;max-height:460px;overflow:auto;background:#080a0d;color:#7ae4cf;border:1px solid #303b3c;padding:20px;border-radius:12px;font-size:12px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:18px}.scope-tag{background:#143830;color:#7be0c4;border:1px solid #2c695d;border-radius:12px;padding:12px 15px;font-size:12px;white-space:nowrap}.inline-controls{display:flex;align-items:end;gap:15px;flex-wrap:wrap}.inline-controls label{flex:1;min-width:160px}.form-grid>label{min-width:0}.project-card{cursor:pointer}.project-card:focus-visible{outline:2px solid #ff8e39;outline-offset:3px}
+[hidden]{display:none!important}
+@media(max-width:650px){.tabs{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.tabs>.tab{font-size:11px;min-height:44px}.work-panel{padding:17px}.download-grid,.command-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.stack-card{align-items:flex-start}.stack-buttons{width:100%}.stack-buttons button,.stack-buttons a{flex:1}.inline-controls{display:block}}
+#viewWorkspace>.page-head{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between}
+#viewWorkspace>.page-head>div:first-child{flex:1 1 260px;min-width:0}
+#viewWorkspace>.page-head .subtitle{line-height:1.5;margin-bottom:8px}
+#viewWorkspace .scope-tag{display:inline-flex;align-items:center;min-height:38px}
+.project-card .project-body{padding-bottom:17px}
+.project-card>.accent{display:inline-block;margin:0 20px 19px}
+@media(max-width:650px){#viewWorkspace>.page-head{display:block}#viewWorkspace>.page-head .subtitle{margin:10px 0 16px}#viewWorkspace .scope-tag{display:inline-flex;margin:0 0 2px}}
