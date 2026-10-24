@@ -12,3 +12,7 @@ section.editor-tab:has(.leads-list:empty)::after{content:'Нет новых за
 input[type=color]::-webkit-color-swatch-wrapper{padding:0}input[type=color]::-webkit-color-swatch{border:0;border-radius:5px}
 
 :focus-visible{outline:2px solid #d8d8da!important;outline-offset:3px!important}::selection{background:#44474e!important;color:white!important}
+/* V1.9: final accessibility colors, loaded after core CSS */
+:focus-visible,button:not(:disabled):focus-visible,a:focus-visible{outline-color:#b7a2ff!important}
+::selection{background:#735be4a8!important;color:#fff!important}
+@media(hover:none){.primary:hover{background:linear-gradient(115deg,#a37cff 0%,#7961f1 45%,#5e6dfa 100%)!important}}
