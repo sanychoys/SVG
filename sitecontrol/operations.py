@@ -15,6 +15,7 @@ STATE_NAMES = {
     'deploying': 'Устанавливается обновление', 'publishing': 'Синхронизация с GitHub',
     'rolled_back': 'Обновление отменено', 'github_rollback': 'Обновление отменено',
     'error': 'Ошибка обновления', 'rollback_error': 'Ошибка отката',
+    'legacy_cleanup_success':'Удалены старые файлы', 'legacy_cleanup_error':'Ошибка очистки',
 }
 TIMEZONE_FILE = Path(os.environ.get('SVGTRACKER_ADMIN_STATE_DIR', '/var/lib/svgtracker-admin'))/'timezone.json'
 
@@ -43,7 +44,7 @@ def probe_api(url='http://127.0.0.1:8000/api/test') -> bool:
     except (OSError,ValueError,TypeError):return False
 
 
-ERROR_STATES = {'error', 'rolled_back', 'github_rollback', 'rollback_error'}
+ERROR_STATES = {'error', 'rolled_back', 'github_rollback', 'rollback_error','legacy_cleanup_error'}
 ACTIONS = {
     'site.create':'Создан сайт', 'draft.save':'Сохранён черновик',
     'site.publish':'Опубликован сайт', 'lead.create':'Получена заявка',
@@ -103,7 +104,8 @@ def status_text(status_path: Path, *,service_ok:bool|None=None, api_ok:bool=True
     api='работает' if api_ok else 'ошибка'
     return (f'Состояние · {pretty_time(datetime.now(timezone.utc).isoformat())}\n\n'
             f'Сервис: {service}\nAPI: {api}\nСайтов: {sites} · Новых заявок: {leads}\n\n'
-            f'Последнее изменение: {activity["label"]}\n{activity["when"]}')
+            f'Последнее изменение: {activity["label"]}\n{activity["when"]}' +
+            (('\n\nПОДРОБНОСТИ ОШИБКИ\n'+activity['message']) if activity['error'] else ''))
 
 
 def deploy_status_text(status_path: Path) -> str:

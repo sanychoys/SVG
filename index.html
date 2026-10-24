@@ -3,23 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#101114">
+  <meta name="theme-color" content="#0C0D0F">
   <title>Site Control — управление сайтами</title>
   <meta name="description" content="Управление клиентскими сайтами, заявками и Telegram-ботами.">
-  <link rel="stylesheet" href="style.css?v=sc110">
-  <link rel="stylesheet" href="product.css?v=sc110">
-  <script src="product.js?v=sc110" defer></script>
-  <script src="script.js?v=sc110" defer></script>
+  <link rel="stylesheet" href="style.css?v=sc120">
+  <link rel="stylesheet" href="product.css?v=sc120">
+  <script src="product.js?v=sc120" defer></script>
+  <script src="script.js?v=sc120" defer></script>
 </head>
 <body>
   <div class="app" id="app" hidden>
     <aside class="sidebar" id="sidebar">
-      <div class="brand"><div class="brand-mark"><span></span><span></span><span></span><span></span></div><div><strong>SITE CONTROL</strong><small>ПАНЕЛЬ / V1.1</small></div></div>
+      <div class="brand"><div class="brand-mark"><span></span><span></span><span></span><span></span></div><div><strong>SITE CONTROL</strong><small>СТУДИЯ / V1.2</small></div></div>
       <div class="side-group"><div class="side-label">ПЛАТФОРМА</div>
-        <button class="nav active" data-nav="sites"><span class="nav-icon">▤</span> Проекты <span class="nav-count" id="navCount">0</span></button>
-        <button class="nav" data-nav="bots"><span class="nav-icon">◉</span> Telegram-боты</button>
+        <button class="nav active" data-nav="sites"><span class="nav-icon">▦</span> Проекты <span class="nav-count" id="navCount">0</span></button>
+        <button class="nav" data-nav="bots"><span class="nav-icon">◎</span> Telegram-боты</button>
       </div>
-      <div class="side-bottom"><div class="server-indicator"><span class="pulse"></span> Система управления</div>
+      <div class="side-bottom"><div class="server-indicator"><span class="pulse"></span> Платформа работает</div>
         <button class="nav small" id="logout">Выйти</button><small>SITE CONTROL</small>
       </div>
     </aside>
@@ -27,7 +27,7 @@
       <header class="topbar"><button class="mobile-menu" id="mobileMenu" aria-label="Открыть меню">☰</button><div class="crumb">ПАНЕЛЬ <span>/</span> <b id="breadcrumb">Проекты</b></div><div class="userbadge"><span class="user-circle">A</span><span id="adminLabel">Администратор</span></div></header>
       <div class="content">
         <section id="viewSites" class="view">
-          <div class="page-head"><div><div class="eyebrow">УПРАВЛЕНИЕ ПРОЕКТАМИ</div><h1>Мои сайты<span class="purple">.</span></h1><p class="subtitle">Создавайте сайты, управляйте заявками и контентом.</p></div><button class="primary" id="createBtn">＋ Новый сайт</button></div>
+          <div class="page-head"><div><div class="eyebrow">УПРАВЛЕНИЕ ПРОЕКТАМИ</div><h1>Мои сайты<span class="accent">.</span></h1><p class="subtitle">Создавайте и редактируйте клиентские сайты в одной панели.</p></div><button class="primary" id="createBtn">+ Новый сайт</button></div>
           <div class="stats"><div class="stat"><span>ВСЕГО ПРОЕКТОВ</span><strong id="statSites">0</strong><small>В системе</small></div><div class="stat"><span>ОПУБЛИКОВАНО</span><strong id="statPublished">0</strong><small>Доступны посетителям</small></div><div class="stat"><span>НОВЫЕ ЗАЯВКИ</span><strong id="statLeads">0</strong><small>Требуют ответа</small></div><div class="stat"><span>ПОДКЛЮЧЕНО БОТОВ</span><strong id="statBots">0</strong><small>Активны у клиентов</small></div></div>
           <div class="section-heading"><h2>Проекты</h2><span id="projectCount">0 сайтов</span></div>
           <div class="project-grid" id="projects"></div>
@@ -60,11 +60,11 @@
             <div class="preview-panel"><div class="preview-top"><span>ПРЕДПРОСМОТР</span><button id="refreshPreview" title="Обновить предпросмотр">↻</button></div><iframe id="previewFrame" title="Предпросмотр сайта" loading="lazy"></iframe><div class="preview-caption">Предпросмотр отображает сохранённый черновик. Изменения внутри полей сохраняются кнопкой «Сохранить».</div></div>
           </div>
         </section>
-        <section id="viewBots" class="view" hidden><div class="page-head"><div><div class="eyebrow">ИНТЕГРАЦИИ</div><h1>Боты клиентов<span class="purple">.</span></h1><p class="subtitle">Отдельный фирменный бот для каждого клиента, один общий backend.</p></div></div><div class="notice">Чтобы подключить бота, откройте проект и перейдите в раздел «Telegram».</div><div id="botsList" class="bots-grid"></div></section>
+        <section id="viewBots" class="view" hidden><div class="page-head"><div><div class="eyebrow">ИНТЕГРАЦИИ</div><h1>Боты клиентов<span class="accent">.</span></h1><p class="subtitle">Отдельный фирменный бот для каждого клиента, один общий backend.</p></div></div><div class="notice">Чтобы подключить бота, откройте проект и перейдите в раздел «Telegram».</div><div id="botsList" class="bots-grid"></div></section>
       </div>
     </main>
   </div>
-  <div id="auth" class="auth-screen"><div class="auth-card"><div class="brand-mark large"><span></span><span></span><span></span><span></span></div><div class="eyebrow">ЗАКРЫТАЯ ПАНЕЛЬ</div><h1>Site Control<span class="purple">.</span></h1><p>Сайты, клиенты и заявки в одном месте.</p><button class="primary wide" id="loginBtn">Войти через Telegram →</button><div id="loginStep" hidden><p>Отправьте боту команду:</p><div class="login-code"><code id="loginCode"></code><button id="copyCode" aria-label="Копировать код">⧉</button></div><a id="loginLink" target="_blank" rel="noopener noreferrer" class="secondary wide text-center" href="#">Открыть Telegram</a><small>После подтверждения вход выполнится автоматически. Код действителен 10 минут.</small></div><p class="auth-note">Доступ предоставляется только администраторам Site Control.</p></div></div>
+  <div id="auth" class="auth-screen"><div class="auth-card"><div class="brand-mark large"><span></span><span></span><span></span><span></span></div><div class="eyebrow">ЗАКРЫТАЯ ПАНЕЛЬ</div><h1>Site Control<span class="accent">.</span></h1><p>Сайты, клиенты и заявки в одном месте.</p><button class="primary wide" id="loginBtn">Войти через Telegram →</button><div id="loginStep" hidden><p>Отправьте боту команду:</p><div class="login-code"><code id="loginCode"></code><button id="copyCode" aria-label="Копировать код">⧉</button></div><a id="loginLink" target="_blank" rel="noopener noreferrer" class="secondary wide text-center" href="#">Открыть Telegram</a><small>После подтверждения вход выполнится автоматически. Код действителен 10 минут.</small></div><p class="auth-note">Доступ предоставляется только администраторам Site Control.</p></div></div>
   <div class="modal-layer" id="modal" hidden><div class="modal"><div class="modal-header"><h2>Новый проект</h2><button class="icon-button" id="closeModal" aria-label="Закрыть">✕</button></div><label>Название клиента<input id="newName" maxlength="90" placeholder="Например, Кафе Уют"></label><label>Адрес проекта<input id="newSlug" maxlength="56" placeholder="cafe-uyut" pattern="[a-z0-9-]+"></label><label>Telegram ID клиента (необязательно)<input id="newClient" inputmode="numeric" placeholder="123456789"></label><p class="hint">Новый сайт появляется как черновик. Публичная страница станет доступна после публикации.</p><button class="primary wide" id="submitNew">Создать проект</button></div></div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>

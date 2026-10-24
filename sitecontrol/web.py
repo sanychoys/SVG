@@ -4,6 +4,7 @@ import asyncio
 import html
 import ipaddress
 import json
+import logging
 import hmac
 import os
 import re
@@ -16,6 +17,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from . import store
+from . import diagnostics, miniapp_auth
 
 app = FastAPI(title='Site Control API', docs_url=None, redoc_url=None, openapi_url=None)
 registry = None
@@ -23,6 +25,7 @@ manager = None
 main_bot = None
 SITE_URL = os.environ.get('SITE_CONTROL_PUBLIC_URL') or os.environ.get('SVGTRACKER_PUBLIC_URL') or 'https://starslix.ru'
 SITE_URL = SITE_URL.strip().rstrip('/')
+site_log = logging.getLogger('sitecontrol.site')
 COOKIE = 'sc_admin_session'
 LOGIN_COOKIE = 'sc_login_verify'
 LEAD_LIMIT = defaultdict(deque)
@@ -32,6 +35,25 @@ LOGIN_LIMIT = defaultdict(deque)
 def wire(admin_registry, bot_manager, admin_bot):
     global registry, manager, main_bot
     registry, manager, main_bot = admin_registry, bot_manager, admin_bot
+
+
+
+@app.middleware('http')
+async def minimal_site_logging(request:Request, call_next):
+    path=diagnostics.scrub_path(request.url.path)
+    try:
+        response=await call_next(request)
+        # No routine GET/access noise. Record updates and failed requests only.
+        if response.status_code>=500:
+            site_log.error('%s %s · HTTP %s',request.method,path,response.status_code)
+        elif response.status_code>=400 and not path.startswith('/api/sc/auth/'):
+            site_log.warning('%s %s · HTTP %s',request.method,path,response.status_code)
+        elif request.method in ('POST','PUT','PATCH','DELETE') and response.status_code<400 and not path.startswith('/api/sc/auth/'):
+            site_log.info('%s %s · HTTP %s',request.method,path,response.status_code)
+        return response
+    except Exception:
+        site_log.exception('Ошибка сайта: %s %s',request.method,path)
+        raise
 
 
 def require_admin(request: Request):
@@ -83,7 +105,7 @@ def readiness():
                 db.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
     except Exception:
         raise HTTPException(503, 'Database unavailable')
-    return {'status':'ok','service':'Site Control','version':'1.0.0'}
+    return {'status':'ok','service':'Site Control','version':'1.2.0'}
 
 
 @app.get('/api/sc/health')
@@ -119,6 +141,26 @@ def auth_status(request: Request, code: str=''):
     response.set_cookie(COOKIE,session,httponly=True,secure=True,samesite='lax',max_age=7*86400,path='/')
     response.delete_cookie(LOGIN_COOKIE,path='/api/sc')
     response.headers['Cache-Control']='no-store'
+    return response
+
+
+
+@app.post('/api/sc/auth/miniapp')
+async def auth_miniapp(request:Request):
+    """Log in Telegram Mini App without a copyable /login code.
+
+    Works only for authenticated Telegram admins. Normal browsers use the code flow.
+    """
+    body=await json_body(request,max_bytes=10000)
+    from config import BOT_TOKEN
+    try: admin_id=miniapp_auth.verify(body.get('init_data'), BOT_TOKEN)
+    except ValueError:raise HTTPException(401,'Не удалось подтвердить Telegram Mini App')
+    if not registry.is_admin(admin_id):raise HTTPException(403,'Нет доступа администратора')
+    session=store.create_session(admin_id)
+    response=JSONResponse({'authorized':True,'admin_id':admin_id})
+    response.set_cookie(COOKIE,session,httponly=True,secure=True,samesite='lax',max_age=7*86400,path='/')
+    response.headers['Cache-Control']='no-store'
+    site_log.info('Вход администратора через Telegram Mini App')
     return response
 
 

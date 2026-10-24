@@ -1,4 +1,4 @@
-"""Site Control 1.1: replaces the SVGTracker runtime; keeps its trusted ZIP deploy path."""
+"""Site Control 1.2: clean admin bot, live Mini App and focused diagnostics."""
 from __future__ import annotations
 import asyncio
 import hmac
@@ -15,21 +15,18 @@ from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, WebAppInfo, BufferedInputFile, ErrorEvent
 from fastapi import Request, HTTPException
 import uvicorn
 
 from config import BOT_TOKEN
 from admin_access import AdminRegistry
-from sitecontrol import store, web, operations
+from sitecontrol import store, web, operations, diagnostics
 from sitecontrol.maintenance import snapshot
 from sitecontrol.telegram_bots import manager
 
-logging.basicConfig(level=logging.WARNING,format='%(asctime)s %(levelname)s %(name)s: %(message)s')
-logging.getLogger('uvicorn.access').disabled=True
-logging.getLogger('aiogram').setLevel(logging.ERROR)
-logging.getLogger('httpx').setLevel(logging.WARNING)
-log=logging.getLogger('sitecontrol')
+diagnostics.configure()
+log=logging.getLogger('sitecontrol.bot')
 admin_id=int(os.environ.get('SVGTRACKER_ADMIN_ID','382257126'))
 registry=AdminRegistry(admin_id,Path(os.environ.get('SVGTRACKER_ADMIN_STATE_DIR','/var/lib/svgtracker-admin')))
 bot=Bot(token=BOT_TOKEN)
@@ -76,27 +73,68 @@ def helper(subcommand):
 
 
 def keyboard():
-    """Only useful day-to-day actions appear in the admin bot."""
+    """The only visible controls: Mini App, status, logs, ZIP, backup."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='Открыть панель',url=web.SITE_URL)],
+        [InlineKeyboardButton(text='Открыть Mini App',web_app=WebAppInfo(url=web.SITE_URL))],
         [InlineKeyboardButton(text='Состояние',callback_data='sc:status'),
-         InlineKeyboardButton(text='Последнее изменение',callback_data='sc:last')],
+         InlineKeyboardButton(text='Логи',callback_data='sc:logs')],
         [InlineKeyboardButton(text='Обновить ZIP',callback_data='sc:upload'),
          InlineKeyboardButton(text='Резервная копия',callback_data='sc:backup')],
     ])
 
 
-@dp.message(Command('start','admin','menu','help'))
+async def send_status(message:Message):
+    active=await asyncio.to_thread(subprocess.run,['systemctl','is-active','svgtracker.service'],capture_output=True,text=True,timeout=5)
+    ok=active.returncode==0 and active.stdout.strip()=='active'
+    output=await asyncio.to_thread(operations.status_text, STATE/'deploy_status.json',service_ok=ok,api_ok=(await asyncio.to_thread(operations.probe_api)))
+    instructions=('\n\nЧто делать:\n'
+       '• Сервис и API работают — ничего предпринимать не нужно.\n'
+       '• Сервис или API недоступен — выберите «Логи» → «Логи сайта».\n'
+       '• Если установка завершилась ошибкой — сохраните полный текст ошибки из журнала.\n'
+       '• Для нового обновления отправьте ZIP документом в этот чат.\n')
+    report=output+instructions
+    await message.answer_document(BufferedInputFile(report.encode('utf-8'),filename='Site_Control_Состояние.txt'),
+        caption='Состояние Site Control · отчёт и инструкция в файле.')
+
+
+def log_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='Telegram-бот',callback_data='sc:log:bot'),
+         InlineKeyboardButton(text='Сайт / API',callback_data='sc:log:site')],
+        [InlineKeyboardButton(text='Назад',callback_data='sc:home')]
+    ])
+
+
+async def send_log(message:Message,kind:str):
+    content=await asyncio.to_thread(diagnostics.tail,kind,300)
+    label='бота' if kind=='bot' else 'сайта и API'
+    await message.answer_document(BufferedInputFile(content.encode('utf-8'),filename='Site_Control_'+kind+'_log.txt'),
+        caption=f'Журнал {label} · последние записи. Ошибки сохранены полностью в пределах выбранного фрагмента.')
+
+
+@dp.message(Command('start'))
 async def welcome(message:Message):
     if not is_admin(message):
-        await message.answer('Site Control. Доступ к управлению закрыт.')
+        await message.answer('Site Control. Доступ разрешён только администраторам.')
         return
     arg=(message.text or '').partition(' ')[2].strip()
     if arg.startswith('login_') and 6 <= len(arg) <= 110:
         approved=store.approve_login(arg[6:],message.from_user.id)
-        await message.answer('Вход подтверждён. Вернитесь в браузер.' if approved else 'Код входа неверен или устарел.')
+        if approved:log.info('Администратор вошёл через Telegram')
+        await message.answer('Вход подтверждён. Вернитесь на сайт.' if approved else 'Код входа неверен или устарел.')
         return
-    await message.answer('Site Control\n\nПроекты и дизайн — в веб-панели. Здесь только обслуживание и важные события.',reply_markup=keyboard())
+    await message.answer('Site Control\nУправление сайтами и клиентами — в Mini App. Здесь обновления, состояние и журналы.',reply_markup=keyboard())
+
+
+@dp.message(Command('logs'))
+async def logs(message:Message):
+    if is_admin(message):await message.answer('Какой журнал показать?',reply_markup=log_keyboard())
+
+
+@dp.errors()
+async def catch_errors(event:ErrorEvent):
+    log.error('Ошибка обработки Telegram update',exc_info=(type(event.exception),event.exception,event.exception.__traceback__))
+    return True
 
 
 @dp.message(Command('login'))
@@ -129,40 +167,13 @@ async def admin_change(message:Message):
     await message.answer(f'Действие: {action}; Telegram ID: {text[1]}. Подтвердите изменение:',reply_markup=kb)
 
 
-@dp.message(Command('deploy'))
-async def deploy_info(message:Message):
-    if is_admin(message):await message.answer('Пришлите ZIP файлом в этот чат. Я проверю архив и предложу установку. Перед обновлением создаётся резервная копия.')
-
-
-@dp.message(Command('status','server_status'))
+@dp.message(Command('status'))
 async def server_status(message:Message):
     if not is_admin(message):return
-    try:
-        active=await asyncio.to_thread(subprocess.run,['systemctl','is-active','svgtracker.service'],capture_output=True,text=True,timeout=5)
-        ok=active.returncode==0 and active.stdout.strip()=='active'
-        text=await asyncio.to_thread(operations.status_text, STATE/'deploy_status.json',service_ok=ok,api_ok=(await asyncio.to_thread(operations.probe_api)))
-        await message.answer(text,reply_markup=keyboard())
+    try:await send_status(message)
     except Exception:
-        log.exception('Server status failed')
-        await send_error(message,'Ошибка проверки сервера')
-
-
-@dp.message(Command('last','deploy_check','deploy_status'))
-async def last_change(message:Message):
-    if not is_admin(message):return
-    try:
-        # /deploy_check shows the deployment only; /last shows the latest meaningful action.
-        cmd=(message.text or '').split()[0].split('@')[0].lower()
-        if cmd=='/last':
-            evt=await asyncio.to_thread(operations.last_event,STATE/'deploy_status.json')
-            result='Последнее изменение\n'+evt['label']+'\n'+evt['when']
-            if evt['error']:result+='\n\n'+evt['message']
-        else:
-            result=operations.deploy_status_text(STATE/'deploy_status.json')
-        await send_chunks(message,result)
-    except Exception:
-        log.exception('Operation status failed')
-        await send_error(message,'Ошибка чтения состояния')
+        log.exception('Ошибка формирования отчёта о состоянии')
+        await send_error(message,'Ошибка проверки состояния')
 
 
 @dp.message(Command('backup'))
@@ -177,6 +188,21 @@ async def backup(message:Message):
     except Exception:
         log.exception('Backup failed')
         await send_error(message,'Ошибка резервного копирования')
+
+
+@dp.message(Command('cleanup_legacy'))
+async def ask_cleanup(message:Message):
+    if not is_admin(message):return
+    token=uuid.uuid4().hex[:12]
+    PENDING[token]=(message.from_user.id,'old-data','cleanup',time.time()+600)
+    kb=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='Подтверждаю очистку старого трекера',callback_data='sc:cleanup:'+token)],
+        [InlineKeyboardButton(text='Отмена',callback_data='sc:cancel')]
+    ])
+    await message.answer('Удалить остатки SVGTracker (старые исходники, тесты, отдельную старую SQLite)?\n'
+        'Рабочая база Site Control и токены клиентских ботов сохраняются.\n'
+        'Перед удалением система создаст отдельную проверенную резервную копию старых данных. '
+        'Обычные старые архивы на VPS автоматически не удаляются.',reply_markup=kb)
 
 
 @dp.message(Command('rollback'))
@@ -217,31 +243,41 @@ async def callbacks(callback:CallbackQuery):
     action=parts[1] if len(parts)>1 else ''
     if action=='cancel':
         await callback.answer('Отменено');await callback.message.edit_text('Действие отменено.');return
+    if action=='home':
+        await callback.answer()
+        await callback.message.answer('Site Control',reply_markup=keyboard())
+        return
     if action=='upload':
-        await callback.answer();await callback.message.answer('Отправьте ZIP как файл в этот чат.');return
-    if action in ('status','last','backup'):
+        await callback.answer()
+        await callback.message.answer('Отправьте ZIP документом в этот чат.')
+        return
+    if action=='logs':
+        await callback.answer()
+        await callback.message.answer('Выберите журнал:',reply_markup=log_keyboard())
+        return
+    if action=='log' and len(parts)==3 and parts[2] in diagnostics.KINDS:
+        await callback.answer()
+        try:await send_log(callback.message,parts[2])
+        except Exception:
+            log.exception('Не удалось отправить журнал %s',parts[2])
+            await send_error(callback.message,'Ошибка чтения журнала')
+        return
+    if action in ('status','backup'):
         await callback.answer()
         if action=='status':
-            try:
-                active=await asyncio.to_thread(subprocess.run,['systemctl','is-active','svgtracker.service'],capture_output=True,text=True,timeout=5)
-                text=await asyncio.to_thread(operations.status_text, STATE/'deploy_status.json',service_ok=(active.returncode==0 and active.stdout.strip()=='active'),api_ok=(await asyncio.to_thread(operations.probe_api)))
-                await callback.message.answer(text,reply_markup=keyboard())
+            try:await send_status(callback.message)
             except Exception:
-                log.exception('Status callback failed');await send_error(callback.message)
-        elif action=='last':
-            try:
-                event=await asyncio.to_thread(operations.last_event,STATE/'deploy_status.json')
-                await send_chunks(callback.message,'Последнее изменение\n'+event['label']+'\n'+event['when']+('\n\n'+event['message'] if event['error'] else ''))
-            except Exception:
-                log.exception('Last event failed')
-                await send_error(callback.message)
+                log.exception('Ошибка состояния')
+                await send_error(callback.message,'Ошибка состояния')
         else:
             try:
                 path=await asyncio.to_thread(snapshot)
                 await asyncio.to_thread(helper,'backup')
-                await callback.message.answer('Резервная копия создана\n'+operations.pretty_time(time.time())+'\nФайл: '+path.name+'\nДля безопасности сохраните копию вне VPS.')
+                log.info('Создана резервная копия Site Control')
+                await callback.message.answer('Резервная копия создана · '+operations.pretty_time(time.time())+'\nСохраните копию отдельно от VPS.')
             except Exception:
-                log.exception('Backup callback failed');await send_error(callback.message)
+                log.exception('Ошибка создания резервной копии')
+                await send_error(callback.message,'Ошибка резервного копирования')
         return
     if len(parts)!=3:await callback.answer('Неверный запрос',show_alert=True);return
     token=parts[2]
@@ -254,6 +290,17 @@ async def callbacks(callback:CallbackQuery):
         try:changed=registry.change(callback.from_user.id,uid,role)
         except Exception as exc:await callback.answer('Не выполнено',show_alert=True);await callback.message.answer(str(exc)[:600]);return
         await callback.answer();await callback.message.edit_text('Права обновлены.' if changed else 'Права не изменились.')
+        return
+    if action=='cleanup' and pending[2]=='cleanup':
+        try:await asyncio.to_thread(worker,['cleanup-legacy','--admin-chat',str(callback.from_user.id)],'cleanup')
+        except Exception:
+            log.exception('Ошибка запуска очистки старых файлов')
+            await callback.answer('Ошибка запуска',show_alert=True)
+            await send_error(callback.message,'Ошибка очистки')
+            return
+        PENDING.pop(token,None)
+        await callback.answer('Очистка запущена')
+        await callback.message.edit_text('Очистка запущена. Результат поступит в этот чат.')
         return
     if action=='rollback' and pending[2]=='rollback':
         _,path,_,_=pending
@@ -273,6 +320,7 @@ async def callbacks(callback:CallbackQuery):
             await send_error(callback.message,'Ошибка запуска');return
         PENDING.pop(token,None)
         await callback.answer('Установка запущена')
+        log.info('Запущено ZIP-обновление')
         await callback.message.edit_text('Установка началась. Результат придёт сюда.')
         return
     await callback.answer('Неизвестная команда',show_alert=True)
@@ -293,7 +341,7 @@ async def client_webhook(hook_key:str,request:Request):
     if not isinstance(payload,dict):raise HTTPException(400,'Invalid JSON')
     try:await manager.receive(row,payload)
     except Exception:
-        log.exception('Webhook handler failed for bot ID %s',row['id'])
+        log.exception('Ошибка webhook клиентского бота')
         raise HTTPException(503,'Temporary processing failure')
     return {'ok':True}
 
@@ -302,7 +350,7 @@ async def main():
     store.init()
     config=uvicorn.Config(app,host=os.environ.get('SVGTRACKER_BIND_HOST','127.0.0.1'),port=8000,server_header=False,log_level='warning',access_log=False)
     server=uvicorn.Server(config)
-    await bot.set_my_commands([BotCommand(command='start',description='Главное меню'),BotCommand(command='status',description='Состояние сервера'),BotCommand(command='last',description='Последнее изменение'),BotCommand(command='backup',description='Резервная копия')])
+    await bot.set_my_commands([BotCommand(command='start',description='Открыть Site Control'),BotCommand(command='status',description='Состояние (TXT)'),BotCommand(command='logs',description='Логи бота и сайта'),BotCommand(command='backup',description='Создать резервную копию')])
     service=asyncio.create_task(server.serve(),name='api')
     polling=asyncio.create_task(dp.start_polling(bot,handle_signals=False),name='admin-bot')
     done,pending=await asyncio.wait({service,polling},return_when=asyncio.FIRST_COMPLETED)

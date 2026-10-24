@@ -1,4 +1,4 @@
-"""Persistent, private Telegram administration roles for SVGTracker.
+"""Persistent, private Telegram administration roles for Site Control.
 
 Root admin comes from deployment configuration. Additional admins are kept outside
 web root and survive ZIP updates. Only Telegram bot handlers can mutate this file.
@@ -13,7 +13,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-logger = logging.getLogger('svgtracker.admin_access')
+logger = logging.getLogger('sitecontrol.bot')
 MAX_ADMINS = 20
 
 

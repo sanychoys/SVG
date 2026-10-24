@@ -1,12 +1,12 @@
-/* Extra accessiblity and mobile polish for Site Control V1.0.
+/* Accessibility and mobile polish for Site Control V1.2.
    This asset is deliberately nonempty: V48's existing ZIP deployer validates it. */
-:focus-visible{outline:2px solid #b8a6ff;outline-offset:3px}::selection{background:#8868ed77;color:#fff}
-input::placeholder,textarea::placeholder{color:#797981}button:not(:disabled):focus-visible,a:focus-visible{outline-color:#b8a6ff}
+:focus-visible{outline:2px solid #ffb27a;outline-offset:3px}::selection{background:#ff8a3077;color:#fff}
+input::placeholder,textarea::placeholder{color:#797981}button:not(:disabled):focus-visible,a:focus-visible{outline-color:#ffb27a}
 input[type=file]{cursor:pointer;font-size:12px!important;padding:10px!important}
 button,textarea,input{touch-action:manipulation}textarea{min-height:80px}
-@media(hover:none){.project-card:hover{transform:none}.primary:hover{background:#8868ed}}
+@media(hover:none){.project-card:hover{transform:none}.primary:hover{background:#ff8a30}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
 @supports(padding:max(0px)){.sidebar{padding-bottom:max(22px,env(safe-area-inset-bottom))}.content{padding-bottom:max(42px,env(safe-area-inset-bottom))}}
 .auth-screen .auth-card #loginStep>p{font-size:12px;color:#c4c0ce;margin:24px 0 0}.login-code code{user-select:all}
-section.editor-tab:has(.leads-list:empty)::after{content:'Нет новых заявок';display:block;padding:35px;color:#83838b;text-align:center;border:1px dashed #383940;border-radius:12px}
+section.editor-tab:has(.leads-list:empty)::after{content:'Нет новых заявок';display:block;padding:35px;color:#83838b;text-align:center;border:1px dashed #3a403f;border-radius:12px}
 input[type=color]::-webkit-color-swatch-wrapper{padding:0}input[type=color]::-webkit-color-swatch{border:0;border-radius:5px}

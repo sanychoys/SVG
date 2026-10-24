@@ -1,6 +1,6 @@
 """Site Control MVP: per-tenant content, audit log, sessions, releases and leads.
 
-Stores records outside the deployed working tree. Does not touch svgtracker.db.
+Stores current project data outside the deployed working tree.
 """
 from __future__ import annotations
 import hashlib
@@ -22,7 +22,7 @@ DEFAULT = {
     'title': 'Новый сайт', 'tagline': 'Расскажите о себе и своих услугах',
     'description': 'Мы рады новым клиентам. Оставьте заявку, и мы свяжемся с вами.',
     'phone': '', 'address': '', 'hours': '', 'button': 'Оставить заявку',
-    'accent': '#815cf6', 'background': '#ffffff', 'theme': 'clean',
+    'accent': '#ff862e', 'background': '#ffffff', 'theme': 'clean',
     'animation': 'soft', 'hero_image': '', 'items': [],
 }
 

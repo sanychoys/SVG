@@ -34,8 +34,26 @@
     $('#auth').hidden = loggedIn;
     $('#app').hidden = !loggedIn;
   }
+  let miniAuthAttempted = false;
+  async function tryMiniAppAuth() {
+    if (miniAuthAttempted) return false;
+    const tg = window.Telegram?.WebApp;
+    if (!tg?.initData) return false;
+    miniAuthAttempted = true;
+    try {
+      tg.ready();
+      tg.expand();
+      document.body.classList.add('tg-miniapp');
+      const result = await api('/api/sc/auth/miniapp', {method:'POST',body:{init_data:tg.initData}});
+      return Boolean(result.authorized);
+    } catch(e) {
+      notify('Авторизация Mini App: '+e.message, true);
+      return false;
+    }
+  }
   async function bootstrap() {
     try {
+      await tryMiniAppAuth();
       const me = await api('/api/sc/auth/me');
       $('#adminLabel').textContent = `Admin #${me.admin_id}`;
       applyAuth(true);
@@ -215,6 +233,21 @@
     }catch(e){notify(e.message,true);}
   }
   const safeAction=fn=>async()=>{try{await fn();}catch(e){notify(e.message,true);}};
+  function prepareTelegramSdk() {
+    if (window.Telegram?.WebApp) return Promise.resolve();
+    return new Promise(resolve => {
+      let settled=false;
+      const finish=()=>{ if(!settled) {settled=true;resolve();} };
+      const sdk=document.createElement('script');
+      sdk.src='https://telegram.org/js/telegram-web-app.js';
+      sdk.async=true;
+      sdk.onload=()=>{finish(); if($('#auth') && !$('#auth').hidden && window.Telegram?.WebApp?.initData) bootstrap();};
+      sdk.onerror=finish;
+      document.head.appendChild(sdk);
+      // Browser log-in remains available even if Telegram's CDN is unavailable.
+      setTimeout(finish,1600);
+    });
+  }
   document.addEventListener('DOMContentLoaded',()=>{
     $('#loginBtn').addEventListener('click',startLogin);
     $('#copyCode').addEventListener('click',safeAction(async()=>{await SCUtils.copy($('#loginCode').textContent);notify('Команда скопирована');}));
@@ -244,6 +277,6 @@
       $('#newSlug').value=($('#newName').value.toLowerCase().split('').map(c=>translit[c]??c).join('').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,56));
     });
     $('#newSlug').addEventListener('input',()=>$('#newSlug').dataset.manual='yes');
-    bootstrap();
+    prepareTelegramSdk().then(bootstrap);
   });
 })();

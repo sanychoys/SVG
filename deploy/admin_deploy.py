@@ -1003,6 +1003,85 @@ def _rollback_unlocked(backup: Path, admin_chat: str | int | None) -> int:
 
 
 
+# Legacy files are removed only by a separate, confirmed admin operation.
+# The v1.2 ZIP itself never deletes production data.
+LEGACY_FILE_NAMES = {
+    'account_export.py','finance_db.py','product_api.py','product_db.py',
+    'insights.py','intelligence.py','key.py',
+    'deploy/ADMIN.md','deploy/NGINX_SECURITY.txt',
+    'deploy/SHORTCUTS_PUBLISHING.md','deploy/security_audit.py',
+    'SITE_CONTROL_V11_README.md','SITE_CONTROL_V1_README.md',
+}
+
+
+def legacy_files() -> list[Path]:
+    result=[]
+    for path in PROJECT_ROOT.rglob('*'):
+        if not path.is_file() or path.is_symlink():continue
+        rel=path.relative_to(PROJECT_ROOT)
+        name=rel.as_posix()
+        if name in LEGACY_FILE_NAMES or (len(rel.parts)==1 and re.fullmatch(r'V[0-9]+_RELEASE_NOTES\.md',rel.name)) or (
+            len(rel.parts)==2 and rel.parts[0]=='tests' and rel.suffix=='.py'
+        ) or (len(rel.parts)==2 and rel.parts[0]=='deploy' and re.fullmatch(r'V[0-9]+_PHONE_POST_DEPLOY\.md',rel.name)):
+            if safe_rel_path(name) is not None:result.append(rel)
+    return sorted(result,key=lambda item:item.as_posix())
+
+
+def cleanup_legacy_unlocked(admin_chat):
+    """Backup old files + old SQLite then remove; never touch Site Control data."""
+    ensure_dirs()
+    removed=[]
+    safety=None
+    try:
+        git_context=github_preflight_for_deploy()
+        candidates=legacy_files()
+        have_db=DB_PATH.is_file()
+        if not candidates and not have_db:
+            telegram_notify(admin_chat,'Site Control · старых файлов и базы трекера нет')
+            return 0
+        if DB_PATH.exists() and DB_PATH.is_symlink():raise RuntimeError('Legacy database cannot be a symlink')
+        # Preserve a separate full migration safety archive outside normal rotating backups.
+        archive,_=create_backup(candidates,include_db=True,label='before-cleanup')
+        safety_dir=BACKUP_DIR/'legacy-retained'
+        safety_dir.mkdir(parents=True,exist_ok=True,mode=0o700)
+        safety_dir.chmod(0o700)
+        safety=safety_dir/archive.name
+        shutil.copy2(archive,safety)
+        safety.chmod(0o600)
+        with tarfile.open(safety,'r:gz') as tf:
+            names=set(tf.getnames())
+            if 'manifest.json' not in names:raise RuntimeError('Cannot verify legacy backup')
+            if have_db and 'data/svgtracker.db' not in names:raise RuntimeError('Legacy SQLite backup missing')
+            if any('project/'+p.as_posix() not in names for p in candidates):raise RuntimeError('Legacy file backup incomplete')
+        for rel in candidates:
+            (PROJECT_ROOT/rel).unlink()
+            removed.append(rel.as_posix())
+        try:
+            git_commit_and_push(candidates, 'legacy-cleanup-'+local_filename_stamp(),git_context['branch'])
+        except Exception:
+            restore_backup(safety,restore_db=False)
+            git_reset_to(git_context['head'])
+            raise
+        # Delete SQLite only *after* the archive has been verified and GitHub synchronized.
+        for postfix in ('','-wal','-shm'):
+            path=Path(str(DB_PATH)+postfix)
+            if path.is_file() and not path.is_symlink():path.unlink()
+        message=f'Старые файлы очищены: {len(removed)}. База трекера удалена: {"да" if have_db else "уже отсутствовала"}. Резервная копия: {safety}'
+        write_status('legacy_cleanup_success',message)
+        deploy_log('legacy-cleanup',message)
+        telegram_notify(admin_chat,'Site Control · очистка завершена\n'+local_now_text()+'\nУдалено старых файлов: '+str(len(removed))+'\nСтарая БД: '+('удалена' if have_db else 'не найдена')+'\nАрхив сохранён вне папки приложения.')
+        return 0
+    except Exception:
+        detail=traceback.format_exc()
+        write_status('legacy_cleanup_error','Очистка не завершена',error_trace=detail)
+        telegram_notify(admin_chat,'Site Control · ошибка очистки\n'+local_now_text()+'\n\n'+detail)
+        return 1
+
+
+def cleanup_legacy(admin_chat):
+    return _exclusive_worker('legacy-cleanup',lambda:cleanup_legacy_unlocked(admin_chat),admin_chat)
+
+
 def _exclusive_worker(operation: str, func, admin_chat):
     """Serialize deploy/rollback across all processes, not only one bot instance.
 
@@ -1053,6 +1132,8 @@ def main() -> int:
     rollback_parser = sub.add_parser("rollback")
     rollback_parser.add_argument("backup")
     rollback_parser.add_argument("--admin-chat")
+    legacy_parser=sub.add_parser("cleanup-legacy")
+    legacy_parser.add_argument("--admin-chat")
     sub.add_parser("github-setup")
     sub.add_parser("github-test")
     sub.add_parser("github-status")
@@ -1064,6 +1145,8 @@ def main() -> int:
         return manual_backup(include_db=not args.no_db)
     if args.command == "rollback":
         return rollback(Path(args.backup), args.admin_chat)
+    if args.command == "cleanup-legacy":
+        return cleanup_legacy(args.admin_chat)
     if args.command == "github-setup":
         key = ensure_github_key()
         print(json.dumps({"public_key": key, "repository": github_repo_slug(), "branch": current_branch()}, ensure_ascii=False))
