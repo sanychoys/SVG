@@ -1,7 +1,8 @@
 """Remote VPS maintenance: key-only SSH, pinned host keys, bounded output/time.
 
 No key upload or automatic host-key acceptance: administrators provision an
-unprivileged SSH account, authorized_keys and known_hosts out of band.
+SSH account (including root when explicitly configured), authorized_keys
+and a pinned known_hosts entry. Root keys are not enabled automatically.
 """
 from __future__ import annotations
 import os
@@ -53,7 +54,10 @@ def build_command(server, template, custom=None):
             raise ValueError('Команда должна быть однострочной, до 1200 символов')
         return custom.strip()
     if template not in TEMPLATES:raise ValueError('Неизвестный шаблон команды')
-    return TEMPLATES[template][1].replace('{service}',server['service'])
+    cmd=TEMPLATES[template][1]
+    if template=='site_restart' and server['username']=='root':
+        cmd='systemctl restart {service}'
+    return cmd.replace('{service}',server['service'])
 
 
 def execute(server, template, custom=None):

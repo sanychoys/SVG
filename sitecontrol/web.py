@@ -20,7 +20,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from . import store
-from . import diagnostics, miniapp_auth, remote, project_files, local_console, self_update, domains, host_verification
+from . import diagnostics, miniapp_auth, remote, project_files, local_console, self_update, domains, host_verification, root_executor
 
 app = FastAPI(title='Site Control API', docs_url=None, redoc_url=None, openapi_url=None)
 registry = None
@@ -99,6 +99,86 @@ def require_admin(request: Request):
     return admin_id
 
 
+def require_permission(request, capability, project_id=None):
+    actor=require_admin(request)
+    # Graceful compatibility for legacy in-process testing registries.
+    authorized = registry.can(actor,capability,project_id) if hasattr(registry,'can') else (
+        registry.is_admin(actor) and (capability not in ('platform.root','servers.root') or actor==registry.owner_id))
+    if not authorized:raise HTTPException(403,'Недостаточно прав для этого действия или проекта')
+    return actor
+
+
+def _can(actor, capability, project_id=None):
+    return (registry.can(actor,capability,project_id) if hasattr(registry,'can') else registry.is_admin(actor))
+
+
+def _project_from_tenant(tenant_id):
+    with store.connect() as db:
+        row=db.execute('SELECT id FROM sites WHERE tenant_id=?',(tenant_id,)).fetchone()
+    return int(row['id']) if row else -1
+
+
+def _route_capability(path, method):
+    """Deny-by-default on protected API and scope actions to their projects."""
+    bits=path.split('/')
+    if len(bits)<4 or bits[:3]!=['','api','sc']:return None,None
+    target=bits[3]
+    if target in ('auth','health','public'):return None,None
+    if target=='profile':return 'projects.view',None
+    if target=='admins':return 'admins.manage',None
+    if target=='media':return None,None  # public media authorization within endpoint
+    if target=='platform':
+        return 'platform.manage',0
+    if target=='exports':return 'logs.view',0
+    if target=='preview':return 'projects.view',int(bits[4]) if len(bits)>4 and bits[4].isdigit() else None
+    if target=='ssh':return 'servers.manage',None
+    if target=='bots':
+        cap='bots.manage' if method!='GET' else 'projects.view'
+        project=None
+        if len(bits)>4 and bits[4].isdigit():
+            bot=next((b for b in store.list_bots() if b['id']==int(bits[4])),None)
+            project=_project_from_tenant(bot['tenant_id']) if bot else -1
+        return cap,project
+    if target=='servers':
+        project=None
+        if len(bits)>4 and bits[4].isdigit():
+            server=store.get_server(int(bits[4]));project=server['site_id'] if server else -1
+        cap=('servers.view' if method=='GET' else 'servers.manage')
+        return cap,project
+    if target in ('projects','sites'):
+        project=int(bits[4]) if len(bits)>4 and bits[4].isdigit() else None
+        if project==0:
+            return ('logs.view' if 'logs' in bits and method=='GET' else 'platform.manage'),0
+        if target=='sites':
+            if method=='GET':cap='projects.view'
+            elif len(bits)==4:cap='projects.manage'
+            elif 'media' in bits:cap='files.manage'
+            elif 'leads' in bits:cap='projects.manage'
+            else:cap='files.manage'
+        else:
+            if method=='GET':
+                cap=('logs.view' if 'logs' in bits else 'backups.manage' if 'backups' in bits else 'projects.view')
+            elif 'domains' in bits:cap='domains.manage'
+            elif 'backup' in path:cap='backups.manage'
+            elif any(x in bits for x in ('archive','unarchive')) or method=='DELETE':cap='projects.manage'
+            else:cap='files.manage'
+        return cap,project
+    # Any new protected route is restricted until deliberately classified.
+    return 'platform.manage',None
+
+
+@app.middleware('http')
+async def enforce_admin_permissions(request:Request,call_next):
+    path=request.url.path
+    if path.startswith('/api/sc/'):
+        try:
+            cap,project=_route_capability(path,request.method)
+            if cap:require_permission(request,cap,project)
+        except HTTPException as exc:
+            return JSONResponse({'detail':exc.detail},status_code=exc.status_code)
+    return await call_next(request)
+
+
 def write_guard(request):
     actor = require_admin(request)
     if request.headers.get('X-Site-Control') != '1':
@@ -142,7 +222,7 @@ def readiness():
                 db.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
     except Exception:
         raise HTTPException(503, 'Database unavailable')
-    return {'status':'ok','service':'Site Control','version':'1.13.0'}
+    return {'status':'ok','service':'Site Control','version':'1.15.0'}
 
 
 @app.get('/api/sc/health')
@@ -236,7 +316,7 @@ async def save_device_timezone(request:Request):
 @app.get('/api/sc/admins')
 def list_admins(request:Request):
     require_admin(request)
-    return {'owner_id':registry.owner_id,'admins':registry.list_ids()}
+    return {'owner_id':registry.owner_id,'admins':registry.list_ids(), 'access':{str(i):registry.get_access(i) for i in registry.list_ids()} if hasattr(registry,'get_access') else {},'capabilities':registry.catalogue() if hasattr(registry,'catalogue') else {}}
 
 
 @app.post('/api/sc/admins')
@@ -244,6 +324,7 @@ async def add_admin(request:Request):
     actor=write_guard(request)
     body=await json_body(request,1000)
     if body.get('confirm')!='ADD':raise HTTPException(400,'Требуется подтверждение ADD')
+    require_permission(request,'admins.manage')
     try:changed=registry.change(actor,body.get('telegram_id'),'grant')
     except (ValueError,TypeError,PermissionError) as exc:raise HTTPException(400,str(exc))
     site_log.info('Обновлены права администраторов')
@@ -254,15 +335,32 @@ async def add_admin(request:Request):
 def remove_admin(telegram_id:int,request:Request,confirm:str=''):
     actor=write_guard(request)
     if confirm!='REMOVE':raise HTTPException(400,'Требуется подтверждение REMOVE')
+    require_permission(request,'admins.manage')
     try:changed=registry.change(actor,telegram_id,'revoke')
     except (ValueError,TypeError,PermissionError) as exc:raise HTTPException(400,str(exc))
     site_log.info('Отозваны права администратора')
     return {'ok':True,'changed':changed,'admins':registry.list_ids()}
 
 
+@app.put('/api/sc/admins/{telegram_id}/access')
+async def update_admin_access(telegram_id:int,request:Request):
+    actor=write_guard(request)
+    require_permission(request,'admins.manage')
+    body=await json_body(request,6000)
+    if body.get('confirm')!='ACCESS':raise HTTPException(400,'Подтвердите изменение прав')
+    try:
+        changed=registry.set_access(actor,telegram_id,body.get('role'),body.get('permissions'),body.get('projects'))
+    except PermissionError as exc:raise HTTPException(403,str(exc))
+    except LookupError as exc:raise HTTPException(404,str(exc))
+    except (ValueError,TypeError) as exc:raise HTTPException(400,str(exc))
+    site_log.warning('Права администратора %s изменены пользователем %s',telegram_id,actor)
+    return {'ok':True,'access':changed}
+
+
 @app.get('/api/sc/auth/me')
 def auth_me(request:Request):
-    return {'admin_id':require_admin(request)}
+    actor=require_admin(request)
+    return {'admin_id':actor,'access':registry.get_access(actor) if hasattr(registry,'get_access') else {}}
 
 
 @app.post('/api/sc/auth/logout')
@@ -277,13 +375,16 @@ def auth_logout(request:Request):
 @app.get('/api/sc/sites')
 def sites(request:Request):
     require_admin(request)
-    return {'sites':store.list_sites()}
+    actor=require_admin(request)
+    return {'sites':[item for item in store.list_sites() if _can(actor,'projects.view',item['id'])]}
 
 
 @app.post('/api/sc/sites')
 async def create_site(request:Request):
     write_guard(request)
     body=await json_body(request)
+    if hasattr(registry,'get_access') and (registry.get_access(require_admin(request)) or {}).get('projects') is not None:
+        raise HTTPException(403,'Создавать новые проекты можно только с доступом ко всем проектам')
     try: site_id=store.create_site(body.get('name',''), body.get('slug',''), body.get('client_telegram_id'))
     except Exception as exc: error(exc)
     return {'ok':True,'id':site_id}
@@ -338,7 +439,8 @@ async def update_lead(site_id:int,lead_id:int,request:Request):
 @app.get('/api/sc/bots')
 def bots(request:Request):
     require_admin(request)
-    return {'bots':store.list_bots(),'public_url':SITE_URL}
+    actor=require_admin(request)
+    return {'bots':[b for b in store.list_bots() if _can(actor,'projects.view',_project_from_tenant(b['tenant_id']))],'public_url':SITE_URL}
 
 
 @app.post('/api/sc/ssh/key')
@@ -379,7 +481,8 @@ async def ssh_trust(request:Request):
 @app.get('/api/sc/servers')
 def servers(request:Request):
     require_admin(request)
-    return {'servers':store.list_servers(),'templates':{k:v[0] for k,v in remote.TEMPLATES.items()}}
+    actor=require_admin(request)
+    return {'servers':[v for v in store.list_servers() if _can(actor,'servers.view',v.get('site_id'))],'templates':{k:v[0] for k,v in remote.TEMPLATES.items()}}
 
 
 @app.post('/api/sc/servers')
@@ -389,6 +492,7 @@ async def server_create(request:Request):
     try:
         cleaned=remote.validate(data.get('name'),data.get('host'),data.get('port',22),
             data.get('username'),data.get('key_alias'),data.get('service','sitecontrol'),data.get('site_id'),data.get('deploy_root',''))
+        require_permission(request,'servers.manage',cleaned.get('site_id'))
         server_id=store.add_server(cleaned,'admin:'+str(actor))
     except (ValueError,LookupError) as exc:error(exc)
     return {'ok':True,'id':server_id}
@@ -431,8 +535,12 @@ async def server_execute(server_id:int,request:Request):
     template=body.get('template')
     custom=body.get('command')
     # Destructive actions and arbitrary shell are never silently executed.
-    if template in ('manual','site_restart') and body.get('confirm')!='EXECUTE':
-        raise HTTPException(400,'Подтвердите команду словом EXECUTE')
+    if template in ('manual','site_restart'):
+        expected='ROOT' if server['username']=='root' else 'EXECUTE'
+        if body.get('confirm')!=expected:
+            raise HTTPException(400,'Подтвердите команду словом '+expected)
+    if server.get('username')=='root' and template in ('manual','site_restart'):
+        require_permission(request,'servers.root',server.get('site_id'))
     try:remote.build_command(server,template,custom)
     except ValueError as exc:error(exc)
     try:
@@ -459,6 +567,7 @@ async def attach_bot(request:Request):
         raise HTTPException(400,'Неверный формат токена BotFather')
     if not SITE_URL.startswith('https://'):
         raise HTTPException(503,'Для webhook нужен SITE_CONTROL_PUBLIC_URL на HTTPS')
+    require_permission(request,'bots.manage',_project_from_tenant(tenant_id))
     try:
         result=await manager.attach(tenant_id,token,SITE_URL)
     except (LookupError,ValueError) as exc:error(exc)
@@ -514,7 +623,7 @@ def media(tenant_id:int,filename:str,request:Request):
     with store.connect() as db:
         found=db.execute('SELECT 1 FROM sites WHERE tenant_id=? AND published IS NOT NULL',(tenant_id,)).fetchone()
     if not found:
-        try:require_admin(request)
+        try:require_permission(request,'projects.view',_project_from_tenant(tenant_id))
         except HTTPException:raise HTTPException(404)
     p=store.STATE/'media'/str(tenant_id)/filename
     if not p.is_file():raise HTTPException(404)
@@ -614,12 +723,15 @@ async def permanent_project_delete(project_id:int, request:Request):
 
 @app.get('/api/sc/platform/overview')
 def platform_overview(request:Request):
-    require_admin(request)
+    actor=require_admin(request)
     import platform
     return {'service':'Site Control','app_root':str(project_files.ROOT),
             'python':platform.python_version(),'server':'Локальный VPS',
             'bot_name':'Главный бот Site Control','owner_id':registry.owner_id,
-            'console_mode':'diagnostics_only' if os.geteuid()==0 else 'restricted_shell',
+            'console_mode':'root_executor' if root_executor.status() else ('diagnostics_only' if os.geteuid()==0 else 'restricted_shell'),
+            'root_executor_ready':root_executor.status(),
+            'root_owner_only':False,
+            'root_allowed':_can(actor,'platform.root',0),
             'updater_ready':self_update.UPDATER_MARKER.is_file()}
 
 @app.post('/api/sc/platform/execute')
@@ -627,6 +739,21 @@ async def platform_execute(request:Request):
     actor=write_guard(request)
     body=await json_body(request,2000)
     template=body.get('template')
+    if body.get('as_root') is True:
+        # Root actions require an explicit admin capability and an operator-enabled service.
+        require_permission(request,'platform.root',0)
+        if template!='manual' or body.get('confirm')!='ROOT':
+            raise HTTPException(400,'Подтвердите root-команду словом ROOT')
+        cmd=body.get('command')
+        try:
+            result=await asyncio.to_thread(root_executor.execute,cmd,int(actor))
+        except ValueError as exc:error(exc)
+        except root_executor.RootUnavailable as exc:
+            raise HTTPException(409,str(exc)) from None
+        with store.connect() as db:
+            store.audit(db,'admin:'+str(actor),'platform.root_command',None,'root command SHA256:'+hashlib.sha256(cmd.encode()).hexdigest())
+        site_log.warning('Выполнена root-операция администратором ID %s; код выхода %s',actor,result['exit_code'])
+        return result
     if template=='manual' and body.get('confirm')!='EXECUTE':
         raise HTTPException(400,'Подтвердите команду')
     if template in ('site_restart',):
@@ -647,9 +774,10 @@ async def platform_execute(request:Request):
 @app.get('/api/sc/projects')
 def projects(request:Request):
     require_admin(request)
-    return {'projects':[{'id':0,'name':'Наша платформа','kind':'own','slug':'site-control','bot_name':'главный бот'}]+[
+    actor=require_admin(request)
+    return {'projects':([{'id':0,'name':'Наша платформа','kind':'own','slug':'site-control','bot_name':'главный бот'}] if _can(actor,'projects.view',0) else [])+[
         {'id':s['id'],'name':s['client_name'],'kind':'client','slug':s['slug'],'bot_name':s['bot_name'],'new_leads':s['new_leads'],'archived_at':s.get('archived_at')}
-        for s in store.list_sites()]}
+        for s in store.list_sites() if _can(actor,'projects.view',s['id'])]}
 
 
 @app.get('/api/sc/projects/{project_id}/domains')

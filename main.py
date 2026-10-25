@@ -68,6 +68,10 @@ async def send_error(message:Message, label:str='Ошибка'):
     await message.answer(f'{label}.\n{hint}\nКод: {error_id}',reply_markup=log_keyboard())
 
 
+def bot_can(actor, capability, project_id=None):
+    return registry.can(actor,capability,project_id) if hasattr(registry,'can') else registry.is_admin(actor)
+
+
 def is_admin(msg:Message):
     return bool(msg.from_user and msg.chat.type=='private' and registry.is_admin(msg.from_user.id))
 
@@ -260,12 +264,12 @@ async def show_admins(message:Message):
 
 @dp.message(Command('admins'))
 async def admins(message:Message):
-    if is_admin(message):await show_admins(message)
+    if is_admin(message) and bot_can(message.from_user.id,'admins.manage'):await show_admins(message)
 
 
 @dp.message(Command('admin_add','admin_remove'))
 async def admin_change(message:Message):
-    if not is_admin(message):return
+    if not is_admin(message) or not bot_can(message.from_user.id,'admins.manage'):return
     text=(message.text or '').strip().split()
     if len(text)!=2 or not text[1].isascii() or not text[1].isdecimal():
         await message.answer('Пример: /admin_add 123456789');return
@@ -329,7 +333,7 @@ async def rollback_info(message:Message):
 
 @dp.message(F.text)
 async def admin_id_text(message:Message):
-    if not is_admin(message):return
+    if not is_admin(message) or not bot_can(message.from_user.id,'admins.manage'):return
     expires=ADMIN_INPUT.get(message.from_user.id)
     if not expires:return
     ADMIN_INPUT.pop(message.from_user.id,None)
@@ -353,6 +357,7 @@ async def admin_id_text(message:Message):
 @dp.message(F.document)
 async def upload_zip(message:Message):
     if not is_admin(message) or not message.document:return
+    if not bot_can(message.from_user.id,'files.manage', PROJECT_UPLOAD.get(message.from_user.id,(0,))[0] if message.from_user.id in PROJECT_UPLOAD else 0):return
     name=str(message.document.file_name or '')
     pending_project=PROJECT_UPLOAD.get(message.from_user.id)
     if pending_project and pending_project[1] >= time.time():
@@ -397,6 +402,26 @@ async def callbacks(callback:CallbackQuery):
         await callback.answer('Нет доступа',show_alert=True);return
     parts=(callback.data or '').split(':')
     action=parts[1] if len(parts)>1 else ''
+    actor=callback.from_user.id
+    permissions={'admins':'admins.manage','admadd':'admins.manage','admrm':'admins.manage','role':'admins.manage',
+                 'logs':'logs.view','log':'logs.view','status':'projects.view','backup':'backups.manage',
+                 'sites':'projects.view','servers':'servers.view','serverhelp':'servers.view',
+                 'upload':'platform.manage','cleanup':'platform.manage','rollback':'platform.manage','deploy':'platform.manage'}
+    if action in permissions and not bot_can(actor,permissions[action]):
+        await callback.answer('Недостаточно прав',show_alert=True);return
+    pid=None
+    if action in ('site','pfile','pbacks','bdown') and len(parts)>2 and parts[2].isdigit():pid=int(parts[2])
+    if action in ('server','tmpl') and len(parts)>2 and parts[2].isdigit():
+        srv=store.get_server(int(parts[2]));pid=srv['site_id'] if srv else -1
+    scoped={'site':'projects.view','pfile':'files.manage','pbacks':'backups.manage',
+            'bdown':'backups.manage','server':'servers.view','tmpl':'servers.manage'}
+    if action in scoped and (pid is None or not bot_can(actor,scoped[action],pid)):
+        await callback.answer('Нет доступа к этому проекту',show_alert=True);return
+    if action=='tmpl' and len(parts)>2 and parts[2].isdigit():
+        server=store.get_server(int(parts[2]))
+        if server and server.get('username')=='root' and not bot_can(actor,'servers.root',pid):
+            await callback.answer('Нет права root для VPS',show_alert=True);return
+
     if action=='cancel':
         await callback.answer('Отменено');await callback.message.edit_text('Действие отменено.');return
     if action=='home':
@@ -519,6 +544,8 @@ async def callbacks(callback:CallbackQuery):
     pending=PENDING.get(token)
     if not pending or pending[0]!=callback.from_user.id or pending[-1]<time.time():
         await callback.answer('Подтверждение устарело',show_alert=True);return
+    if action=='pub' and pending[2]=='projectrelease' and not bot_can(actor,'files.manage',pending[1][0]):
+        await callback.answer('Недостаточно прав',show_alert=True);return
     if action=='pub' and pending[2]=='projectrelease':
         PENDING.pop(token,None)
         pid,rid,sid=pending[1]
@@ -530,6 +557,9 @@ async def callbacks(callback:CallbackQuery):
         except Exception:await send_error(callback.message,'Ошибка публикации файлов')
         return
     if action=='run' and pending[2]=='remote':
+        srv=store.get_server(pending[1][0]);pid=srv['site_id'] if srv else -1
+        if not bot_can(actor,'servers.manage',pid) or (srv and srv.get('username')=='root' and not bot_can(actor,'servers.root',pid)):
+            await callback.answer('Недостаточно прав SSH',show_alert=True);return
         PENDING.pop(token,None)
         sid,template,command=pending[1]
         server=store.get_server(sid)
@@ -546,6 +576,8 @@ async def callbacks(callback:CallbackQuery):
             await send_error(callback.message,'Ошибка SSH-команды')
         return
     if action=='role':
+        if not bot_can(actor,'admins.manage'):
+            await callback.answer('Недостаточно прав',show_alert=True);return
         PENDING.pop(token,None)
         _,uid,role,_=pending
         try:changed=registry.change(callback.from_user.id,uid,role)

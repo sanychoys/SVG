@@ -770,3 +770,25 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 #app .local-only-preset[hidden],#app [hidden]{display:none!important}
 #viewWorkspace .tabs{overflow-x:auto;max-width:100%;scrollbar-width:none}
 #viewWorkspace .tabs::-webkit-scrollbar{display:none}
+
+/* v1.14 — explicit root access indication, mobile-first */
+.root-controls{margin:12px 0;padding:14px 16px;border-radius:14px;background:rgba(255,153,50,.065);border:1px solid rgba(255,180,100,.18)}
+.root-option{display:flex!important;flex-direction:row!important;align-items:center;gap:12px;cursor:pointer;text-align:left}
+.root-option>input[type=checkbox]{width:21px;min-width:21px;height:21px;accent-color:#ffae66;margin:0}
+.root-option span{display:flex;flex-direction:column;gap:5px}
+.root-option strong{font-size:14px;color:#fff}
+.root-option small,.root-controls .hint{font-size:12px;color:#b9a9a1;line-height:1.55}
+.root-option input:disabled{opacity:.45}
+
+/* V1.15 — permission editor, mobile-first with no extra navigation layers */
+.role-editor{margin-top:22px;padding:20px;background:#0d1722;border:1px solid #24394a;border-radius:20px;display:grid;gap:14px}
+.role-editor[hidden],#accessCustom[hidden]{display:none!important}
+.role-permissions{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.role-check{display:flex!important;align-items:center;gap:12px;padding:10px 12px;border-radius:12px;background:#152231;color:#e8f4fc;font-size:14px;min-height:48px;cursor:pointer}
+.role-check input{width:18px;height:18px;min-width:18px;accent-color:#54d4ff;flex-shrink:0;box-shadow:none!important;outline:0!important}
+.role-editor select{width:100%;min-height:48px;font-size:16px}
+@media(max-width:540px){.role-editor{padding:14px;margin-top:15px}.role-permissions{grid-template-columns:1fr}.role-editor .section-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.role-editor .stack-buttons{display:flex;flex-wrap:wrap}}
+/* V1.15: override legacy blanket label/input rules for permission switches */
+.work-panel .role-check{display:flex!important;flex-direction:row!important;align-items:center!important;justify-content:flex-start!important;gap:11px!important;min-height:46px!important;padding:10px 12px!important;margin:0!important;text-align:left!important;font-size:13px!important;font-weight:550!important;line-height:1.35!important}
+.work-panel .role-check>input[type="checkbox"]{display:block!important;position:static!important;flex:0 0 18px!important;width:18px!important;min-width:18px!important;max-width:18px!important;height:18px!important;min-height:18px!important;padding:0!important;margin:0!important;background:none!important;border:none!important;box-shadow:none!important;accent-color:#50caff!important}
+.work-panel .role-check:has(input:checked){background:#183447!important}

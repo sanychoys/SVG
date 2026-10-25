@@ -104,8 +104,13 @@ class AdminRegistry:
         with os.fdopen(lock_fd, 'r+') as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             members = self._read()
-            if actor_id not in members:
-                raise PermissionError('Доступ администратора отозван')
+            if actor_id not in members or not self.can(actor_id,'admins.manage'):
+                raise PermissionError('Нет права изменять состав администраторов')
+            actor_access=self.get_access(actor_id)
+            if action=='revoke' and actor_access['role']=='custom' and target_id in members:
+                target_access=self.get_access(target_id)
+                if target_access['role']!='custom' or not set(target_access['permissions']).issubset(actor_access['permissions']):
+                    raise PermissionError('Недостаточно прав для отзыва доступа этого участника')
             was_present = target_id in members
             if action == 'grant':
                 if len(members) >= MAX_ADMINS and not was_present:
@@ -116,6 +121,28 @@ class AdminRegistry:
             changed = (target_id in members) != was_present
             if changed:
                 self._write(members)
+                if action=='grant' and actor_access['role']=='custom':
+                    roles=_role_read(self)
+                    roles[str(target_id)]={'role':'custom','permissions':actor_access['permissions'],
+                                            'projects':actor_access['projects']}
+                    fd3,tmp3=tempfile.mkstemp(prefix='.roles-',dir=self.directory)
+                    with os.fdopen(fd3,'w',encoding='utf-8') as f3:
+                        os.fchmod(f3.fileno(),0o600)
+                        json.dump({'version':1,'roles':roles},f3,ensure_ascii=False)
+                        f3.flush();os.fsync(f3.fileno())
+                    os.replace(tmp3,_role_file(self))
+                if action=='revoke':
+                    try:
+                        roles=_role_read(self)
+                        if str(target_id) in roles:
+                            roles.pop(str(target_id))
+                            fd2,tmp2=tempfile.mkstemp(prefix='.roles-',dir=self.directory)
+                            with os.fdopen(fd2,'w',encoding='utf-8') as f2:
+                                os.fchmod(f2.fileno(),0o600)
+                                json.dump({'version':1,'roles':roles},f2,ensure_ascii=False)
+                                f2.flush();os.fsync(f2.fileno())
+                            os.replace(tmp2,_role_file(self))
+                    except OSError:logger.exception('Could not purge permissions after admin revocation')
                 try:
                     self._audit(action, actor_id, target_id)
                 except OSError:
@@ -123,3 +150,125 @@ class AdminRegistry:
                     # after a successful permission change due to logging I/O.
                     logger.exception('Admin change committed but audit log write failed')
             return changed
+
+
+# Site Control permission catalogue. `full` includes privileged commands;
+# `custom` grants only explicitly selected capabilities.
+CAPABILITIES = {
+    'projects.view': 'Просмотр проектов',
+    'projects.manage': 'Создание, архив и удаление проектов',
+    'files.manage': 'Загрузка и публикация файлов',
+    'bots.manage': 'Клиентские Telegram-боты',
+    'servers.view': 'Просмотр серверов',
+    'servers.manage': 'SSH, подготовка и отключение VPS',
+    'servers.root': 'Root-команды на клиентских VPS',
+    'domains.manage': 'Управление доменами',
+    'backups.manage': 'Создание и восстановление копий',
+    'logs.view': 'Просмотр журналов',
+    'platform.manage': 'Управление нашей платформой',
+    'platform.root': 'Root-команды нашего VPS',
+    'admins.manage': 'Выдача и изменение доступов',
+}
+
+
+def _role_file(self):
+    return self.directory / 'admin_roles.json'
+
+
+def _role_read(self):
+    path=_role_file(self)
+    if not path.exists():return {}
+    try:
+        obj=json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(obj,dict) or obj.get('version')!=1 or not isinstance(obj.get('roles'),dict):raise ValueError()
+        return obj['roles']
+    except (OSError,ValueError,TypeError) as exc:
+        # Fail closed rather than unexpectedly granting all access after corruption.
+        logger.exception('Admin permissions corrupted; refusing access')
+        raise RuntimeError('Повреждён реестр прав администраторов') from exc
+
+
+def _get_access(self, value):
+    uid=_id(value)
+    if not self.is_admin(uid):return None
+    if uid==self.owner_id:
+        return {'role':'owner','permissions':list(CAPABILITIES),'projects':None}
+    raw=_role_read(self).get(str(uid))
+    # Preserve legacy V1.14 administrators with complete access. New admins
+    # can immediately work like cofounders; owner can restrict their role.
+    if raw is None:return {'role':'full','permissions':list(CAPABILITIES),'projects':None}
+    if not isinstance(raw,dict):raise RuntimeError('Неверный формат прав')
+    role=raw.get('role')
+    if role=='full':return {'role':'full','permissions':list(CAPABILITIES),'projects':None}
+    if role!='custom':raise RuntimeError('Неверная роль')
+    perms=raw.get('permissions',[])
+    projects=raw.get('projects')
+    if not isinstance(perms,list) or any(p not in CAPABILITIES for p in perms):raise RuntimeError('Неверный список прав')
+    if projects is not None and (not isinstance(projects,list) or any(type(x)!=int or x<1 for x in projects)):
+        raise RuntimeError('Неверный список проектов')
+    return {'role':'custom','permissions':list(dict.fromkeys(perms)),
+            'projects':list(dict.fromkeys(projects)) if projects is not None else None}
+
+
+def _can(self, actor, permission, project_id=None):
+    try:
+        info=_get_access(self,actor)
+        if info is None:return False
+        if info['role']=='owner':return True
+        if permission not in info['permissions']:return False
+        if project_id is None:return True
+        if int(project_id)==0:
+            # A client-project grant must never imply permission to manage the platform.
+            return 'platform.manage' in info['permissions']
+        return info['projects'] is None or int(project_id) in info['projects']
+    except (ValueError,TypeError,RuntimeError):return False
+
+
+def _set_access(self, actor, target, role, permissions=None, projects=None):
+    actor,target=_id(actor),_id(target)
+    if target==self.owner_id:raise ValueError('Права владельца изменить нельзя')
+    if not self.is_admin(target):raise LookupError('Администратор не найден')
+    if not self.can(actor,'admins.manage'):raise PermissionError('Недостаточно прав для управления командой')
+    actor_access=self.get_access(actor)
+    if actor==target:raise ValueError('Собственные полномочия нельзя повышать через эту форму')
+    if role not in ('full','custom'):raise ValueError('Укажите полный или выборочный доступ')
+    if role=='custom':
+        if not isinstance(permissions,list) or len(permissions)>len(CAPABILITIES) or any(not isinstance(x,str) or x not in CAPABILITIES for x in permissions):
+            raise ValueError('Некорректный набор разрешений')
+        if projects is not None and (not isinstance(projects,list) or len(projects)>500 or any(type(x)!=int or x<1 for x in projects)):
+            raise ValueError('Некорректный перечень проектов')
+        normalized=set(permissions)
+        if 'platform.root' in normalized:normalized.add('platform.manage')
+        if 'servers.root' in normalized:normalized.update(('servers.manage','servers.view'))
+        value={'role':'custom','permissions':sorted(normalized),
+               'projects':sorted(set(projects)) if projects is not None else None}
+    else:value={'role':'full'}
+    if actor_access and actor_access['role']=='custom':
+        if role=='full' or not set(value['permissions']).issubset(set(actor_access['permissions'])):
+            raise PermissionError('Нельзя выдавать права выше собственных')
+        scope=actor_access['projects']
+        if scope is not None and (value['projects'] is None or not set(value['projects']).issubset(set(scope))):
+            raise PermissionError('Нельзя выдавать доступ к чужим проектам')
+    self._ensure_directory()
+    fd=os.open(str(self.lock_path),os.O_RDWR|os.O_CREAT,0o600)
+    with os.fdopen(fd,'r+') as lock:
+        fcntl.flock(lock.fileno(),fcntl.LOCK_EX)
+        if not self.is_admin(target):raise LookupError('Администратор удалён')
+        items=_role_read(self)
+        items[str(target)]=value
+        descriptor,tmp=tempfile.mkstemp(prefix='.roles-',suffix='.tmp',dir=self.directory)
+        try:
+            with os.fdopen(descriptor,'w',encoding='utf-8') as writer:
+                os.fchmod(writer.fileno(),0o600)
+                json.dump({'version':1,'roles':items},writer,ensure_ascii=False,indent=2)
+                writer.flush();os.fsync(writer.fileno())
+            os.replace(tmp,_role_file(self))
+        finally:
+            if os.path.exists(tmp):os.unlink(tmp)
+        self._audit('permissions.update',actor,target)
+        return self.get_access(target)
+
+AdminRegistry.get_access=_get_access
+AdminRegistry.can=_can
+AdminRegistry.set_access=_set_access
+AdminRegistry.catalogue=lambda self: dict(CAPABILITIES)
