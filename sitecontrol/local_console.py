@@ -142,6 +142,31 @@ def _ram_cleanup():
             'Кеш ОС и процессы других сайтов не затронуты.')
 
 
+def _read_processes():
+    results=[]
+    for pid in sorted(Path('/proc').iterdir()):
+        if not pid.name.isdecimal():continue
+        try:
+            title=(pid/'comm').read_text('utf-8').strip()[:60]
+            state=(pid/'status').read_text('utf-8')
+            rss=next((line.split(':',1)[1].strip() for line in state.splitlines() if line.startswith('VmRSS:')),'—')
+            results.append((int(rss.split()[0]) if rss[0].isdigit() else 0,int(pid.name),title,rss))
+        except (OSError,ValueError,IndexError):continue
+    results.sort(reverse=True)
+    return 'КРУПНЫЕ ПРОЦЕССЫ ПО RAM\nPID   ПРОЦЕСС  ПАМЯТЬ\n'+'\n'.join(f'{pid}  {name}  {rss}' for _,pid,name,rss in results[:20])
+
+def _read_network():
+    lines=[]
+    for x in sorted(Path('/sys/class/net').iterdir()):
+        if x.name=='lo':continue
+        try: lines.append(f"{x.name}: {(x/'operstate').read_text().strip()}")
+        except OSError:continue
+    return 'СЕТЬ\n'+('\n'.join(lines) if lines else 'Нет сведений')
+
+def _read_inodes():
+    v=os.statvfs(ROOT)
+    return f'ФАЙЛОВАЯ СИСТЕМА\nВсего inode: {v.f_files:,}\nСвободно: {v.f_favail:,}\nИспользуется: {v.f_files-v.f_ffree:,}'
+
 NATIVE = {
     'uptime': _read_uptime,
     'disk': _read_disk,
@@ -151,6 +176,9 @@ NATIVE = {
     'files': _read_files,
     'overview': _system_overview,
     'ram_cleanup': _ram_cleanup,
+    'processes': lambda: _read_processes(),
+    'network': lambda: _read_network(),
+    'inodes': lambda: _read_inodes(),
 }
 
 # On a root service, even a read-only shell is not allowed. The following

@@ -792,3 +792,41 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .work-panel .role-check{display:flex!important;flex-direction:row!important;align-items:center!important;justify-content:flex-start!important;gap:11px!important;min-height:46px!important;padding:10px 12px!important;margin:0!important;text-align:left!important;font-size:13px!important;font-weight:550!important;line-height:1.35!important}
 .work-panel .role-check>input[type="checkbox"]{display:block!important;position:static!important;flex:0 0 18px!important;width:18px!important;min-width:18px!important;max-width:18px!important;height:18px!important;min-height:18px!important;padding:0!important;margin:0!important;background:none!important;border:none!important;box-shadow:none!important;accent-color:#50caff!important}
 .work-panel .role-check:has(input:checked){background:#183447!important}
+
+/* v1.16 — compact infrastructure UX + upload status */
+.archive-section{padding:0!important;margin:15px 0 26px!important;border-radius:12px!important;overflow:hidden!important}
+.archive-section summary{padding:11px 15px!important;min-height:43px!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;font-size:13px!important;line-height:1.2!important;list-style:none!important}
+.archive-section summary::-webkit-details-marker{display:none}
+.archive-section summary:after{content:'⌄';color:#8db8c8;margin-left:auto;transition:transform .2s}
+.archive-section[open] summary:after{transform:rotate(180deg)}
+.archive-section>.stack-list{padding:0 12px 12px!important;margin:0!important}
+.platform-update-grid .update-file-label{min-width:0}
+.update-dropzone{position:relative;min-height:80px;display:flex;align-items:center;gap:13px;padding:14px 15px;border-radius:15px;background:linear-gradient(120deg,#112d3b,#172733)!important;border:1px solid #4aaed044!important;cursor:pointer;box-shadow:inset 0 1px 0 #ffffff12;transition:background .2s,border .2s}
+.update-dropzone:hover{border-color:#63cfe088!important;background:#1d3947!important}
+.update-dropzone:focus-within{border-color:#64e1ff!important;box-shadow:0 0 0 2px #59e3ff35!important}
+.update-dropzone input[type=file]{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;opacity:0!important;cursor:pointer!important;z-index:2!important;font-size:16px!important}
+.update-dropzone-icon{display:grid;place-items:center;flex:0 0 40px;width:40px;height:40px;border-radius:12px;background:#224b5b;color:#bdf5ff;font-size:24px;line-height:1;font-weight:700}
+.update-dropzone-copy{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}
+.update-dropzone-copy strong{font-size:14px;color:#edfaff;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
+.update-dropzone-copy small{font-size:12px;line-height:1.4;color:#9ebdca}
+.update-file-state{font-size:11px;font-weight:700;color:#65deef;white-space:nowrap}
+.update-dropzone[data-phase="success"]{border-color:#2dd49b70!important}.update-dropzone[data-phase="success"] .update-dropzone-icon{color:#85ffd1;background:#134d3d}
+.update-dropzone[data-phase="error"]{border-color:#ff748b77!important}.update-dropzone[data-phase="error"] .update-dropzone-icon{color:#ff8799;background:#4f2635}
+.update-dropzone[data-phase="uploading"] .update-dropzone-icon{animation:sc-spin 1.1s linear infinite}
+@keyframes sc-spin{to{transform:rotate(360deg)}}
+.update-progress-track{height:4px!important;overflow:hidden;border-radius:10px;background:#193b47;margin-top:7px}
+.update-progress-track>div{height:100%;width:0%;background:linear-gradient(90deg,#58b8ff,#58ffed);transition:width .15s linear}
+#consolePresets button.preset-collapsed{display:none!important}
+.preset-more{border:0!important;padding:10px 15px;border-radius:12px;background:#1b3443;color:#d8f7ff;font-size:13px;min-height:44px;margin:0 0 14px;display:flex;justify-content:center;align-items:center;gap:12px;width:100%;cursor:pointer}
+.preset-more span:first-child{font-size:19px}
+.preset-more[hidden]{display:none!important}
+#consolePresets button{min-width:0!important;font-size:12px!important;padding:11px 5px!important}
+#viewWorkspace .work-panel{min-width:0!important}
+#viewWorkspace .work-panel .panel-heading{max-width:100%;overflow-wrap:break-word}
+@media(max-width:590px){.update-dropzone{min-height:72px;padding:11px;gap:11px}.update-dropzone-icon{flex-basis:36px;width:36px;height:36px}.update-dropzone-copy small{font-size:11px}.update-file-state{font-size:10px}.archive-section summary{min-height:40px!important}}
+@media(prefers-reduced-motion:reduce){.update-dropzone[data-phase="uploading"] .update-dropzone-icon{animation:none}}
+
+/* v1.16 sidebar: remove redundant workspace label and its divider */
+.sidebar .side-group{border-top:none!important;padding-top:4px!important}
+.sidebar .side-bottom{border-top:none!important}
+.sidebar{border-right-color:transparent!important}

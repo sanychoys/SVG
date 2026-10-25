@@ -27,6 +27,15 @@ TEMPLATES = {
     'site_logs': ('Логи сайта','journalctl --no-pager -n 80 --since="24 hours ago" --utc --output=short-iso -u {service}'),
     'site_status': ('Состояние сайта','systemctl --no-pager status {service}'),
     'site_restart': ('Перезапустить сервис','sudo -n systemctl restart {service}'),
+    'processes': ('Процессы','ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -n 22'),
+    'network': ('Сеть','ip -brief address'),
+    'inodes': ('Заполнение inode','df -i'),
+    'ports': ('Порты','ss -tuln'),
+    'docker_status': ('Docker','docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'),
+    'system_info': ('ОС и ядро','uname -a'),
+    'recent_errors': ('Ошибки','journalctl -p err -n 35 --no-pager --since="24 hours ago"'),
+    'disk_usage': ('Каталоги','du -h -d 1 /var/www /srv 2>/dev/null | tail -n 30'),
+
 }
 
 

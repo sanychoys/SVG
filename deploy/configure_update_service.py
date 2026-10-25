@@ -47,11 +47,11 @@ for name,content in [('sitecontrol-updater.service',service),('sitecontrol-updat
     target=Path('/etc/systemd/system')/name
     target.write_text(content,encoding='utf-8')
     target.chmod(0o644)
+for cmd in (['systemctl','daemon-reload'],['systemctl','enable','--now','sitecontrol-updater.path']):
+    subprocess.run(cmd,check=True)
 marker=Path('/etc/sitecontrol/updater-enabled')
 marker.parent.mkdir(parents=True,exist_ok=True)
 marker.write_text('Updater path service installed\n')
 marker.chmod(0o644)
-for cmd in (['systemctl','daemon-reload'],['systemctl','enable','--now','sitecontrol-updater.path']):
-    subprocess.run(cmd,check=True)
 print('Готово: service + path установлены. Перезапуск сайта не требуется.')
 print('Проверка: systemctl status sitecontrol-updater.path --no-pager')

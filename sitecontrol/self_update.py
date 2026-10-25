@@ -112,26 +112,7 @@ def launch(rid):
     # preferred: it survives restarts and doesn't depend on web-service D-Bus.
     if _notify_watcher(rid,item):
         return item
-    # Legacy installations may already permit systemd-run.
-    unit='sitecontrol-update-'+rid
-    cmd=['systemd-run','--unit='+unit,'--collect','--property=Type=oneshot',
-         '--working-directory='+str(ROOT),'--setenv=PYTHONPATH='+str(ROOT),
-         '--setenv=SITE_CONTROL_PROJECT_ROOT='+str(ROOT),
-         '--setenv=SITE_CONTROL_PROJECT_FILES_DIR='+str(project_files.STATE),
-         '--setenv=SITE_CONTROL_DATA_DIR='+str(project_files.store.STATE),
-         '--setenv=SVGTRACKER_SERVICE_NAME='+os.environ.get('SVGTRACKER_SERVICE_NAME','svgtracker'),
-         sys.executable,'-m','sitecontrol.self_update','apply',rid]
-    if not shutil.which('systemd-run'):
-        raise RuntimeError('systemd-run недоступен. Установщик на VPS не настроен. Однократно выполните deploy/configure_update_service.py через SSH.')
-    try:
-        p=subprocess.run(cmd,capture_output=True,text=True,timeout=15,cwd=str(ROOT))
-    except (OSError,subprocess.TimeoutExpired) as exc:
-        raise RuntimeError('Веб-службе запрещено запускать обновления. Настройте отдельный updater по инструкции.') from exc
-    if p.returncode:
-        raise RuntimeError('systemd-run запрещён политикой VPS. Один раз настройте отдельную службу обновлений по инструкции (deploy/configure_update_service.py). Файл проверен и сохранён, но НЕ установлен.')
-    item.update(status='queued',queued_at=int(time.time()),message='Установка передана systemd',unit=unit)
-    write_status(rid,item)
-    return item
+    raise RuntimeError('Установка пока не настроена на VPS. Файл сохранён. Однократно выполните sudo python3 deploy/configure_update_service.py через SSH, затем вернитесь в панель.')
 
 def apply(rid):
     item=status(rid)
