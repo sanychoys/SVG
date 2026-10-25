@@ -227,6 +227,19 @@ async def prepare_remote(message,server_id,template,command=None):
         await message.answer('Сервер не найден.');return
     try: text=remote.build_command(server,template,command)
     except ValueError as exc:await message.answer(str(exc));return
+    actor=message.from_user.id
+    root_action=server.get('username')=='root'
+    if not bot_can(actor,'servers.manage',server.get('site_id')) or (root_action and not bot_can(actor,'servers.root',server.get('site_id'))):
+        await message.answer('Нет разрешения на эту команду VPS.');return
+    if root_action and not registry.needs_root_confirm(actor):
+        try:
+            result=await asyncio.to_thread(remote.execute,server,template,command)
+            store.log_server_run(server_id,'admin:'+str(actor),str(template),result['ok'])
+            await send_chunks(message,f'{server["name"]} · код {result["exit_code"]}\n'+result['output'])
+        except Exception:
+            store.log_server_run(server_id,'admin:'+str(actor),str(template),False)
+            await send_error(message,'Ошибка SSH-команды')
+        return
     token=uuid.uuid4().hex[:12]
     PENDING[token]=(message.chat.id, (server_id,template,command), 'remote',time.time()+300)
     kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Выполнить SSH-команду',callback_data='sc:run:'+token)],[InlineKeyboardButton(text='Отменить',callback_data='sc:cancel')]])
@@ -344,10 +357,18 @@ async def admin_id_text(message:Message):
         cmd=(message.text or '').strip()
         if not 1<=len(cmd)<=1200 or '\n' in cmd or any(ord(c)<32 and c!='\t' for c in cmd):
             await message.answer('Допускается только одна строка до 1200 символов.');return
+        if not registry.needs_root_confirm(message.from_user.id):
+            try:
+                result=await asyncio.to_thread(root_executor.execute,cmd,message.from_user.id)
+                await message.answer('Наш VPS / ROOT · код '+str(result['exit_code'])+'\n'+result['output'][:3500])
+            except Exception:
+                log.exception('Ошибка root-команды через Telegram')
+                await send_error(message,'Root-команда не выполнена')
+            return
         code=uuid.uuid4().hex[:12]
         PENDING[code]=(message.from_user.id,cmd,'ownroot',time.time()+180)
-        await message.answer('Наш VPS / root\nКоманда: '+cmd[:1200]+'\n\nВыполнить с полными системными правами?',reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-          [InlineKeyboardButton(text='Подтверждаю ROOT',callback_data='sc:rootrun:'+code)],
+        await message.answer('Наш VPS / root\nКоманда: '+cmd[:1200]+'\n\nВыполнить?',reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+          [InlineKeyboardButton(text='Подтвердить',callback_data='sc:rootrun:'+code)],
           [InlineKeyboardButton(text='Отмена',callback_data='sc:cancel')]]))
         return
     if not is_admin(message) or not bot_can(message.from_user.id,'admins.manage'):return

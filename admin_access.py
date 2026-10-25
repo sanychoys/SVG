@@ -192,14 +192,14 @@ def _get_access(self, value):
     uid=_id(value)
     if not self.is_admin(uid):return None
     if uid==self.owner_id:
-        return {'role':'owner','permissions':list(CAPABILITIES),'projects':None}
+        return {'role':'owner','permissions':list(CAPABILITIES),'projects':None,'root_confirm':False}
     raw=_role_read(self).get(str(uid))
     # Preserve legacy V1.14 administrators with complete access. New admins
     # can immediately work like cofounders; owner can restrict their role.
-    if raw is None:return {'role':'full','permissions':list(CAPABILITIES),'projects':None}
+    if raw is None:return {'role':'full','permissions':list(CAPABILITIES),'projects':None,'root_confirm':True}
     if not isinstance(raw,dict):raise RuntimeError('Неверный формат прав')
     role=raw.get('role')
-    if role=='full':return {'role':'full','permissions':list(CAPABILITIES),'projects':None}
+    if role=='full':return {'role':'full','permissions':list(CAPABILITIES),'projects':None,'root_confirm':raw.get('root_confirm',True) is not False}
     if role!='custom':raise RuntimeError('Неверная роль')
     perms=raw.get('permissions',[])
     projects=raw.get('projects')
@@ -207,7 +207,8 @@ def _get_access(self, value):
     if projects is not None and (not isinstance(projects,list) or any(type(x)!=int or x<1 for x in projects)):
         raise RuntimeError('Неверный список проектов')
     return {'role':'custom','permissions':list(dict.fromkeys(perms)),
-            'projects':list(dict.fromkeys(projects)) if projects is not None else None}
+            'projects':list(dict.fromkeys(projects)) if projects is not None else None,
+            'root_confirm':raw.get('root_confirm',True) is not False}
 
 
 def _can(self, actor, permission, project_id=None):
@@ -224,7 +225,7 @@ def _can(self, actor, permission, project_id=None):
     except (ValueError,TypeError,RuntimeError):return False
 
 
-def _set_access(self, actor, target, role, permissions=None, projects=None):
+def _set_access(self, actor, target, role, permissions=None, projects=None, root_confirm=None):
     actor,target=_id(actor),_id(target)
     if target==self.owner_id:raise ValueError('Права владельца изменить нельзя')
     if not self.is_admin(target):raise LookupError('Администратор не найден')
@@ -232,6 +233,9 @@ def _set_access(self, actor, target, role, permissions=None, projects=None):
     actor_access=self.get_access(actor)
     if actor==target:raise ValueError('Собственные полномочия нельзя повышать через эту форму')
     if role not in ('full','custom'):raise ValueError('Укажите полный или выборочный доступ')
+    if root_confirm is not None and type(root_confirm) is not bool:raise ValueError('Некорректный режим подтверждения')
+    # Only the protected owner can remove the confirmation for other root administrators.
+    if root_confirm is False and actor!=self.owner_id:raise PermissionError('Отключение подтверждений ROOT доступно только владельцу')
     if role=='custom':
         if not isinstance(permissions,list) or len(permissions)>len(CAPABILITIES) or any(not isinstance(x,str) or x not in CAPABILITIES for x in permissions):
             raise ValueError('Некорректный набор разрешений')
@@ -243,6 +247,9 @@ def _set_access(self, actor, target, role, permissions=None, projects=None):
         value={'role':'custom','permissions':sorted(normalized),
                'projects':sorted(set(projects)) if projects is not None else None}
     else:value={'role':'full'}
+    # Preserve the current policy when only the role or project scope changes.
+    old=self.get_access(target)
+    value['root_confirm']=(old.get('root_confirm',True) if root_confirm is None else root_confirm)
     if actor_access and actor_access['role']=='custom':
         if role=='full' or not set(value['permissions']).issubset(set(actor_access['permissions'])):
             raise PermissionError('Нельзя выдавать права выше собственных')
@@ -272,3 +279,4 @@ AdminRegistry.get_access=_get_access
 AdminRegistry.can=_can
 AdminRegistry.set_access=_set_access
 AdminRegistry.catalogue=lambda self: dict(CAPABILITIES)
+AdminRegistry.needs_root_confirm=lambda self,actor: self.get_access(actor).get('root_confirm',True) if self.get_access(actor) else True

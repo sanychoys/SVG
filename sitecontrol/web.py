@@ -110,6 +110,13 @@ def require_permission(request, capability, project_id=None):
     return actor
 
 
+def _needs_root_confirm(actor):
+    # Compatibility with test registries and older embedded clients.
+    if hasattr(registry,'needs_root_confirm'):
+        return registry.needs_root_confirm(actor)
+    return actor != registry.owner_id
+
+
 def _can(actor, capability, project_id=None):
     return (registry.can(actor,capability,project_id) if hasattr(registry,'can') else registry.is_admin(actor))
 
@@ -351,7 +358,7 @@ async def update_admin_access(telegram_id:int,request:Request):
     body=await json_body(request,6000)
     if body.get('confirm')!='ACCESS':raise HTTPException(400,'Подтвердите изменение прав')
     try:
-        changed=registry.set_access(actor,telegram_id,body.get('role'),body.get('permissions'),body.get('projects'))
+        changed=registry.set_access(actor,telegram_id,body.get('role'),body.get('permissions'),body.get('projects'),body.get('root_confirm'))
     except PermissionError as exc:raise HTTPException(403,str(exc))
     except LookupError as exc:raise HTTPException(404,str(exc))
     except (ValueError,TypeError) as exc:raise HTTPException(400,str(exc))
@@ -536,12 +543,15 @@ async def server_execute(server_id:int,request:Request):
     body=await json_body(request,3000)
     template=body.get('template')
     custom=body.get('command')
-    # Destructive actions and arbitrary shell are never silently executed.
-    if template in ('manual','site_restart'):
-        expected='ROOT' if server['username']=='root' else 'EXECUTE'
+    needs_root = server['username']=='root'
+    # An owner or an admin explicitly exempted by owner may run permitted root
+    # commands without an additional dialogue. Authentication/RBAC still required.
+    needs_confirmation = not needs_root or _needs_root_confirm(actor)
+    if template in ('manual','site_restart') and needs_confirmation:
+        expected='ROOT' if needs_root else 'EXECUTE'
         if body.get('confirm')!=expected:
             raise HTTPException(400,'Подтвердите команду словом '+expected)
-    if server.get('username')=='root' and template in ('manual','site_restart'):
+    if server.get('username')=='root':
         require_permission(request,'servers.root',server.get('site_id'))
     try:remote.build_command(server,template,custom)
     except ValueError as exc:error(exc)
@@ -746,6 +756,7 @@ def platform_overview(request:Request):
             'root_owner_only':False,
             'root_setup_command':root_setup_command() if _can(actor,'platform.root',0) else None,
             'root_allowed':_can(actor,'platform.root',0),
+            'root_requires_confirm':_needs_root_confirm(actor),
             'updater_ready':self_update.UPDATER_MARKER.is_file()}
 
 @app.post('/api/sc/platform/execute')
@@ -756,7 +767,7 @@ async def platform_execute(request:Request):
     if body.get('as_root') is True:
         # Root actions require an explicit admin capability and an operator-enabled service.
         require_permission(request,'platform.root',0)
-        if template!='manual' or body.get('confirm')!='ROOT':
+        if template!='manual' or (_needs_root_confirm(actor) and body.get('confirm')!='ROOT'):
             raise HTTPException(400,'Подтвердите root-команду словом ROOT')
         cmd=body.get('command')
         try:

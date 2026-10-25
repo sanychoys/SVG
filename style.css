@@ -843,3 +843,29 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .setup-actions button {min-height:42px;flex:1 1 130px;}
 #consoleCommand,#consoleOutput {font-size:16px !important;}
 @media(max-width:500px){.root-setup{padding:12px}.setup-actions button{font-size:13px}}
+
+/* V1.18 — phone-first VPS initialization and per-admin ROOT confirmation. */
+.mobile-vps-setup{
+  margin:20px 0 22px;padding:18px 18px 12px;
+  border:1px solid rgba(102,211,245,.16);border-radius:17px;
+  background:linear-gradient(150deg,rgba(24,47,64,.85),rgba(12,22,34,.88));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.045);
+  min-width:0;max-width:100%;
+}
+.mobile-vps-setup .section-heading{margin:0 0 12px}
+.mobile-vps-setup .section-heading h3{margin:0;font-size:16px;letter-spacing:-.02em;color:#f0faff}
+.mobile-vps-setup p{line-height:1.65;margin-bottom:16px}
+.mobile-vps-setup textarea{max-width:100%;min-width:0;font-size:16px!important;line-height:1.5;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}
+.mobile-vps-setup ol{padding-left:21px;margin:12px 0 0}
+.mobile-vps-setup li{margin-bottom:7px}
+.mobile-vps-setup .stack-buttons{display:flex;flex-wrap:wrap;gap:9px}
+.mobile-vps-setup .stack-buttons button{min-height:43px;white-space:normal}
+.root-confirm-setting{margin:10px 0 14px!important;align-items:flex-start!important}
+.root-confirm-setting span{display:flex;flex-direction:column;gap:4px;min-width:0}
+.root-confirm-setting small{color:#95aabb;font-size:12px;line-height:1.5;font-weight:450}
+@media(max-width:540px){
+  html{max-width:100%;overflow-x:clip}
+  .mobile-vps-setup{padding:15px 13px 12px;margin:16px 0}
+  .mobile-vps-setup .stack-buttons button{flex:1 1 120px;font-size:12px}
+  #vpsBootstrapCommand{min-height:126px}
+}
