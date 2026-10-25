@@ -830,3 +830,16 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .sidebar .side-group{border-top:none!important;padding-top:4px!important}
 .sidebar .side-bottom{border-top:none!important}
 .sidebar{border-right-color:transparent!important}
+
+/* v1.17 mobile operations: local control, quiet platform & copyable bootstrap */
+#platformUpdater {background:#121821 !important;border:1px solid rgba(255,255,255,.055) !important; box-shadow:none !important;}
+#platformUpdater .panel-heading::before,#platformUpdater::before {display:none !important;}
+#projectScope[hidden] {display:none!important;}
+.root-setup {margin-top:14px;padding:16px;background:#101a24;border:1px solid rgba(82,191,234,.22);border-radius:15px;}
+.root-setup strong {display:block;font-size:15px;color:#eff9ff;margin-bottom:7px;}
+.root-setup p {font-size:13px;line-height:1.55;color:#aebac8;margin:8px 0 12px;}
+.setup-command {display:block;padding:13px;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;-webkit-user-select:text;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.55;color:#eaf7ff;background:#091019;border-radius:10px;}
+.setup-actions {display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+.setup-actions button {min-height:42px;flex:1 1 130px;}
+#consoleCommand,#consoleOutput {font-size:16px !important;}
+@media(max-width:500px){.root-setup{padding:12px}.setup-actions button{font-size:13px}}

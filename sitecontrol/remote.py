@@ -66,7 +66,16 @@ def build_command(server, template, custom=None):
     cmd=TEMPLATES[template][1]
     if template=='site_restart' and server['username']=='root':
         cmd='systemctl restart {service}'
-    return cmd.replace('{service}',server['service'])
+    cmd=cmd.replace('{service}',server['service'])
+    # Optional packages are not guaranteed to be installed on every client's VPS.
+    # Report a concrete prerequisite rather than presenting a broken preset.
+    prerequisites={'docker_status':('docker','Docker'), 'nginx_check':('nginx','Nginx'),
+                   'ports':('ss','iproute2'), 'network':('ip','iproute2')}
+    if template in prerequisites:
+        executable,package=prerequisites[template]
+        return ('command -v '+executable+' >/dev/null 2>&1 || '
+                '{ echo "Команда недоступна: установите '+package+' на этом VPS"; exit 127; }; '+cmd)
+    return cmd
 
 
 def execute(server, template, custom=None):

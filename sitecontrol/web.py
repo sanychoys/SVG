@@ -13,6 +13,8 @@ import time
 import traceback
 import threading
 import hashlib
+import pwd
+import shlex
 from collections import defaultdict, deque
 from pathlib import Path
 from urllib.parse import quote
@@ -721,6 +723,17 @@ async def permanent_project_delete(project_id:int, request:Request):
     try:return store.delete_site(project_id,body.get('slug'),actor)
     except (ValueError,LookupError) as exc:error(exc)
 
+def root_setup_command() -> str:
+    # Copy/paste bootstrap for the authorised VPS owner, never executed by FastAPI.
+    web_user=pwd.getpwuid(os.geteuid()).pw_name
+    # The installed paths are controlled by our own deployment config.
+    app_dir=project_files.ROOT
+    owner=int(registry.owner_id)
+    return ('cd '+shlex.quote(str(app_dir))+' && sudo python3 '
+            'deploy/configure_root_executor.py --web-user '+shlex.quote(web_user)
+            +' --owner-id '+str(owner)+' --enable-root && '
+            'sudo systemctl is-active sitecontrol-root-executor.service')
+
 @app.get('/api/sc/platform/overview')
 def platform_overview(request:Request):
     actor=require_admin(request)
@@ -731,6 +744,7 @@ def platform_overview(request:Request):
             'console_mode':'root_executor' if root_executor.status() else ('diagnostics_only' if os.geteuid()==0 else 'restricted_shell'),
             'root_executor_ready':root_executor.status(),
             'root_owner_only':False,
+            'root_setup_command':root_setup_command() if _can(actor,'platform.root',0) else None,
             'root_allowed':_can(actor,'platform.root',0),
             'updater_ready':self_update.UPDATER_MARKER.is_file()}
 

@@ -22,7 +22,7 @@ import uvicorn
 
 from config import BOT_TOKEN
 from admin_access import AdminRegistry
-from sitecontrol import store, web, operations, diagnostics, remote, project_files
+from sitecontrol import store, web, operations, diagnostics, remote, project_files, root_executor, local_console
 from sitecontrol.maintenance import snapshot
 from sitecontrol.telegram_bots import manager
 
@@ -40,6 +40,7 @@ STATE=Path(os.environ.get('SVGTRACKER_ADMIN_STATE_DIR','/var/lib/svgtracker-admi
 PENDING={}
 ADMIN_INPUT={}  # actor ID -> deadline for admin-add flow
 PROJECT_UPLOAD={}  # admin Telegram ID -> (project ID, expires)
+ROOT_INPUT={}  # actor -> expiry for a confirmed, privileged own-VPS command
 
 
 LAST_MENU={}  # chat_id -> message_id; keep one navigational bot message per chat
@@ -108,6 +109,7 @@ def keyboard(admin_user_id=None):
          InlineKeyboardButton(text='Серверы',callback_data='sc:servers')],
         [InlineKeyboardButton(text='Состояние',callback_data='sc:status'),
          InlineKeyboardButton(text='Логи',callback_data='sc:logs')],
+        [InlineKeyboardButton(text='Наш VPS · управление',callback_data='sc:ourvps')],
         [InlineKeyboardButton(text='Администраторы',callback_data='sc:admins')],
         [InlineKeyboardButton(text='Обновить ZIP',callback_data='sc:upload'),
          InlineKeyboardButton(text='Резервная копия',callback_data='sc:backup')],
@@ -333,6 +335,21 @@ async def rollback_info(message:Message):
 
 @dp.message(F.text)
 async def admin_id_text(message:Message):
+    if is_admin(message) and message.from_user.id in ROOT_INPUT:
+        expires=ROOT_INPUT.pop(message.from_user.id)
+        if expires<time.time():
+            await message.answer('Время ввода истекло. Откройте «Наш VPS» заново.');return
+        if not bot_can(message.from_user.id,'platform.root',0):
+            await message.answer('ROOT-доступ не разрешён для этого администратора.');return
+        cmd=(message.text or '').strip()
+        if not 1<=len(cmd)<=1200 or '\n' in cmd or any(ord(c)<32 and c!='\t' for c in cmd):
+            await message.answer('Допускается только одна строка до 1200 символов.');return
+        code=uuid.uuid4().hex[:12]
+        PENDING[code]=(message.from_user.id,cmd,'ownroot',time.time()+180)
+        await message.answer('Наш VPS / root\nКоманда: '+cmd[:1200]+'\n\nВыполнить с полными системными правами?',reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+          [InlineKeyboardButton(text='Подтверждаю ROOT',callback_data='sc:rootrun:'+code)],
+          [InlineKeyboardButton(text='Отмена',callback_data='sc:cancel')]]))
+        return
     if not is_admin(message) or not bot_can(message.from_user.id,'admins.manage'):return
     expires=ADMIN_INPUT.get(message.from_user.id)
     if not expires:return
@@ -405,7 +422,7 @@ async def callbacks(callback:CallbackQuery):
     actor=callback.from_user.id
     permissions={'admins':'admins.manage','admadd':'admins.manage','admrm':'admins.manage','role':'admins.manage',
                  'logs':'logs.view','log':'logs.view','status':'projects.view','backup':'backups.manage',
-                 'sites':'projects.view','servers':'servers.view','serverhelp':'servers.view',
+                 'sites':'projects.view','servers':'servers.view','serverhelp':'servers.view','ourvps':'platform.manage','rootstate':'platform.manage',
                  'upload':'platform.manage','cleanup':'platform.manage','rollback':'platform.manage','deploy':'platform.manage'}
     if action in permissions and not bot_can(actor,permissions[action]):
         await callback.answer('Недостаточно прав',show_alert=True);return
@@ -484,6 +501,42 @@ async def callbacks(callback:CallbackQuery):
         await callback.answer()
         await screen(callback.message,f'Отозвать доступ администратора {uid}?',reply_markup=kb)
         return
+    if action=='ourvps':
+        await callback.answer()
+        ready=await asyncio.to_thread(root_executor.status)
+        has_root=bot_can(actor,'platform.root',0)
+        rows=[[InlineKeyboardButton(text='Открыть консоль Site Control',web_app=WebAppInfo(url=miniapp_url(actor)))],
+              [InlineKeyboardButton(text='Проверить ROOT',callback_data='sc:rootstate')],
+              [InlineKeyboardButton(text='Root-команда',callback_data='sc:rootinput')],
+              [InlineKeyboardButton(text='Назад',callback_data='sc:home')]]
+        await screen(callback.message,'НАШ VPS / SITE CONTROL\n\n'
+                     +'Root-служба: '+('доступна' if ready else 'не включена')+'\n'
+                     +'Ваш доступ: '+('ROOT разрешён' if has_root else 'без ROOT')+'\n'
+                     +'Полная консоль и диагностика — по кнопке ниже.',
+                     reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        return
+    if action=='rootinput':
+        if not bot_can(actor,'platform.root',0):
+            await callback.answer('Недостаточно прав ROOT',show_alert=True);return
+        if not await asyncio.to_thread(root_executor.status):
+            await callback.answer('Root-служба выключена',show_alert=True)
+            await screen(callback.message,'Сначала включите службу через консоль провайдера.\n\n'+web.root_setup_command()+'\n\nСкопируйте команду. После включения повторите действие.')
+            return
+        ROOT_INPUT[actor]=time.time()+180
+        await callback.answer()
+        await screen(callback.message,'Отправьте одну команду для выполнения на НАШЕМ VPS.\nДо 1200 символов, 3 минуты. Затем потребуется дополнительное подтверждение. Не вводите пароли и секреты.')
+        return
+    if action=='rootstate':
+        await callback.answer()
+        ready=await asyncio.to_thread(root_executor.status)
+        permitted=bot_can(actor,'platform.root',0)
+        text=('Root-служба работает. Можно выполнять команды из Mini App и бота.' if ready and permitted
+              else 'Первое включение root (из консоли VPS-провайдера или SSH на телефоне):\n'+web.root_setup_command()+'\nПосле этого нажмите «Проверить ROOT».' if permitted
+              else 'У вас не выдано разрешение ROOT. Владелец может включить его в «Администраторы».')
+        await screen(callback.message,text,reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+          [InlineKeyboardButton(text='Открыть Mini App',web_app=WebAppInfo(url=miniapp_url(actor)))],
+          [InlineKeyboardButton(text='Назад',callback_data='sc:ourvps')]]))
+        return
     if action=='sites':
         await callback.answer();await show_sites(callback.message);return
     if action=='servers':
@@ -546,6 +599,20 @@ async def callbacks(callback:CallbackQuery):
         await callback.answer('Подтверждение устарело',show_alert=True);return
     if action=='pub' and pending[2]=='projectrelease' and not bot_can(actor,'files.manage',pending[1][0]):
         await callback.answer('Недостаточно прав',show_alert=True);return
+    if action=='rootrun' and pending[2]=='ownroot':
+        if not bot_can(actor,'platform.root',0):
+            await callback.answer('Недостаточно прав ROOT',show_alert=True);return
+        PENDING.pop(token,None)
+        await callback.answer('Выполняется')
+        try:
+            result=await asyncio.to_thread(root_executor.execute,pending[1],actor)
+            output=f'НАШ VPS / ROOT\nКод: {result["exit_code"]}\n'+result['output']
+            await screen(callback.message,output[:3800],reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+              [InlineKeyboardButton(text='Наш VPS',callback_data='sc:ourvps')]]))
+        except Exception:
+            log.exception('Ошибка подтверждённой root-команды бота')
+            await send_error(callback.message,'Root-команда не выполнена')
+        return
     if action=='pub' and pending[2]=='projectrelease':
         PENDING.pop(token,None)
         pid,rid,sid=pending[1]
