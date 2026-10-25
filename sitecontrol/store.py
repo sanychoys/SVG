@@ -103,6 +103,10 @@ def init():
             digest TEXT PRIMARY KEY, admin_id INTEGER NOT NULL,
             expires INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS mini_launch_tickets (
+            digest TEXT PRIMARY KEY, admin_id INTEGER NOT NULL,
+            expires INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS login_requests (
             code_digest TEXT PRIMARY KEY,
             verifier_digest TEXT NOT NULL,
@@ -150,6 +154,31 @@ def init():
 
 def digest(text):
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+def issue_mini_ticket(admin_id:int, ttl:int=90)->str:
+    """Inter-worker Telegram Mini App launch ticket, stored only as a digest."""
+    admin_id=int(admin_id)
+    if admin_id<=0:raise ValueError('Неверный администратор')
+    token=secrets.token_urlsafe(32)
+    with connect() as db:
+        db.execute('DELETE FROM mini_launch_tickets WHERE expires<=?',(now(),))
+        db.execute('INSERT INTO mini_launch_tickets(digest,admin_id,expires) VALUES(?,?,?)',
+                   (digest(token),admin_id,now()+int(ttl)))
+    return token
+
+
+def consume_mini_ticket(token:str)->int|None:
+    """Atomic single-use consume, safe with multiple Uvicorn processes."""
+    if not isinstance(token,str) or not 35<=len(token)<=150:
+        return None
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row=db.execute('SELECT admin_id,expires FROM mini_launch_tickets WHERE digest=?',
+                       (digest(token),)).fetchone()
+        if row:
+            db.execute('DELETE FROM mini_launch_tickets WHERE digest=?',(digest(token),))
+        return int(row['admin_id']) if row and row['expires']>now() else None
 
 
 def json_obj(value):
@@ -548,9 +577,12 @@ def delete_site(site_id:int,slug:str,actor):
         if db.execute('SELECT 1 FROM remote_servers WHERE site_id=?',(site_id,)).fetchone():
             raise ValueError('Сначала отключите VPS от проекта, чтобы не потерять управление')
         tenant=row['tenant_id']
+        if db.execute('SELECT 1 FROM bots WHERE tenant_id=? AND enabled=1',(tenant,)).fetchone():
+            raise ValueError('Сначала отключите Telegram-бота во вкладке «Telegram», чтобы удалить webhook и токен')
         if db.execute('SELECT 1 FROM sites WHERE tenant_id=? AND id!=?',(tenant,site_id)).fetchone():
             raise ValueError('Клиент связан с другим сайтом; удаление требует отдельного переноса данных')
         # Tokens on disk are not deleted here. Keep them encrypted/offline until explicit cleanup.
+        removed_bot_ids=[r['id'] for r in db.execute('SELECT id FROM bots WHERE tenant_id=?',(tenant,))]
         db.execute('DELETE FROM telegram_updates WHERE bot_id IN (SELECT id FROM bots WHERE tenant_id=?)',(tenant,))
         db.execute('DELETE FROM bots WHERE tenant_id=?',(tenant,))
         db.execute('DELETE FROM leads WHERE site_id=?',(site_id,))
@@ -559,6 +591,9 @@ def delete_site(site_id:int,slug:str,actor):
         db.execute('DELETE FROM sites WHERE id=?',(site_id,))
         db.execute('DELETE FROM tenants WHERE id=?',(tenant,))
         audit(db,'admin:'+str(actor),'project.delete',tenant,'project ID '+str(site_id))
+    # Clean up any legacy disabled bot token files; never touch owner/admin credentials.
+    for bot_id in removed_bot_ids:
+        remove_token(bot_id)
     # Staged files and backups remain on disk for manual recovery; never delete admin state.
     return {'ok':True,'orphaned_file_backups_preserved':True}
 

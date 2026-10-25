@@ -20,7 +20,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from . import store
-from . import diagnostics, miniapp_auth, remote, project_files, local_console, self_update, domains
+from . import diagnostics, miniapp_auth, remote, project_files, local_console, self_update, domains, host_verification
 
 app = FastAPI(title='Site Control API', docs_url=None, redoc_url=None, openapi_url=None)
 registry = None
@@ -33,30 +33,20 @@ COOKIE = 'sc_admin_session'
 LOGIN_COOKIE = 'sc_login_verify'
 LEAD_LIMIT = defaultdict(deque)
 LOGIN_LIMIT = defaultdict(deque)
-PENDING_HOSTKEYS = {}
-LAUNCH_TICKETS = {}  # SHA-256 digest -> (Telegram ID, expiry); never persist raw tokens
-LAUNCH_LOCK = threading.Lock()
 
 def issue_mini_launch(admin_id: int) -> str:
-    """Issue only from the private chat of an authenticated main-bot admin."""
+    """Issue from authenticated private bot chat. Shared across API workers."""
     if registry is None or not registry.is_admin(admin_id):
         raise PermissionError('Только администратор может открыть Mini App')
-    token=secrets.token_urlsafe(32)
-    with LAUNCH_LOCK:
-        now=time.monotonic()
-        for key, value in list(LAUNCH_TICKETS.items()):
-            if value[1]<=now: LAUNCH_TICKETS.pop(key,None)
-        if len(LAUNCH_TICKETS)>400:
-            LAUNCH_TICKETS.clear()
-        LAUNCH_TICKETS[hashlib.sha256(token.encode()).hexdigest()] = (int(admin_id),now+90)
-    return token
+    return store.issue_mini_ticket(int(admin_id),90)
+
 
 def consume_mini_launch(ticket: str) -> int | None:
-    if not isinstance(ticket,str) or len(ticket)>150 or len(ticket)<35:return None
-    with LAUNCH_LOCK:
-        entry=LAUNCH_TICKETS.pop(hashlib.sha256(ticket.encode()).hexdigest(),None)
-    if entry and entry[1]>=time.monotonic() and registry.is_admin(entry[0]):return entry[0]
+    admin_id=store.consume_mini_ticket(ticket)
+    if admin_id is not None and registry is not None and registry.is_admin(admin_id):
+        return admin_id
     return None
+
 
 def telegram_init_token():
     """Use the active bot instance rather than a potentially stale config import."""
@@ -152,7 +142,7 @@ def readiness():
                 db.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
     except Exception:
         raise HTTPException(503, 'Database unavailable')
-    return {'status':'ok','service':'Site Control','version':'1.8.0'}
+    return {'status':'ok','service':'Site Control','version':'1.13.0'}
 
 
 @app.get('/api/sc/health')
@@ -369,13 +359,10 @@ async def ssh_scan(request:Request):
     except Exception as exc:
         site_log.exception('SSH host-key scan failed')
         raise HTTPException(502,'Сервер недоступен для SSH-сканирования')
-    token=secrets.token_urlsafe(24)
-    # A key scan is never automatically trusted: admin compares fingerprints on VPS.
-    PENDING_HOSTKEYS[token]=(admin,key,fingerprint,time.monotonic()+180)
-    if len(PENDING_HOSTKEYS)>300:
-        for k,v in list(PENDING_HOSTKEYS.items()):
-            if v[3] < time.monotonic():PENDING_HOSTKEYS.pop(k,None)
-    return {'token':token,'fingerprint':fingerprint,'warning':'Сверьте SHA256 с ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub на целевом сервере.'}
+    token=host_verification.issue(admin,key,fingerprint,ttl=180)
+    key_type=key.split()[1]
+    return {'token':token,'fingerprint':fingerprint,
+            'warning':'Сверьте SHA256 с публичным ключом SSH-сервера соответствующего типа ('+key_type+'). Не подтверждайте незнакомый сервер.'}
 
 
 @app.post('/api/sc/ssh/trust')
@@ -383,12 +370,9 @@ async def ssh_trust(request:Request):
     admin=write_guard(request)
     data=await json_body(request,1000)
     token=data.get('token');expected=data.get('fingerprint')
-    pending=PENDING_HOSTKEYS.get(token)
-    if not pending or pending[0]!=admin or pending[3]<time.monotonic():raise HTTPException(400,'Проверка устарела')
-    if not isinstance(expected,str) or not hmac.compare_digest(expected,pending[2]):
-        raise HTTPException(400,'Отпечаток не совпадает')
-    PENDING_HOSTKEYS.pop(token,None)
-    remote.trust_host(pending[1])
+    try:
+        host_verification.confirm(admin,token,expected,remote.trust_host)
+    except (LookupError,ValueError) as exc:error(exc)
     return {'ok':True}
 
 
@@ -434,7 +418,7 @@ async def server_prepare(server_id:int,request:Request):
 def server_remove(server_id:int,request:Request):
     actor=write_guard(request)
     try:store.remove_server(server_id,'admin:'+str(actor))
-    except LookupError as exc:error(exc)
+    except (LookupError,ValueError) as exc:error(exc)
     return {'ok':True}
 
 
@@ -483,9 +467,22 @@ async def attach_bot(request:Request):
 
 @app.post('/api/sc/bots/{bot_id}/disable')
 async def detach_bot(bot_id:int,request:Request):
-    write_guard(request)
-    try:await manager.detach(bot_id)
+    actor=write_guard(request)
+    data=await json_body(request,1000)
+    if data.get('confirm')!='DISABLE':
+        raise HTTPException(400,'Подтвердите отключение клиентского бота')
+    bots={row['id']:row for row in store.list_bots()}
+    row=bots.get(bot_id)
+    if not row or not row['enabled']:
+        raise HTTPException(404,'Активный бот не найден')
+    try:
+        await manager.detach(bot_id)
     except (LookupError,ValueError) as exc:error(exc)
+    except Exception:
+        site_log.exception('Не удалось отключить webhook клиентского бота %s',bot_id)
+        raise HTTPException(502,'Telegram недоступен: бот не отключён. Повторите операцию позже.')
+    with store.connect() as db:
+        store.audit(db,'admin:'+str(actor),'bot.disconnect',row['tenant_id'],str(bot_id))
     return {'ok':True}
 
 

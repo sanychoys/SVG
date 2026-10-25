@@ -50,7 +50,9 @@ def _paths(blob,full_required=True):
     return files
 
 def stage(blob,filename='Site_Control.zip'):
-    if not isinstance(filename,str) or not filename.lower().endswith('.zip'):
+    if not isinstance(filename,str) or not filename:
+        raise ValueError('Укажите имя ZIP или отдельного файла')
+    if not filename.lower().endswith('.zip'):
         name=project_files.relpath(filename)
         if not (name in ALLOWED_ROOT or (len(Path(name).parts)==2 and Path(name).parts[0] in ALLOWED_DIRS and Path(name).suffix.lower() in ALLOWED_EXT)):
             raise ValueError('Этот файл нельзя обновить через панель платформы')
@@ -79,7 +81,12 @@ def status(rid):
     if not re.fullmatch(r'[a-f0-9]{16}',rid):raise ValueError('Неверная версия')
     path=STATE/(rid+'.json')
     if not path.is_file():raise LookupError('Обновление не найдено')
-    return json.loads(path.read_text('utf-8'))
+    item=json.loads(path.read_text('utf-8'))
+    if item.get('status')=='queued' and int(time.time())-item.get('queued_at',item.get('created_at',0))>180:
+        item=dict(item)
+        item['message']='Обновление всё ещё в очереди. Проверьте sitecontrol-updater.path и .service через SSH; не загружайте архив повторно до проверки.'
+        item['needs_attention']=True
+    return item
 
 UPDATER_MARKER=Path('/etc/sitecontrol/updater-enabled')
 
@@ -92,7 +99,7 @@ def _notify_watcher(rid,item):
     with os.fdopen(fd,'w') as fh:
         fh.write(rid+'\n')
         fh.flush();os.fsync(fh.fileno())
-    item.update(status='queued',message='Установка поставлена в очередь отдельного сервиса',unit='sitecontrol-updater')
+    item.update(status='queued',queued_at=int(time.time()),message='Установка поставлена в очередь отдельного сервиса',unit='sitecontrol-updater')
     write_status(rid,item)
     return True
 
@@ -122,7 +129,7 @@ def launch(rid):
         raise RuntimeError('Веб-службе запрещено запускать обновления. Настройте отдельный updater по инструкции.') from exc
     if p.returncode:
         raise RuntimeError('systemd-run запрещён политикой VPS. Один раз настройте отдельную службу обновлений по инструкции (deploy/configure_update_service.py). Файл проверен и сохранён, но НЕ установлен.')
-    item.update(status='queued',message='Установка передана systemd',unit=unit)
+    item.update(status='queued',queued_at=int(time.time()),message='Установка передана systemd',unit=unit)
     write_status(rid,item)
     return item
 
