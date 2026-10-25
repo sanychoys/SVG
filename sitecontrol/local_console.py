@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 import gc
 import platform
+import sys
+import importlib.metadata
 import subprocess
 from pathlib import Path
 
@@ -22,6 +24,9 @@ PRESETS = {
     'files': ['ls', '-lah', str(ROOT)],
     'overview': [],
     'ram_cleanup': [],
+    'python_version': [],
+    'python_packages': [],
+    'package_updates': [],
 }
 
 class ConsolePermissionError(RuntimeError):
@@ -179,6 +184,9 @@ NATIVE = {
     'processes': lambda: _read_processes(),
     'network': lambda: _read_network(),
     'inodes': lambda: _read_inodes(),
+    'python_version': lambda: 'Python '+platform.python_version()+'\nИсполняемый файл: '+sys.executable,
+    'python_packages': lambda: '\n'.join(sorted((d.metadata.get('Name','пакет')+' '+d.version for d in importlib.metadata.distributions()))[:45]) or 'Пакеты не найдены',
+    'package_updates': lambda: 'Проверка обновлений: используйте команду apt list --upgradable в ROOT-консоли. Самостоятельное обновление системного Python может повредить работающие приложения.',
 }
 
 # On a root service, even a read-only shell is not allowed. The following

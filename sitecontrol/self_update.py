@@ -6,12 +6,13 @@ A non-privileged web process may queue an update only when systemd authorizes it
 from __future__ import annotations
 import io,json,os,re,secrets,shutil,subprocess,sys,time,zipfile
 from pathlib import Path, PurePosixPath
-from . import project_files
+from . import project_files, root_executor
 
 STATE=project_files.STATE/'self-updates'
 ROOT=project_files.ROOT
 MAX_SIZE=25*1024*1024
-ALLOWED_ROOT={'main.py','index.html','script.js','style.css','product.js','product.css','sitecontrol_logo.jpg','admin_access.py','config.example.py'}
+ALLOWED_ROOT={'main.py','index.html','script.js','style.css','product.js','product.css','sitecontrol_logo.jpg','admin_access.py','config.example.py',
+              'ИНСТРУКЦИЯ.txt','ЧТО_ИЗМЕНИЛОСЬ.txt','АУДИТ_И_ТЕСТЫ.txt','FAQ_ПО_ШАГАМ.txt','ROOT_ДОСТУП.txt','ВОССТАНОВЛЕНИЕ_ДЕПЛОЯ.txt'}
 ALLOWED_DIRS={'sitecontrol','deploy'}
 ALLOWED_EXT={'.py','.js','.css','.html','.txt','.md','.jpg','.jpeg','.png','.svg'}
 
@@ -103,16 +104,39 @@ def _notify_watcher(rid,item):
     write_status(rid,item)
     return True
 
-def launch(rid):
+def launch(rid, actor=None):
     item=status(rid)
     if item['status']!='staged':raise ValueError('Это обновление уже отправлено на установку')
     archive=STATE/(rid+'.zip')
     if not archive.is_file():raise ValueError('Файл обновления отсутствует')
-    # For sites with one-time updater setup, the separate systemd watcher is
-    # preferred: it survives restarts and doesn't depend on web-service D-Bus.
-    if _notify_watcher(rid,item):
-        return item
-    raise RuntimeError('Установка пока не настроена на VPS. Файл сохранён. Однократно выполните sudo python3 deploy/configure_update_service.py через SSH, затем вернитесь в панель.')
+    # The same validated ZIP+apply() implementation is used by web, Mini App
+    # and Telegram. Dispatch privileged work through an independent systemd unit.
+    # The website itself must never run systemd-run or restart its own cgroup.
+    if actor is not None and root_executor.status():
+        from shlex import quote
+        import sys
+        command=' '.join([
+            'systemd-run', '--collect',
+            '--unit='+quote('sitecontrol-update-'+rid),
+            '--working-directory='+quote(str(ROOT)),
+            '--setenv='+quote('PYTHONPATH='+str(ROOT)),
+            '--setenv='+quote('SITE_CONTROL_PROJECT_FILES_DIR='+str(project_files.STATE)),
+            quote(sys.executable), '-m', 'sitecontrol.self_update', 'apply', quote(rid)
+        ])
+        item.update(status='queued',queued_at=int(time.time()),message='Передано отдельному root-исполнителю Site Control')
+        write_status(rid,item)
+        try:
+            result=root_executor.execute(command,int(actor))
+            if not result['ok']:
+                raise RuntimeError('Root-служба не смогла запустить установщик: '+result['output'][-260:])
+            return item
+        except (RuntimeError,root_executor.RootUnavailable) as exc:
+            item.update(status='staged',message='Файл проверен. Не удалось запустить установщик: '+str(exc)[:240])
+            write_status(rid,item)
+            if UPDATER_MARKER.is_file() and _notify_watcher(rid,item):return item
+            raise RuntimeError(item['message']) from exc
+    if _notify_watcher(rid,item):return item
+    raise RuntimeError('Нет активного root-исполнителя или системной службы обновлений. ZIP сохранён; настройте updater.path или ROOT-службу.')
 
 def apply(rid):
     item=status(rid)

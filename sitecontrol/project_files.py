@@ -52,6 +52,11 @@ def base():
 
 def relpath(raw):
     if not isinstance(raw,str) or not raw or len(raw)>250 or '\\' in raw or '\x00' in raw:raise ValueError('Недопустимое имя файла')
+    # Exact, trusted Site Control documentation filenames. Other project filenames
+    # still follow the strict ASCII component and protected-path policy below.
+    if raw in {'ИНСТРУКЦИЯ.txt','ЧТО_ИЗМЕНИЛОСЬ.txt','АУДИТ_И_ТЕСТЫ.txt',
+               'FAQ_ПО_ШАГАМ.txt','ROOT_ДОСТУП.txt','ВОССТАНОВЛЕНИЕ_ДЕПЛОЯ.txt'}:
+        return raw
     p=PurePosixPath(raw)
     if p.is_absolute() or not p.parts or any(x in ('','.','..') or not ALLOWED.fullmatch(x) for x in p.parts):raise ValueError('Недопустимый путь в файле')
     if any(x in PROTECTED_DIRS or x.startswith('.') for x in p.parts[:-1]):raise ValueError('Системную папку менять нельзя')

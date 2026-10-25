@@ -231,19 +231,13 @@ async def prepare_remote(message,server_id,template,command=None):
     root_action=server.get('username')=='root'
     if not bot_can(actor,'servers.manage',server.get('site_id')) or (root_action and not bot_can(actor,'servers.root',server.get('site_id'))):
         await message.answer('Нет разрешения на эту команду VPS.');return
-    if root_action and not registry.needs_root_confirm(actor):
-        try:
-            result=await asyncio.to_thread(remote.execute,server,template,command)
-            store.log_server_run(server_id,'admin:'+str(actor),str(template),result['ok'])
-            await send_chunks(message,f'{server["name"]} · код {result["exit_code"]}\n'+result['output'])
-        except Exception:
-            store.log_server_run(server_id,'admin:'+str(actor),str(template),False)
-            await send_error(message,'Ошибка SSH-команды')
-        return
-    token=uuid.uuid4().hex[:12]
-    PENDING[token]=(message.chat.id, (server_id,template,command), 'remote',time.time()+300)
-    kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Выполнить SSH-команду',callback_data='sc:run:'+token)],[InlineKeyboardButton(text='Отменить',callback_data='sc:cancel')]])
-    await message.answer(f'Сервер: {server["name"]}\nКоманда:\n{text[:1300]}\n\nВыполнить?',reply_markup=kb)
+    try:
+        result=await asyncio.to_thread(remote.execute,server,template,command)
+        store.log_server_run(server_id,'admin:'+str(actor),str(template),result['ok'])
+        await send_chunks(message,f'{server["name"]} · код {result["exit_code"]}\n'+result['output'])
+    except Exception:
+        store.log_server_run(server_id,'admin:'+str(actor),str(template),False)
+        await send_error(message,'Ошибка SSH-команды')
 
 
 @dp.errors()
@@ -357,19 +351,12 @@ async def admin_id_text(message:Message):
         cmd=(message.text or '').strip()
         if not 1<=len(cmd)<=1200 or '\n' in cmd or any(ord(c)<32 and c!='\t' for c in cmd):
             await message.answer('Допускается только одна строка до 1200 символов.');return
-        if not registry.needs_root_confirm(message.from_user.id):
-            try:
-                result=await asyncio.to_thread(root_executor.execute,cmd,message.from_user.id)
-                await message.answer('Наш VPS / ROOT · код '+str(result['exit_code'])+'\n'+result['output'][:3500])
-            except Exception:
-                log.exception('Ошибка root-команды через Telegram')
-                await send_error(message,'Root-команда не выполнена')
-            return
-        code=uuid.uuid4().hex[:12]
-        PENDING[code]=(message.from_user.id,cmd,'ownroot',time.time()+180)
-        await message.answer('Наш VPS / root\nКоманда: '+cmd[:1200]+'\n\nВыполнить?',reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-          [InlineKeyboardButton(text='Подтвердить',callback_data='sc:rootrun:'+code)],
-          [InlineKeyboardButton(text='Отмена',callback_data='sc:cancel')]]))
+        try:
+            result=await asyncio.to_thread(root_executor.execute,cmd,message.from_user.id)
+            await message.answer('Наш VPS / ROOT · код '+str(result['exit_code'])+'\n'+result['output'][:3500])
+        except Exception:
+            log.exception('Ошибка root-команды через Telegram')
+            await send_error(message,'Root-команда не выполнена')
         return
     if not is_admin(message) or not bot_can(message.from_user.id,'admins.manage'):return
     expires=ADMIN_INPUT.get(message.from_user.id)
@@ -424,14 +411,19 @@ async def upload_zip(message:Message):
     size=int(message.document.file_size or 0)
     if not 0<size<=20*1024*1024:
         await message.answer('ZIP не должен превышать 20 МБ.');return
-    incoming=STATE/'incoming'; incoming.mkdir(parents=True,exist_ok=True)
-    incoming.chmod(0o700)
-    token=uuid.uuid4().hex[:12];path=incoming/f'{token}.zip'
-    try:await bot.download(message.document,destination=path)
-    except Exception as exc:await send_error(message,'Ошибка загрузки ZIP');return
-    PENDING[token]=(message.from_user.id,str(path),'zip',time.time()+1800)
+    if not bot_can(message.from_user.id,'platform.manage',0):
+        await message.answer('Нет прав на обновление Site Control.');return
+    try:
+        from io import BytesIO
+        buffer=BytesIO()
+        await bot.download(message.document,destination=buffer)
+        release=await asyncio.to_thread(web.self_update.stage,buffer.getvalue(),name)
+    except Exception:
+        await send_error(message,'Не удалось проверить ZIP Site Control');return
+    token=uuid.uuid4().hex[:12]
+    PENDING[token]=(message.from_user.id,release['id'],'zip',time.time()+1800)
     kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Установить ZIP',callback_data='sc:deploy:'+token)],[InlineKeyboardButton(text='Отмена',callback_data='sc:cancel')]])
-    await message.answer(f'Архив: {name} · {size//1024} КБ\nУстановить обновление?',reply_markup=kb)
+    await message.answer(f'Архив проверен: {name} · {release["files"]} файл(ов)\nУстановить через общий установщик?',reply_markup=kb)
 
 
 @dp.callback_query(F.data.startswith('sc:'))
@@ -545,7 +537,7 @@ async def callbacks(callback:CallbackQuery):
             return
         ROOT_INPUT[actor]=time.time()+180
         await callback.answer()
-        await screen(callback.message,'Отправьте одну команду для выполнения на НАШЕМ VPS.\nДо 1200 символов, 3 минуты. Затем потребуется дополнительное подтверждение. Не вводите пароли и секреты.')
+        await screen(callback.message,'Отправьте одну команду для выполнения на НАШЕМ VPS.\nДо 1200 символов, 3 минуты. Команда будет выполнена сразу после отправки. Не вводите пароли и секреты.')
         return
     if action=='rootstate':
         await callback.answer()
@@ -695,15 +687,18 @@ async def callbacks(callback:CallbackQuery):
         await callback.message.edit_text('Откат запущен. Результат придёт сюда.')
         return
     if action=='deploy' and pending[2]=='zip':
-        _,path,_,_=pending
-        try:unit=await asyncio.to_thread(worker,['deploy',path,'--admin-chat',str(callback.from_user.id)],'deploy')
+        if not bot_can(actor,'platform.manage',0):
+            await callback.answer('Нет разрешения на обновление платформы',show_alert=True);return
+        rid=pending[1]
+        try:
+            result=await asyncio.to_thread(web.self_update.launch,rid,actor if bot_can(actor,'platform.root',0) else None)
         except Exception as exc:
-            await callback.answer('Ошибка запуска',show_alert=True)
-            await send_error(callback.message,'Ошибка запуска');return
+            await callback.answer('Установка недоступна',show_alert=True)
+            await screen(callback.message,'ZIP сохранён, но установщик не запущен: '+str(exc)[:290]);return
         PENDING.pop(token,None)
-        await callback.answer('Установка запущена')
-        log.info('Запущено ZIP-обновление')
-        await callback.message.edit_text('Установка началась. Результат придёт сюда.')
+        await callback.answer('Передано установщику')
+        log.info('Обновление передано общему установщику')
+        await screen(callback.message,'Обновление передано в отдельную службу. Результат появится в «Наша платформа» → «Файлы». Статус: '+result['status'])
         return
     await callback.answer('Неизвестная команда',show_alert=True)
 

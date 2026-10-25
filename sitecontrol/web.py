@@ -546,11 +546,8 @@ async def server_execute(server_id:int,request:Request):
     needs_root = server['username']=='root'
     # An owner or an admin explicitly exempted by owner may run permitted root
     # commands without an additional dialogue. Authentication/RBAC still required.
-    needs_confirmation = not needs_root or _needs_root_confirm(actor)
-    if template in ('manual','site_restart') and needs_confirmation:
-        expected='ROOT' if needs_root else 'EXECUTE'
-        if body.get('confirm')!=expected:
-            raise HTTPException(400,'Подтвердите команду словом '+expected)
+    # Command execution is a single action; API authorization, SSH host pinning
+    # and the server audit trail remain mandatory.
     if server.get('username')=='root':
         require_permission(request,'servers.root',server.get('site_id'))
     try:remote.build_command(server,template,custom)
@@ -757,7 +754,7 @@ def platform_overview(request:Request):
             'root_setup_command':root_setup_command() if _can(actor,'platform.root',0) else None,
             'root_allowed':_can(actor,'platform.root',0),
             'root_requires_confirm':_needs_root_confirm(actor),
-            'updater_ready':self_update.UPDATER_MARKER.is_file()}
+            'updater_ready':self_update.UPDATER_MARKER.is_file() or (root_executor.status() and _can(actor,'platform.root',0))}
 
 @app.post('/api/sc/platform/execute')
 async def platform_execute(request:Request):
@@ -765,10 +762,12 @@ async def platform_execute(request:Request):
     body=await json_body(request,2000)
     template=body.get('template')
     if body.get('as_root') is True:
+        require_permission(request,'platform.root',0)
+    if template=='manual' and _can(actor,'platform.root',0):
         # Root actions require an explicit admin capability and an operator-enabled service.
         require_permission(request,'platform.root',0)
-        if template!='manual' or (_needs_root_confirm(actor) and body.get('confirm')!='ROOT'):
-            raise HTTPException(400,'Подтвердите root-команду словом ROOT')
+        if template!='manual':
+            raise HTTPException(400,'Режим ROOT применим только к ручным командам')
         cmd=body.get('command')
         try:
             result=await asyncio.to_thread(root_executor.execute,cmd,int(actor))
@@ -779,8 +778,6 @@ async def platform_execute(request:Request):
             store.audit(db,'admin:'+str(actor),'platform.root_command',None,'root command SHA256:'+hashlib.sha256(cmd.encode()).hexdigest())
         site_log.warning('Выполнена root-операция администратором ID %s; код выхода %s',actor,result['exit_code'])
         return result
-    if template=='manual' and body.get('confirm')!='EXECUTE':
-        raise HTTPException(400,'Подтвердите команду')
     if template in ('site_restart',):
         raise HTTPException(400,'Перезапуск текущего сервиса выполняйте через безопасный установщик')
     try:
@@ -848,10 +845,10 @@ async def self_update_stage(request: Request,filename:str='Site_Control.zip'):
 
 @app.post('/api/sc/platform/updates/{rid}/install')
 async def self_update_install(rid:str,request:Request):
-    write_guard(request)
-    body=await json_body(request,1000)
-    if body.get('confirm')!='INSTALL':raise HTTPException(400,'Подтвердите установку')
-    try:return {'update':await asyncio.to_thread(self_update.launch,rid)}
+    actor=write_guard(request)
+    # platform.manage is checked by the access middleware; the root fallback
+    # additionally needs platform.root. Other admins use the installed watcher.
+    try:return {'update':await asyncio.to_thread(self_update.launch,rid,actor if _can(actor,'platform.root',0) else None)}
     except (ValueError,LookupError) as exc:error(exc)
     except RuntimeError as exc:raise HTTPException(503,str(exc))
 

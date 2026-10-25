@@ -20,6 +20,9 @@ ALIAS = re.compile(r'^[a-zA-Z0-9_-]{1,48}$')
 SERVICE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,79}$')
 TEMPLATES = {
     'uptime': ('Время работы','uptime'),
+    'python_version': ('Python · версия','python3 --version'),
+    'python_packages': ('Python · пакеты','python3 -m pip list --format=columns'),
+    'package_updates': ('Доступные обновления ОС','apt list --upgradable 2>/dev/null | head -n 40'),
     'disk': ('Диски','df -h --output=source,size,used,avail,pcent,target'),
     'memory': ('Память','free -h'),
     'services': ('Активные службы','systemctl --no-pager --failed'),
@@ -70,7 +73,9 @@ def build_command(server, template, custom=None):
     # Optional packages are not guaranteed to be installed on every client's VPS.
     # Report a concrete prerequisite rather than presenting a broken preset.
     prerequisites={'docker_status':('docker','Docker'), 'nginx_check':('nginx','Nginx'),
-                   'ports':('ss','iproute2'), 'network':('ip','iproute2')}
+                   'ports':('ss','iproute2'), 'network':('ip','iproute2'),
+                   'python_version':('python3','Python 3'), 'python_packages':('python3','Python 3'),
+                   'package_updates':('apt','APT (Ubuntu/Debian)')}
     if template in prerequisites:
         executable,package=prerequisites[template]
         return ('command -v '+executable+' >/dev/null 2>&1 || '
@@ -94,7 +99,7 @@ def execute(server, template, custom=None):
           '-o','IdentitiesOnly=yes','-o','LogLevel=ERROR','--',
           f'{server["username"]}@{server["host"]}',cmd]
     # ssh uses command execution on the remote side. Access is strictly admins only;
-    # manual commands require a separate user confirmation in UI/TG.
+    # manual commands are authorized via per-administrator permissions.
     result=subprocess.run(argv,capture_output=True,timeout=25,check=False)
     data=(result.stdout+b'\n'+result.stderr)[:14000].decode('utf-8','replace').strip()
     return {'ok':result.returncode==0,'exit_code':result.returncode,'output':data or '(нет вывода)','truncated':len(result.stdout)+len(result.stderr)>14000}

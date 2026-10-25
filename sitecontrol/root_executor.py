@@ -4,7 +4,7 @@ Root commands run ONLY in an explicitly installed, separate systemd service.
 The public web process never starts the privileged server, owns its code, or
 receives credentials for it. A Unix peer UID check and owner-ID gate are used;
 the root daemon also verifies the actor against the persistent role registry.
-Commands require explicit confirmation in browser and API.
+Commands require authorization and audit logging; the interface does not demand a second confirmation.
 
 WARNING: a compromised allowed web-service UID can operate this helper.
 Enable only when the operator accepts that risk; limit Site Control exposure,
